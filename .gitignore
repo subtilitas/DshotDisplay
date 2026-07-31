@@ -1,0 +1,12 @@
+# Doxygen output
+docs/html/
+docs/latex/
+# Local configuration files
+localdata
+# Arduino / PlatformIO build artefacts
+build/
+.pio/
+*.uf2
+*.elf
+*.bin
+*.hex
