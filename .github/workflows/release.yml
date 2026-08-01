@@ -76,7 +76,13 @@ jobs:
           sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
           arduino-cli compile --profile rp2350 --warnings all --output-dir build
 
-      - name: Name and sanity-check the image
+      # Prove the validator works before trusting its verdict. The first version
+      # of this check was inlined here, never executed, and rejected every
+      # valid UF2 -- it wanted magic 55463200 instead of 5546320a.
+      - name: Self-test the UF2 validator
+        run: bash test/check_uf2_selftest.sh
+
+      - name: Name and validate the image
         env:
           TAG: ${{ needs.version.outputs.tag }}
           ARCH: ${{ matrix.arch }}
@@ -85,20 +91,7 @@ jobs:
           src=$(ls build/*.uf2 | head -1)
           out="dist/DshotDisplay-${TAG}-rp2350-${ARCH}.uf2"
           cp "$src" "$out"
-
-          # A UF2 is a sequence of 512-byte blocks each starting with the magic
-          # 0x0A324655 ("UF2\n"). Checking it here means a truncated or
-          # mis-copied image fails the build rather than the user's board.
-          size=$(stat -c%s "$out")
-          echo "$out is $size bytes"
-          if [ "$size" -lt 4096 ] || [ $((size % 512)) -ne 0 ]; then
-            echo "::error::$out is not a plausible UF2 (size $size)"; exit 1
-          fi
-          magic=$(head -c4 "$out" | od -An -tx1 | tr -d ' \n')
-          if [ "$magic" != "55463200" ]; then
-            echo "::error::$out does not start with the UF2 magic (got $magic)"; exit 1
-          fi
-          echo "UF2 magic OK"
+          bash test/check_uf2.sh "$out"
 
       - uses: actions/upload-artifact@v4
         with:

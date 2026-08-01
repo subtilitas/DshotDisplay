@@ -40,6 +40,14 @@ jobs:
           sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
           arduino-cli compile --profile rp2350 --warnings all --output-dir build
 
+      # Run the same validator the release uses, on every push. Releases are
+      # rare, so a check that only runs at release time is a check that rots
+      # unnoticed between them -- which is exactly how it shipped broken.
+      - name: Validate the image
+        run: |
+          bash test/check_uf2_selftest.sh
+          for f in build/*.uf2; do bash test/check_uf2.sh "$f"; done
+
       # Every green build produces a flashable image, so a change can be tried
       # on hardware without cutting a release first.
       - name: Upload firmware image
