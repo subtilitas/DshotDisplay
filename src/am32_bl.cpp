@@ -21,12 +21,15 @@
 #include <hardware/sync.h>
 #include <string.h>
 
+/** @brief How long to wait for the ACK that ends a command. */
 #define AM32_ACK_TMO_MS  250
+
+/** @brief How long to wait for any one byte once a reply has begun. */
 #define AM32_BYTE_TMO_MS 50
 
-static uint8_t  s_pin = 0xFF;
-static uint32_t s_baud = 19200;
-static uint32_t s_bitUs = 1000000UL / 19200;
+static uint8_t  s_pin = 0xFF;                     /**< Signal GPIO, 0xFF when idle. */
+static uint32_t s_baud = 19200;                   /**< Link rate. */
+static uint32_t s_bitUs = 1000000UL / 19200;      /**< Derived bit period, us. */
 
 void am32BlSetBaud(uint32_t baud) {
 	if (!baud) return;
@@ -36,6 +39,7 @@ void am32BlSetBaud(uint32_t baud) {
 
 uint32_t am32BlBaud() { return s_baud; }
 
+/** @brief Bit period in microseconds, tracking @ref am32BlSetBaud. */
 #define AM32_BIT_US (s_bitUs)
 
 // ---------------------------------------------------------------------------
@@ -234,16 +238,25 @@ void am32BlEnd() {
 	s_pin = 0xFF;
 }
 
-// Diagnostics. Without a scope on the signal wire, knowing whether *anything*
-// came back is the difference between "the ESC never jumped" and "it replied
-// and we framed it wrongly".
+/**
+ * @brief Last handshake reply, kept for on-screen diagnostics.
+ *
+ * Without a scope on the signal wire, knowing whether *anything* came back is
+ * the difference between "the ESC never answered" and "it answered and we
+ * framed it wrongly" -- two problems with opposite fixes.
+ */
 static uint8_t  s_lastRx[16];
-static uint8_t  s_lastRxLen = 0;
+static uint8_t  s_lastRxLen = 0;                  /**< Valid bytes in s_lastRx. */
 
-// Established by the handshake; the settings page differs per MCU family.
-static uint8_t  s_escType = 0;
-static uint16_t s_eepromAddr = 0;
-static bool     s_addrDiv4 = false;
+/**
+ * @brief Identity established by the handshake.
+ *
+ * The settings page lives at a different address on each MCU family, so none
+ * of this can be assumed -- it has to come from the ESC.
+ */
+static uint8_t  s_escType = 0;                    /**< @see Am32EscType */
+static uint16_t s_eepromAddr = 0;                 /**< Settings page address. */
+static bool     s_addrDiv4 = false;               /**< Firmware addresses need >>2. */
 
 uint16_t am32BlEepromAddr() { return s_eepromAddr; }
 uint8_t  am32BlEscType()    { return s_escType; }

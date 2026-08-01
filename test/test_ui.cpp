@@ -58,7 +58,7 @@ static void swipe(int x0, int x1, int y, int step) {
 #define BTN_ARM_Y   299
 #define BTN_HOLD_X  143
 #define BTN_CFG_X   205
-#define BTN_AM32_Y  274
+#define BTN_AM32_Y  275   // BTN_AM32 spans 256..293
 // --- config-screen coordinates ---
 #define AM32_BACK_X 216
 #define AM32_BACK_Y  23
@@ -80,9 +80,14 @@ void runUiTests() {
 	fakeSetTelemetry(&tel);
 
 	gfxInit();
+	// Render the real splash, so the documentation screenshot cannot drift
+	// away from what the board shows.
+	uiDrawSplash();
+	fakeDumpFrame("shot_splash.ppm");
+
 	uiInit();
 	frames(4);
-	fakeDumpFrame("frame_disarmed.ppm");
+	fakeDumpFrame("shot_tester_disarmed.ppm");
 
 	section("Throttle: spring mode is absolute");
 	{
@@ -94,7 +99,7 @@ void runUiTests() {
 		int tx = 8 + (224 * 70 / 100);
 		fakePress(tx, 260); frames(1); fakeHold(tx, 260); frames(2);
 		checkInt("drag to 70% of track", fakeThrottle(), 400 * 70 / 100, 6);
-		fakeDumpFrame("frame_armed.ppm");
+		fakeDumpFrame("shot_tester_armed.ppm");
 		fakeRelease(); frames(2);
 		checkInt("springs back to zero on release", fakeThrottle(), 0);
 	}
@@ -143,11 +148,12 @@ void runUiTests() {
 	{
 		tap(BTN_CFG_X, BTN_ARM_Y);
 		checkTrue("entering settings force-disarms", !fakeArmed());
+		fakeDumpFrame("shot_settings.ppm");
 		tap(120, BTN_AM32_Y);
 		for (int i = 0; i < 8; i++) frames(1);
 		checkTrue("settings read and decoded", uiVisibleCount() > 0);
 		checkInt("poles decoded", uiByte(0x1B), 14);
-		fakeDumpFrame("frame_am32.ppm");
+		fakeDumpFrame("shot_am32_list.ppm");
 	}
 
 	section("Editing: fine, coarse, and the write interlock");
@@ -158,6 +164,7 @@ void runUiTests() {
 
 		tap(AM32_PLUS_X, AM32_EDIT_Y);
 		checkInt("+ button is one fine step", uiByte(0x18), 25);
+		fakeDumpFrame("shot_am32_edit.ppm");
 		tap(AM32_MINUS_X, AM32_EDIT_Y);
 		checkInt("- button steps back", uiByte(0x18), 24);
 
@@ -204,9 +211,13 @@ void runUiTests() {
 		for (int i = 0; i < 60; i++) { fakeHold(AM32_WRITE_X, AM32_WRITE_Y); frames(1); }
 		fakeRelease(); frames(3);
 		checkInt("1 s hold commits and verifies", fakeEscByte(0x1B), want);
-		fakeDumpFrame("frame_am32_written.ppm");
+		fakeDumpFrame("shot_am32_written.ppm");
 
 		tap(120, 218);                                   // dismiss the result
+		tap(180 + 27, 268 + 23);                         // HEX view
+		frames(2);
+		fakeDumpFrame("shot_am32_hex.ppm");
+		tap(180 + 27, 268 + 23);                         // back to fields
 		tap(AM32_BACK_X, AM32_BACK_Y);                   // leave config
 		checkTrue("DShot pin handed back", fakePinReturned());
 	}
