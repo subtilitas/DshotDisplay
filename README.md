@@ -364,6 +364,8 @@ src/
   cst816.{h,cpp}        capacitive touch
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + UI preview image
+test/                   host test suites + Arduino/Pico SDK stubs
+.github/workflows/      CI
 ```
 
 The `.ino` has to stay at the sketch root — Arduino identifies the sketch by a `.ino` whose
@@ -371,6 +373,40 @@ name matches its folder. Everything else lives in `src/`, which the Arduino buil
 recursively. The sketch includes them as `"src/gfx.h"` because only the sketch root goes on
 the include path; files inside `src/` include each other as plain siblings, since the
 compiler resolves quoted includes relative to the including file.
+
+### Tests
+
+The firmware's own logic runs on a PC against stubs in `test/stubs/` that mirror the
+Arduino and Pico SDK signatures:
+
+```sh
+cd test && make
+```
+
+Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only when a test
+says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
+than dependent on machine speed. The fake ESC serves a real settings blob recovered from
+the reference configurator, so the UI tests operate on values a real ESC would report.
+Failing tests dump the rendered frame as a PPM, so layout bugs can be looked at.
+
+`test_ui.cpp` `#include`s `ui_am32.cpp` rather than linking it, so tests can read its
+file-static state without production code carrying test-only accessors. That's why the
+Makefile does not list `ui_am32.cpp` in `SRCS`.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs four jobs:
+
+| Job | What it catches |
+|---|---|
+| **Firmware** | Real `arduino-cli` build for RP2350, ARM and RISC-V, pinned by `sketch.yaml` |
+| **Host tests** | Protocol, codec and UI regressions a compile cannot see |
+| **Config permutations** | All 8 combinations of `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP` and `LCD_ROTATION`, warnings fatal |
+| **Doxygen** | Undocumented additions |
+
+The permutation job exists because those options are exactly the ones nobody compiles by
+hand. The Doxygen job is `continue-on-error` until a green run proves its warning threshold
+is realistic.
 
 ### API documentation
 

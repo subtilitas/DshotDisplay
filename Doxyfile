@@ -14,8 +14,8 @@ GENERATE_LATEX         = NO
 # The .ino sits at the sketch root because Arduino requires it there; every
 # other translation unit lives in src/.
 INPUT                  = DshotDisplay.ino src README.md
+EXCLUDE                = docs test
 FILE_PATTERNS          = *.h *.cpp *.ino *.md
-EXCLUDE                = docs
 RECURSIVE              = YES
 
 # Arduino sketches are C++; Doxygen does not know that by default.
