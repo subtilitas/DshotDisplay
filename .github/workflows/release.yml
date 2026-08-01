@@ -6,22 +6,45 @@ name: Release
 #   git push origin v1.0.0
 #
 # Builds flashable .uf2 images for both RP2350 cores, checksums them, and
-# publishes a GitHub Release with generated notes.
+# publishes a GitHub Release with the images attached.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build and release"
+        description: "Existing tag to build and release"
         required: true
 
 permissions:
   contents: write   # required to create the release and upload assets
 
 jobs:
+  # Resolve the version once so both jobs agree, and so the tag never reaches a
+  # shell through ${{ }} interpolation -- a tag containing shell metacharacters
+  # would otherwise be executed.
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TAG: ${{ github.ref_name }}
+        run: |
+          tag="${INPUT_TAG:-$REF_TAG}"
+          case "$tag" in
+            v*) ;;
+            *) echo "::error::'$tag' is not a v-prefixed tag"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "building $tag"
+
   build:
     name: Build ${{ matrix.arch }}
+    needs: version
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true   # never publish a half-complete set of assets
@@ -40,23 +63,42 @@ jobs:
           key: arduino-${{ matrix.arch }}-${{ hashFiles('sketch.yaml') }}
 
       # Refuse to build a release from unverified code. The tests are cheap and
-      # a broken .uf2 with a version number on it is worse than no release.
+      # a broken image carrying a version number is worse than no release.
       - name: Host tests
         working-directory: test
         run: make run
+
+      - name: Documentation checks
+        run: python3 test/check_docs.py
 
       - name: Compile
         run: |
           sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
           arduino-cli compile --profile rp2350 --warnings all --output-dir build
 
-      - name: Name the artifact after the tag
+      - name: Name and sanity-check the image
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          version="${GITHUB_REF_NAME}"
-          [ -n "${{ inputs.tag }}" ] && version="${{ inputs.tag }}"
           mkdir -p dist
-          cp build/*.uf2 "dist/DshotDisplay-${version}-rp2350-${{ matrix.arch }}.uf2"
-          ls -l dist
+          src=$(ls build/*.uf2 | head -1)
+          out="dist/DshotDisplay-${TAG}-rp2350-${ARCH}.uf2"
+          cp "$src" "$out"
+
+          # A UF2 is a sequence of 512-byte blocks each starting with the magic
+          # 0x0A324655 ("UF2\n"). Checking it here means a truncated or
+          # mis-copied image fails the build rather than the user's board.
+          size=$(stat -c%s "$out")
+          echo "$out is $size bytes"
+          if [ "$size" -lt 4096 ] || [ $((size % 512)) -ne 0 ]; then
+            echo "::error::$out is not a plausible UF2 (size $size)"; exit 1
+          fi
+          magic=$(head -c4 "$out" | od -An -tx1 | tr -d ' \n')
+          if [ "$magic" != "55463200" ]; then
+            echo "::error::$out does not start with the UF2 magic (got $magic)"; exit 1
+          fi
+          echo "UF2 magic OK"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -66,7 +108,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,16 +124,12 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
+          ls -l
           sha256sum *.uf2 > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      # gh is preinstalled on the runner, so this needs no third-party action.
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Write release notes
         run: |
-          version="${GITHUB_REF_NAME}"
-          [ -n "${{ inputs.tag }}" ] && version="${{ inputs.tag }}"
           cat > notes.md <<'EOF'
           ## Flashing
 
@@ -100,7 +138,7 @@ jobs:
           2. Copy the `.uf2` onto it. The board reboots into the new firmware.
 
           Take the **arm** build unless you specifically want the RP2350's RISC-V
-          cores; both are functionally identical.
+          cores; the two are functionally identical.
 
           ## Wiring
 
@@ -109,7 +147,7 @@ jobs:
           | Signal | **GP4** — P2 header, pin 11 |
           | Ground | **GND** — P2 header, pin 13 |
 
-          Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output
+          Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output,
           and RP2350 GPIO is not 5 V tolerant.
 
           ## Verify the download
@@ -120,8 +158,33 @@ jobs:
 
           ---
           EOF
-          gh release create "$version" \
-            --title "$version" \
-            --notes-file notes.md \
+
+      # --notes prepends to the generated notes; --notes-file does not combine
+      # with --generate-notes, so the body is passed inline.
+      # --verify-tag refuses to invent a tag that was never pushed.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$(cat notes.md)" \
             --generate-notes \
+            --verify-tag \
             dist/*.uf2 dist/SHA256SUMS.txt
+
+      - name: Confirm the assets landed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          # Creating a release and attaching assets are separate API calls, so
+          # a partially-populated release is a real outcome worth catching.
+          assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          echo "$assets"
+          for want in arm riscv SHA256SUMS; do
+            echo "$assets" | grep -q "$want" || {
+              echo "::error::no asset matching '$want' on $TAG"; exit 1; }
+          done
+          echo "all expected assets present"
