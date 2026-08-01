@@ -6,9 +6,11 @@
 /**
  * @page architecture Architecture
  *
- * README.md is the front page (`USE_MDFILE_AS_MAINPAGE`), so this is a @page
- * rather than a second @mainpage — Doxygen treats two mainpages as an error
- * and silently drops one of them.
+ * README.md is the front page (`USE_MDFILE_AS_MAINPAGE`), so this is a
+ * \@page rather than a second \@mainpage — Doxygen treats two main pages as a
+ * conflict and silently drops one. Note the backslashes: naming those commands
+ * unescaped in prose makes Doxygen execute them instead of printing them,
+ * which is itself how this block first went wrong.
  *
  * A self-contained bidirectional DShot ESC tester for the Waveshare
  * RP2350-Touch-LCD-2. Drag the on-screen throttle and the board sends

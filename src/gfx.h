@@ -118,7 +118,10 @@ void gfxFrame(int x, int y, int w, int h, uint16_t c);
 
 /**
  * @brief Filled rectangle with rounded corners.
- * @param r Corner radius, clamped to half the smaller dimension.
+ * @param x,y Top-left corner.
+ * @param w,h Size.
+ * @param r   Corner radius, clamped to half the smaller dimension.
+ * @param c   Fill colour.
  */
 void gfxRoundRect(int x, int y, int w, int h, int r, uint16_t c);
 
@@ -138,13 +141,17 @@ void gfxVLine(int x, int y, int h, uint16_t c);
  * @brief 5x7 bitmap font covering ASCII 0x20..0x5F.
  *
  * Lowercase is folded to uppercase. Character 0x60 (backtick) renders as a
- * degree sign, so `"46`C"` prints as `46°C`. Unknown characters render as
- * spaces. One character cell is `6 * scale` pixels wide and `7 * scale` tall.
+ * degree sign, so a string containing 46, a backtick, then C prints as 46°C.
+ * Unknown characters render as spaces. One character cell is `6 * scale`
+ * pixels wide and `7 * scale` tall.
  * @{
  */
 
 /**
  * @brief Draw a string with its top-left corner at (@p x, @p y).
+ * @param x,y   Top-left corner.
+ * @param s     NUL-terminated string.
+ * @param fg    Text colour.
  * @param scale Integer pixel multiplier, 1 or greater.
  */
 void gfxText(int x, int y, const char *s, uint16_t fg, int scale);
@@ -190,6 +197,9 @@ void gfxSegDigit(int x, int y, int w, int h, int t, int digit, uint16_t on, uint
  * @p ghost, giving the look of an unlit LCD panel.
  *
  * @param xRight Right edge of the least-significant digit.
+ * @param y      Top edge.
+ * @param w,h    Size of one digit cell.
+ * @param t      Stroke thickness.
  * @param gap    Horizontal spacing between digit cells.
  * @param value  Value to render; not clamped, so clamp before calling.
  * @param digits Number of digit positions to draw.
