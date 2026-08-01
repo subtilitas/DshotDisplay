@@ -120,4 +120,20 @@ void escSnapshot(EscTelemetry *out);
 /** @brief True once an EDT enable has been issued. @return Request state. */
 bool escEdtRequested();
 
+/**
+ * @brief Ask core1 to tear down the DShot driver and release the signal pin.
+ *
+ * Needed before the AM32 bootloader transport can use the same pin. Forces a
+ * disarm first. Poll escTaskSuspended() until it reports true; the teardown
+ * happens on core1 so that the PIO state machine is freed by the core that
+ * claimed it.
+ */
+void escTaskSuspend();
+
+/** @brief Ask core1 to rebuild the DShot driver. Starts disarmed. */
+void escTaskResume();
+
+/** @brief True once the driver is torn down and the pin is free. */
+bool escTaskSuspended();
+
 /** @} */

@@ -78,6 +78,26 @@ void escRequestBeep(uint8_t n) {
 
 bool escEdtRequested() { return s_edtRequested; }
 
+/**
+ * @defgroup esc_suspend Pin handover
+ * @brief Lets the AM32 bootloader transport borrow the signal pin.
+ * @{
+ */
+static volatile bool s_suspendReq = false;
+static volatile bool s_suspended  = false;
+
+void escTaskSuspend() {
+	escSetArmed(false);
+	s_suspendReq = true;
+}
+
+void escTaskResume() {
+	s_suspendReq = false;
+}
+
+bool escTaskSuspended() { return s_suspended; }
+/** @} */
+
 void escSnapshot(EscTelemetry *out) {
 	critical_section_enter_blocking(&s_cs);
 	*out = s_tel;
@@ -159,6 +179,26 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 }
 
 void escTaskPoll() {
+	// Handle a pin handover request before anything touches the driver. Both
+	// the teardown and the rebuild happen here so the PIO state machine is
+	// released and re-claimed by the core that owns it.
+	if (s_suspendReq && s_esc) {
+		delete s_esc;
+		s_esc = nullptr;
+		s_suspended = true;
+		return;
+	}
+	if (!s_suspendReq && !s_esc) {
+		s_esc = new BidirDShotX1(DSHOT_PIN, DSHOT_SPEED_KBAUD);
+		s_armed = false;
+		s_throttle = 0;
+		s_edtAutoDone = false;
+		s_nextSendUs = time_us_32();
+		critical_section_enter_blocking(&s_cs);
+		s_tel.initError = s_esc->initError();
+		critical_section_exit(&s_cs);
+		s_suspended = false;
+	}
 	if (!s_esc) return;
 
 	uint32_t now = time_us_32();

@@ -104,7 +104,7 @@ void loop() {
 		uiTick();
 	}
 
-#if SERIAL_TELEMETRY
+#if SERIAL_TELEMETRY 
 	if ((int32_t)(millis() - s_nextLogMs) >= 0) {
 		s_nextLogMs = millis() + 100;
 		EscTelemetry t;
