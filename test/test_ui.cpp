@@ -222,6 +222,28 @@ void runUiTests() {
 		checkTrue("DShot pin handed back", fakePinReturned());
 	}
 
+	section("Screen changes leave nothing behind");
+	{
+		// C_CYAN appears on the settings screen (the AM32 button) and in the
+		// tester's "SWIPE = THROTTLE" hint, so compare against a known-clean
+		// baseline rather than against zero.
+		tap(BTN_CFG_X, BTN_ARM_Y);           // into settings
+		frames(2);
+		int onSettings = fakeCountColour(C_CYAN);
+		checkTrue("settings screen shows cyan", onSettings > 0);
+
+		tap(120, 310);                       // BACK, at CFG_BACK_Y
+		frames(3);
+		fakeDumpFrame("shot_after_back.ppm");
+		int onTester = fakeCountColour(C_CYAN);
+		printf("    [cyan px: settings=%d tester=%d]\n", onSettings, onTester);
+		checkTrue("no settings cyan survives on the tester screen",
+		          onTester < onSettings / 4);
+
+		// That every row belongs to a region is asserted at compile time in
+		// ui.cpp, where the constants live.
+	}
+
 	section("Splash fits the panel");
 	{
 		checkTrue("\"DSHOT\" at scale 4 fits", gfxTextW("DSHOT", 4) <= GFX_W);

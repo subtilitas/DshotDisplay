@@ -33,16 +33,27 @@ static_assert(GFX_W == 240 && GFX_H == 320,
  * @brief Vertical extents of each screen region, in framebuffer rows.
  * @{
  */
+// The regions tile the panel exactly: each ends where the next begins. Gaps
+// here are rows no region ever repaints, so whatever the previous screen left
+// in them survives -- which is how the cyan "AM32 ESC CONFIG" label used to
+// leave a slice behind on row 278.
 #define Z_STATUS_Y0   0
-#define Z_STATUS_Y1   25
+#define Z_STATUS_Y1   26
 #define Z_RPM_Y0      27
-#define Z_RPM_Y1      126
+#define Z_RPM_Y1      127
 #define Z_TELE_Y0     128
-#define Z_TELE_Y1     232
+#define Z_TELE_Y1     233
 #define Z_THR_Y0      234
-#define Z_THR_Y1      277
+#define Z_THR_Y1      278
 #define Z_BTN_Y0      279
 #define Z_BTN_Y1      319
+
+static_assert(Z_STATUS_Y0 == 0, "regions must start at the top of the panel");
+static_assert(Z_RPM_Y0  == Z_STATUS_Y1 + 1, "gap between status and RPM");
+static_assert(Z_TELE_Y0 == Z_RPM_Y1 + 1,    "gap between RPM and telemetry");
+static_assert(Z_THR_Y0  == Z_TELE_Y1 + 1,   "gap between telemetry and throttle");
+static_assert(Z_BTN_Y0  == Z_THR_Y1 + 1,    "gap between throttle and buttons");
+static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 
 #define THR_TRACK_X   8
 #define THR_TRACK_Y   248
@@ -151,6 +162,17 @@ static struct {
 
 /** @brief Force every region to repaint on the next uiTick(). */
 static void invalidateAll() { memset(&s_shown, 0xFF, sizeof(s_shown)); }
+
+/**
+ * @brief Blank the panel and force a full repaint. Use on every screen change.
+ *
+ * Screens differ in what they cover, so switching without clearing leaves the
+ * previous screen showing through wherever the new one draws nothing.
+ */
+static void screenReset() {
+	invalidateAll();
+	gfxFill(C_BG);
+}
 
 /** @brief Point-in-button test. @return true if (@p x, @p y) is inside @p b. */
 static bool hit(const Btn &b, int x, int y) {
@@ -482,12 +504,11 @@ static void handleConfigTouch() {
 		escRequestBeep(1);
 	} else if (hit(BTN_AM32, x, y)) {
 		s_am32 = true;
-		gfxFill(C_BG);
+		screenReset();
 		uiAm32Enter();
 	} else if (hit(BTN_BACK, x, y)) {
 		s_config = false;
-		invalidateAll();
-		gfxFill(C_BG);
+		screenReset();
 	}
 }
 
@@ -602,7 +623,7 @@ static void handleMainTouch() {
 			s_throttle = 0;
 			s_hold = false;
 			escSetArmed(false);
-			invalidateAll();
+			screenReset();
 			s_shown.config = -1;
 		}
 	}
@@ -650,8 +671,7 @@ void uiTick() {
 	if (s_am32) {
 		if (!uiAm32Tick(&s_touch)) {
 			s_am32 = false;
-			invalidateAll();
-			gfxFill(C_BG);
+			screenReset();
 			s_shown.config = -1;
 		}
 		st7789FlushDirty();
@@ -664,8 +684,12 @@ void uiTick() {
 
 	if (s_config) {
 		handleConfigTouch();
-		drawConfig();
-	} else {
+		// Re-check: handleConfigTouch may have left the settings screen, and
+		// repainting it here would put it back over the freshly cleared panel
+		// for one frame -- and leave whatever the next screen fails to cover.
+		if (s_config) drawConfig();
+	}
+	if (!s_config) {
 		handleMainTouch();
 
 		// idle auto-disarm

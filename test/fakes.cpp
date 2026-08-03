@@ -21,6 +21,7 @@
 #include "fakes.h"
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -29,9 +30,17 @@
 static uint32_t g_ms = 0;
 
 void fakeAdvance(uint32_t ms) { g_ms += ms; }
+uint32_t fakeNow() { return g_ms; }
+
 uint32_t millis() { return g_ms; }
 uint32_t time_us_32() { return g_ms * 1000; }
-void delay(uint32_t d) { g_ms += d; }
+void delay(uint32_t d) {
+	g_ms += d;
+	// A real host drains the CDC buffer while we wait; model that so a
+	// flow-controlled writer can make progress and a naive one cannot.
+	extern void fakeSerialDrain(uint32_t ms);
+	fakeSerialDrain(d);
+}
 
 void pinMode(uint32_t, uint32_t) {}
 void digitalWrite(uint32_t, uint32_t) {}
@@ -42,9 +51,79 @@ void analogReadResolution(int) {}
 /** @brief ~3.92 V pack through the board's 200k/100k divider. */
 int analogRead(uint32_t) { return (int)(3.92f / 3.0f / 3.3f * 4095.0f); }
 
+// --- USB serial, scriptable so the bridge can be exercised ---
 SerialStub Serial;
+static uint8_t g_rxq[512];   /**< Bytes the fake host has sent to the board. */
+static int     g_rxHead = 0, g_rxTail = 0;
+/**
+ * @brief Bytes the board has sent to the fake host.
+ *
+ * Sized to hold a full-ring dump. It was 2 KB, which silently truncated the
+ * capture at 24 lines and made a complete dump look truncated -- the same
+ * fixed-buffer fault the dump itself was being tested for.
+ */
+static uint8_t g_txq[32768];
+static int     g_txLen = 0;
+static int     g_roomMax = 256;   /**< Fake CDC buffer size. */
+static int     g_room = 256;      /**< Space left in it. */
+
 void SerialStub::begin(unsigned long) {}
-int SerialStub::printf(const char *, ...) { return 0; }
+static bool g_printEnabled = false;
+void fakeSerialPrint(bool on) { g_printEnabled = on; }
+int SerialStub::printf(const char *fmt, ...) {
+	if (!g_printEnabled) return 0;
+	va_list ap; va_start(ap, fmt);
+	int n = vprintf(fmt, ap);
+	va_end(ap);
+	return n;
+}
+int SerialStub::available() { return g_rxHead - g_rxTail; }
+int SerialStub::read() { return g_rxTail < g_rxHead ? g_rxq[g_rxTail++] : -1; }
+size_t SerialStub::write(const uint8_t *b, size_t n) {
+	// Silently dropping here would hide exactly the bug we test for.
+	if (g_txLen + (int)n > (int)sizeof(g_txq)) {
+		fprintf(stderr, "fakes: capture buffer full, test result unreliable\n");
+	}
+	// Behave like USB CDC: accept only what fits, report what was taken.
+	if ((int)n > g_room) n = (size_t)(g_room < 0 ? 0 : g_room);
+	for (size_t i = 0; i < n && g_txLen < (int)sizeof(g_txq); i++) g_txq[g_txLen++] = b[i];
+	g_room -= (int)n;
+	return n;
+}
+void SerialStub::flush() { g_room = g_roomMax; }
+
+/**
+ * @brief Free space in the fake CDC transmit buffer.
+ *
+ * Modelled on the real thing: a modest buffer that refills over time. Writing
+ * past it does not queue, which is precisely how a dump lost everything after
+ * its first bufferful.
+ */
+int SerialStub::availableForWrite() { return g_room; }
+
+void fakeSerialDrain(uint32_t ms) {
+	g_room += (int)ms * 64;           // ~64 bytes per ms drained
+	if (g_room > g_roomMax) g_room = g_roomMax;
+}
+
+void fakeHostSend(const uint8_t *d, int n) {
+	if (g_rxTail == g_rxHead) { g_rxHead = g_rxTail = 0; }
+	for (int i = 0; i < n && g_rxHead < (int)sizeof(g_rxq); i++) g_rxq[g_rxHead++] = d[i];
+}
+int fakeHostReceived(uint8_t *out, int maxLen) {
+	int n = g_txLen < maxLen ? g_txLen : maxLen;
+	memcpy(out, g_txq, n);
+	return n;
+}
+int fakeHostDrain(uint8_t *out, int maxLen) {
+	int n = g_txLen < maxLen ? g_txLen : maxLen;
+	memcpy(out, g_txq, n);
+	memmove(g_txq, g_txq + n, (size_t)(g_txLen - n));
+	g_txLen -= n;
+	return n;
+}
+
+void fakeHostClear() { g_rxHead = g_rxTail = 0; g_txLen = 0; }
 
 // ---------------------------------------------------------------------------
 // display: render into the real framebuffer, never push pixels anywhere
@@ -156,6 +235,13 @@ bool escTaskSuspended() { return g_suspended; }
 // ---------------------------------------------------------------------------
 // PPM dump, so a failing layout test can be looked at
 // ---------------------------------------------------------------------------
+int fakeCountColour(uint16_t c) {
+	const uint16_t *fb = gfxBuffer();
+	int n = 0;
+	for (int i = 0; i < GFX_W * GFX_H; i++) if (fb[i] == c) n++;
+	return n;
+}
+
 void fakeDumpFrame(const char *name) {
 	const uint16_t *fb = gfxBuffer();
 	FILE *f = fopen(name, "wb");
