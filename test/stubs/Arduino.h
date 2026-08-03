@@ -29,5 +29,10 @@ static inline void tight_loop_contents() {}
 struct SerialStub {
   void begin(unsigned long);
   int printf(const char*, ...);
+  int available();
+  int read();
+  size_t write(const uint8_t *buf, size_t len);
+  void flush();
+  int availableForWrite();
 };
 extern SerialStub Serial;

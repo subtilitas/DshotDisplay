@@ -288,6 +288,75 @@ motor controller. After writing, the block is read back and compared; a write th
 success but lands wrong is worse than one that fails loudly, so the screen only says
 `WRITE VERIFIED` if the readback matches byte for byte.
 
+### USB bridge — flashing firmware
+
+**CFG → AM32 ESC CONFIG → USB BRIDGE** turns the board into a USB-to-one-wire adapter.
+Point a desktop AM32 configurator at the board's serial port (19200 8N1) and it talks to
+the ESC through it — including flashing firmware, which the device deliberately does not
+implement itself. Reusing a tool that already works on real hardware beats reimplementing
+image transfer on a 240×320 touchscreen.
+
+The screen shows live byte counters in both directions so you can see traffic moving.
+Power-cycle the ESC to reach its bootloader, exactly as when connecting directly.
+
+**Transmitted bytes are echoed back to the host**, because on a genuine one-wire link the
+host's receiver sees its own transmission and desktop tools depend on that. The reference
+configurator's ACK check is:
+
+```python
+if len(self.last_result) > 1:
+    if int(self.last_result[-1]) == 0x30:
+```
+
+A bare `SET_ADDRESS` is answered with a *single* `0x30`. Without the echo the reply is one
+byte, `len > 1` fails, and the host reports NACK on the first command of every session.
+That the tool indexes from the end — `[-1]`, `[-5]`, `[-(size+3):-3]` — is what makes the
+leading echo harmless.
+
+**Echo and reply must also arrive together.** The bridge waits for the ESC's answer before
+sending anything back, then emits both in one write. Echoing immediately and forwarding the
+reply later splits them across two of the host's 25 ms `read_all()` polls: the first ends in
+a non-ACK byte and is discarded, the second is a lone ACK that fails `len > 1`. Every
+command then NACKs while both directions look perfectly busy — which is exactly what it
+does if you get this wrong. A test asserts the whole transaction lands in a single host
+read, not merely that the bytes are correct.
+
+`SERIAL_TELEMETRY` is **off by default**. It shares the one USB port with the bridge and its
+traffic dump, and ten lines a second of telemetry buries a dump you are trying to copy.
+Turn it on only when the tester itself is what you're debugging. `Serial.begin()` runs
+regardless — the bridge needs the port whether or not telemetry is wanted.
+
+#### Capturing a trace
+
+**Off by default** (`AM32_BRIDGE_LOG 0`), because the dump shares the one USB port with the
+bridge and lands in whatever your desktop tool is doing the moment you leave bridge mode.
+With it and `SERIAL_TELEMETRY` both off, the only thing the firmware ever writes to USB is
+the bridge's own forwarded traffic — a clean pipe.
+
+Set `AM32_BRIDGE_LOG` to 1 when the link itself is what you're debugging. Every transfer is
+then recorded to a RAM ring buffer during a session and dumped when you leave bridge mode;
+printing during the session is impossible, since the port is carrying the forwarded bytes.
+Open a terminal on the port after pressing BACK:
+
+```
+--- AM32 BRIDGE LOG: 4 record(s) ---
+  ms  dir      n  bytes
+     0  ----     -  bridge opened
+     5  H>E   11  00 00 0D 42 4C 48 65 6C 69 F4 7D   (+5ms)
+     5  E>H    9  34 37 31 00 1F 06 06 01 30   (+0ms)
+    14  ----     -  bridge closed
+--- END ---
+```
+
+The inter-record gaps are the point. Bridge failures are usually about *when* bytes arrive,
+not what they are: a reply 60 ms after its echo lands in a different host poll and fails,
+while the same bytes 0 ms apart succeed. Timestamps distinguish those; a plain hex dump
+cannot.
+
+`AM32_BRIDGE_LOG_BYTES` (4 KB) holds a handshake and the first commands comfortably. Oldest
+records are dropped first, so a long session keeps the traffic nearest the failure. Set
+`AM32_BRIDGE_LOG` to 0 to reclaim the buffer.
+
 ### Protocol
 
 | | |

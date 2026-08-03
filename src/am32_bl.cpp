@@ -408,6 +408,37 @@ Am32Result am32BlRun() {
 	return txFrame(cmd, sizeof(cmd), nullptr, 0, false);
 }
 
+void am32WriteRaw(const uint8_t *data, uint16_t len) {
+	am32WriteRawEchoed(data, len, nullptr);
+}
+
+void am32WriteRawEchoed(const uint8_t *data, uint16_t len, Am32ByteSink sink) {
+	if (s_pin == 0xFF || !len) return;
+
+	// Deliberately not a loop over am32WriteRaw() per byte: lineDrive() and
+	// lineRelease() must bracket the whole frame, or the pin would flip
+	// direction between every byte and put a settling gap mid-frame.
+	lineDrive();
+	for (uint16_t i = 0; i < len; i++) {
+		txByte(data[i]);
+		if (sink) sink(data[i]);   // a few instructions against 520 us a byte
+	}
+	lineRelease();
+}
+
+uint16_t am32ReadRaw(uint8_t *buf, uint16_t maxLen, uint32_t windowMs) {
+	if (s_pin == 0xFF) return 0;
+	uint16_t n = 0;
+	// Wait windowMs for the first byte, then stay only as long as the ESC keeps
+	// talking: one byte at 19200 takes ~520 us, so a 3 ms gap means it stopped.
+	uint32_t tmo = windowMs;
+	while (n < maxLen && rxByte(&buf[n], tmo)) {
+		n++;
+		tmo = 3;
+	}
+	return n;
+}
+
 const char *am32ResultText(Am32Result r) {
 	switch (r) {
 		case AM32_OK:          return "OK";

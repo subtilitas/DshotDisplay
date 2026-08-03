@@ -8,6 +8,9 @@
  */
 
 #include "ui_am32.h"
+#include "usb_bridge.h"
+#include "bridge_wire.h"
+#include "bridge_log.h"
 #include "am32_bl.h"
 #include "am32_eeprom.h"
 #include "esc_task.h"
@@ -57,7 +60,37 @@ enum Am32Screen : uint8_t {
 	S_CONNECT,   /**< Prompting for ESC power, retrying the handshake. */
 	S_LIST,      /**< Browsing and editing settings. */
 	S_WRITING,   /**< Write in progress or just finished. */
+	S_BRIDGE,    /**< USB passthrough; a desktop tool drives the ESC. */
 };
+
+/** @brief "USB BRIDGE" button on the connect screen. */
+#define BRIDGE_BTN_X 40
+#define BRIDGE_BTN_Y 240
+#define BRIDGE_BTN_W 160
+#define BRIDGE_BTN_H 42
+
+/**
+ * @brief Bridge polls per UI frame.
+ *
+ * Only a throughput knob now, not a correctness one: core1 owns the wire and is
+ * listening whatever core0 is doing. This just keeps USB moving briskly.
+ * @see bridge_wire.h
+ */
+#define BRIDGE_POLLS_PER_FRAME 8
+
+/**
+ * @brief Small "USB" button in the header, shown once connected.
+ *
+ * Handing over from a live connection is the reliable route: the ESC is already
+ * in its bootloader and stays there, so the desktop tool does not have to catch
+ * the power-up window itself. It cannot -- the host sets the retry cadence, and
+ * a tool retrying twice a second has a ~2% chance of transmitting while the
+ * window is open, where this screen hammers the init string ~15 times a second.
+ */
+#define HDRBRIDGE_X  (GFX_W - 112)
+#define HDRBRIDGE_Y  8
+#define HDRBRIDGE_W  52
+#define HDRBRIDGE_H  30
 
 static Am32Screen s_state = S_HANDOVER;
 static uint8_t    s_eeprom[AM32_EEPROM_SIZE];
@@ -139,6 +172,10 @@ static void drawHeader() {
 		gfxText(6, 26, s_status, C_DIM, 1);
 	}
 
+	if (s_state == S_LIST) {
+		button(HDRBRIDGE_X, HDRBRIDGE_Y, HDRBRIDGE_W, HDRBRIDGE_H,
+		       "USB", C_PANEL, C_CYAN);
+	}
 	button(GFX_W - 54, 8, 48, 30, "BACK", C_PANEL, C_TEXT);
 }
 
@@ -169,8 +206,63 @@ static void drawConnect() {
 		int dx = (int)(40 * cosf(ang * 3.14159f / 180.0f));
 		int dy = (int)(40 * sinf(ang * 3.14159f / 180.0f));
 		uint16_t c = (i == phase) ? C_LIME : C_PANEL;
-		gfxRect(GFX_W / 2 + dx - 2, 240 + dy - 2, 5, 5, c);
+		gfxRect(GFX_W / 2 + dx - 2, 194 + dy - 2, 5, 5, c);
 	}
+
+	button(BRIDGE_BTN_X, BRIDGE_BTN_Y, BRIDGE_BTN_W, BRIDGE_BTN_H,
+	       "USB BRIDGE", C_PANEL, C_CYAN);
+	gfxTextCenter(BRIDGE_BTN_Y + BRIDGE_BTN_H + 6,
+	              "USE A DESKTOP TOOL TO FLASH", C_GRID, 1);
+}
+
+/** @brief USB passthrough screen: live counters and a way out. */
+static void drawBridge() {
+	gfxRect(0, 50, GFX_W, GFX_H - 50, C_BG);
+
+	gfxTextCenter(64, "USB BRIDGE", C_CYAN, 3);
+	gfxTextCenter(98,  "THE BOARD IS NOW A USB TO", C_DIM, 1);
+	gfxTextCenter(112, "ONE-WIRE ADAPTER. POINT AN", C_DIM, 1);
+	gfxTextCenter(126, "AM32 CONFIGURATOR AT THIS", C_DIM, 1);
+	gfxTextCenter(140, "SERIAL PORT, 19200 8N1.", C_DIM, 1);
+
+	UsbBridgeStats st;
+	usbBridgeStats(&st);
+
+	char buf[32];
+	gfxRect(8, 164, GFX_W - 16, 62, C_PANEL);
+	gfxText(16, 170, "HOST > ESC", C_GRID, 1);
+	snprintf(buf, sizeof(buf), "%lu B", (unsigned long)st.toEsc);
+	gfxText(16, 182, buf, C_TEXT, 2);
+	gfxText(130, 170, "ESC > HOST", C_GRID, 1);
+	snprintf(buf, sizeof(buf), "%lu B", (unsigned long)st.toHost);
+	gfxText(130, 182, buf, C_TEXT, 2);
+	snprintf(buf, sizeof(buf), "%lu FRAMES", (unsigned long)st.frames);
+	gfxText(16, 206, buf, C_DIM, 1);
+
+	// Should never appear. If it does, core0 stopped draining the receive ring
+	// for long enough to lose ESC traffic -- worth seeing rather than guessing
+	// at, since that is the failure mode this whole split exists to prevent.
+	uint32_t ov = bridgeWireOverruns();
+	if (ov) {
+		snprintf(buf, sizeof(buf), "! %lu BYTES LOST", (unsigned long)ov);
+		gfxText(16, 216, buf, C_AMBER, 1);
+	}
+
+	// Idle is the normal state between commands, so say so rather than
+	// implying something is wrong.
+	bool busy = st.lastMs && (uint32_t)(millis() - st.lastMs) < 400;
+	gfxTextCenter(238, busy ? "TRAFFIC" : "IDLE", busy ? C_LIME : C_GRID, 2);
+
+	gfxTextCenter(258, "IF ENTERED VIA \"USB\" AFTER", C_GRID, 1);
+	gfxTextCenter(270, "CONNECTING, THE ESC IS READY.", C_GRID, 1);
+#if AM32_BRIDGE_LOG
+	{
+		char b[40];
+		snprintf(b, sizeof(b), "BACK DUMPS %u LOGGED FRAMES",
+		         (unsigned)bridgeLogCount());
+		gfxTextCenter(290, b, C_CYAN, 1);
+	}
+#endif
 }
 
 static void drawRow(int slot, uint16_t fieldIdx) {
@@ -297,6 +389,7 @@ void uiAm32Enter() {
 }
 
 void uiAm32Exit() {
+	if (usbBridgeActive()) usbBridgeEnd();
 	am32BlEnd();
 	escTaskResume();
 	s_state = S_HANDOVER;
@@ -413,6 +506,15 @@ static uint32_t repeatInterval(uint32_t heldMs) {
 
 static void handleListTouch(const TouchState *t) {
 	int x = t->x, y = t->y;
+
+	// Hand a live, already-in-bootloader ESC straight to the desktop tool.
+	if (t->pressed && hit(x, y, HDRBRIDGE_X, HDRBRIDGE_Y, HDRBRIDGE_W, HDRBRIDGE_H)) {
+		am32BlEnd();
+		usbBridgeBegin(DSHOT_PIN);
+		s_state = S_BRIDGE;
+		s_redraw = true;
+		return;
+	}
 
 	// --- write button: needs every frame, including finger-off, to time the
 	//     hold and to cancel it the moment the finger moves away ---
@@ -608,10 +710,27 @@ bool uiAm32Tick(const TouchState *t) {
 			break;
 
 		case S_CONNECT:
+			if (t->pressed && hit(t->x, t->y, BRIDGE_BTN_X, BRIDGE_BTN_Y,
+			                      BRIDGE_BTN_W, BRIDGE_BTN_H)) {
+				am32BlEnd();               // hand the pin to the bridge
+				usbBridgeBegin(DSHOT_PIN);
+				s_state = S_BRIDGE;
+				s_redraw = true;
+				break;
+			}
 			// Retry as fast as the frame loop allows. A failed attempt costs
 			// about 40 ms, and the power-up window is narrow, so retry rate is
 			// what determines whether we catch it.
 			tryConnect();
+			s_redraw = true;
+			break;
+
+		case S_BRIDGE:
+			// Forward several times per frame: the UI runs at 40 Hz, which
+			// would otherwise cap USB throughput at one frame per 25 ms. The
+			// wire itself is core1's problem, so redrawing every frame here is
+			// free of consequence again.
+			for (int i = 0; i < BRIDGE_POLLS_PER_FRAME; i++) usbBridgePoll();
 			s_redraw = true;
 			break;
 
@@ -642,6 +761,7 @@ bool uiAm32Tick(const TouchState *t) {
 		switch (s_state) {
 			case S_HANDOVER:
 			case S_CONNECT:  drawConnect(); break;
+			case S_BRIDGE:   drawBridge();  break;
 			case S_LIST:     drawList();    break;
 			case S_WRITING:  drawWriting(); break;
 		}
