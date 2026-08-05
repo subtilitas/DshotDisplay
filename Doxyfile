@@ -1,0 +1,60 @@
+# Doxygen configuration for DshotDisplay.
+# Only non-default settings are listed; run `doxygen -u Doxyfile` to expand.
+#
+#   doxygen                 -> docs/html/index.html
+#   doxygen 2>&1 | grep -i warn   -> undocumented symbols
+
+PROJECT_NAME           = "DshotDisplay"
+PROJECT_BRIEF          = "Bidirectional DShot ESC tester for the Waveshare RP2350-Touch-LCD-2"
+OUTPUT_DIRECTORY       = docs
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+# --- input ---------------------------------------------------------------
+# The .ino sits at the sketch root because Arduino requires it there; every
+# other translation unit lives in src/.
+INPUT                  = DshotDisplay.ino src README.md
+FILE_PATTERNS          = *.h *.cpp *.ino *.md
+EXCLUDE                = docs
+RECURSIVE              = YES
+
+# Arduino sketches are C++; Doxygen does not know that by default.
+EXTENSION_MAPPING      = ino=C++
+
+# Render README.md as the front page, with the @mainpage in the .ino appended.
+USE_MDFILE_AS_MAINPAGE = README.md
+MARKDOWN_SUPPORT       = YES
+
+# --- what to document ----------------------------------------------------
+EXTRACT_ALL            = NO      # NO so missing docs surface as warnings
+EXTRACT_STATIC         = YES     # most of this firmware is file-static
+EXTRACT_PRIVATE        = YES
+JAVADOC_AUTOBRIEF      = YES
+OPTIMIZE_OUTPUT_FOR_C  = NO
+
+# The firmware is built against the Arduino-Pico core and the Pico SDK, neither
+# of which is in INPUT. Without this every SDK type shows up as unresolved.
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = NO
+
+# --- presentation --------------------------------------------------------
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+ALPHABETICAL_INDEX     = YES
+SORT_MEMBER_DOCS       = NO      # keep declaration order; it is meaningful here
+HTML_COLORSTYLE        = TOGGLE
+
+# --- preprocessor --------------------------------------------------------
+# Document the portrait branch of the LCD_ROTATION conditionals rather than
+# leaving GFX_W / GFX_H undefined.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+PREDEFINED             = LCD_ROTATION=0 \
+                         __DOXYGEN__
