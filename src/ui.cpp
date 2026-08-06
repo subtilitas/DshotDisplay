@@ -21,6 +21,13 @@
 #include <stdio.h>
 #include <string.h>
 
+// The screen layout is portrait-only: every region below is a fixed pixel row
+// in a 240x320 frame. Setting LCD_ROTATION to 1 or 3 gives a 320x240 frame, in
+// which the buttons fall off the bottom. That used to compile happily and fail
+// silently on the panel; now it does not compile.
+static_assert(GFX_W == 240 && GFX_H == 320,
+              "the UI layout assumes portrait; LCD_ROTATION must be 0 or 2");
+
 /**
  * @defgroup ui_layout Layout (240x320 portrait)
  * @brief Vertical extents of each screen region, in framebuffer rows.
@@ -60,14 +67,39 @@ static const Btn BTN_HOLD = { 116, 283, 54, 33 };
 static const Btn BTN_CFG  = { 176, 283, 58, 33 };
 
 // config screen
-static const Btn BTN_POLES_M = { 14, 72, 46, 40 };
-static const Btn BTN_POLES_P = { 180, 72, 46, 40 };
-static const Btn BTN_MAXT_M  = { 14, 148, 46, 40 };
-static const Btn BTN_MAXT_P  = { 180, 148, 46, 40 };
-static const Btn BTN_EDT     = { 14, 208, 100, 40 };
-static const Btn BTN_BEEP    = { 126, 208, 100, 40 };
-static const Btn BTN_AM32    = { 14, 254, 212, 40 };
-static const Btn BTN_BACK    = { 14, 300, 212, 18 };
+/**
+ * @defgroup ui_cfg_layout Settings screen layout
+ * @brief Row positions, with the gaps asserted rather than eyeballed.
+ * @{
+ */
+#define CFG_POLES_Y   72   /**< Pole-count -/+ row. */
+#define CFG_MAXT_Y   148   /**< Throttle-ceiling -/+ row. */
+#define CFG_CMD_Y    200   /**< EDT / BEEP row. */
+#define CFG_ROW_H     38
+#define CFG_HINT_Y   244   /**< Caption under the command buttons. */
+#define CFG_AM32_Y   256   /**< AM32 config entry. */
+#define CFG_BACK_Y   300
+/** @} */
+
+static const Btn BTN_POLES_M = { 14, CFG_POLES_Y, 46, 40 };
+static const Btn BTN_POLES_P = { 180, CFG_POLES_Y, 46, 40 };
+static const Btn BTN_MAXT_M  = { 14, CFG_MAXT_Y, 46, 40 };
+static const Btn BTN_MAXT_P  = { 180, CFG_MAXT_Y, 46, 40 };
+static const Btn BTN_EDT     = { 14, CFG_CMD_Y, 100, CFG_ROW_H };
+static const Btn BTN_BEEP    = { 126, CFG_CMD_Y, 100, CFG_ROW_H };
+static const Btn BTN_AM32    = { 14, CFG_AM32_Y, 212, 38 };
+static const Btn BTN_BACK    = { 14, CFG_BACK_Y, 212, 18 };
+
+// Caught by a screenshot rather than by reading the code: the caption used to
+// sit at y=240, inside the 208..248 band the EDT and BEEP buttons occupy, and
+// was drawn straight through them. Assert the gaps so it cannot recur.
+static_assert(CFG_HINT_Y >= CFG_CMD_Y + CFG_ROW_H,
+              "settings caption overlaps the EDT/BEEP buttons");
+static_assert(CFG_AM32_Y >= CFG_HINT_Y + 7,
+              "AM32 button overlaps the caption");
+static_assert(CFG_BACK_Y >= CFG_AM32_Y + 38,
+              "BACK button overlaps the AM32 button");
+static_assert(CFG_BACK_Y + 18 <= GFX_H, "BACK button runs off the panel");
 
 // ---------------------------------------------------------------------------
 // state
@@ -405,13 +437,13 @@ static void drawConfig() {
 
 	char buf[24];
 
-	gfxText(14, 52, "MOTOR POLES", C_DIM, 1);
+	gfxText(14, CFG_POLES_Y - 20, "MOTOR POLES", C_DIM, 1);
 	drawBtn(BTN_POLES_M, "-", C_PANEL, C_TEXT, 2);
 	drawBtn(BTN_POLES_P, "+", C_PANEL, C_TEXT, 2);
 	snprintf(buf, sizeof(buf), "%d", s_poles);
 	gfxText(120 - gfxTextW(buf, 3) / 2, 82, buf, C_TEXT, 3);
 
-	gfxText(14, 128, "THROTTLE CEILING", C_DIM, 1);
+	gfxText(14, CFG_MAXT_Y - 20, "THROTTLE CEILING", C_DIM, 1);
 	drawBtn(BTN_MAXT_M, "-", C_PANEL, C_TEXT, 2);
 	drawBtn(BTN_MAXT_P, "+", C_PANEL, C_TEXT, 2);
 	snprintf(buf, sizeof(buf), "%d%%", (int)((uint32_t)s_maxThrottle * 100 / 2000));
@@ -419,7 +451,7 @@ static void drawConfig() {
 
 	drawBtn(BTN_EDT, "EDT ON", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_BEEP, "BEEP", C_PANEL, C_CYAN, 1);
-	gfxText(14, 240, "COMMANDS ONLY WORK WHILE DISARMED", C_DIM, 1);
+	gfxTextCenter(CFG_HINT_Y, "COMMANDS NEED THE ESC DISARMED", C_DIM, 1);
 
 	drawBtn(BTN_AM32, "AM32 ESC CONFIG", C_PANEL, C_CYAN, 2);
 	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1);
@@ -574,6 +606,14 @@ static void handleMainTouch() {
 			s_shown.config = -1;
 		}
 	}
+}
+
+void uiDrawSplash() {
+	gfxFill(C_BG);
+	gfxTextCenter(104, "DSHOT", C_LIME, 4);
+	gfxTextCenter(144, "DISPLAY", C_TEXT, 4);
+	gfxTextCenter(188, "BIDIRECTIONAL ESC TESTER", C_DIM, 1);
+	gfxTextCenter(216, "JuWi made", C_CYAN, 2);
 }
 
 uint16_t uiThrottle() { return s_throttle; }

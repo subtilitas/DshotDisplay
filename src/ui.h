@@ -17,6 +17,15 @@
 void uiInit();
 
 /**
+ * @brief Draw the boot splash into the framebuffer.
+ *
+ * Separate from setup() so the host tests render the real thing rather than a
+ * copy — the documentation screenshots and the width checks would otherwise
+ * drift away from what the board actually shows.
+ */
+void uiDrawSplash();
+
+/**
  * @brief Run one UI frame.
  *
  * Sends the heartbeat, samples touch and battery, updates the arm and throttle

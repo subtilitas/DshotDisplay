@@ -21,15 +21,32 @@ static const char *const NAMES_PROTOCOL[]  = {
 };
 static const char *const NAMES_OFFON[]     = {"OFF", "ON"};
 
-// Convenience macros keep the table readable; unused columns stay zero.
+/**
+ * @defgroup am32_tablemacros Field table shorthand
+ * @brief Keeps the settings table readable; unused columns stay zero.
+ *
+ * Written out longhand, each row would be fifteen columns of mostly zeroes and
+ * the table would stop being scannable — which is the entire point of holding
+ * the settings in a table rather than in code.
+ *
+ * Common arguments: @c grp section heading, @c nm display label, @c off byte
+ * offset, @c ver minimum EEPROM layout revision (0 for any).
+ * @{
+ */
+
+/** @brief Off/on field. */
 #define F_BOOL(grp, nm, off, ver)                                              \
 	{grp, nm, off, A32_BOOL, 0, 1, 1, ver, 0, 0, 0, 0, "", NAMES_OFFON, 2}
+/** @brief Plain integer over @c lo..@c hi in steps of @c st, suffixed @c unit. */
 #define F_RAW(grp, nm, off, lo, hi, st, unit, ver)                             \
 	{grp, nm, off, A32_RAW, lo, hi, st, ver, 0, 0, 0, 0, unit, nullptr, 0}
+/** @brief Displayed as `(raw * m + a) / d`, with one decimal when @c d > 1. */
 #define F_SCALED(grp, nm, off, lo, hi, st, m, d, a, unit, ver)                 \
 	{grp, nm, off, A32_SCALED, lo, hi, st, ver, 0, m, d, a, unit, nullptr, 0}
+/** @brief Index into the @c cnt labels of @c tbl. */
 #define F_ENUM(grp, nm, off, tbl, cnt, ver)                                    \
 	{grp, nm, off, A32_ENUM, 0, (uint8_t)((cnt) - 1), 1, ver, 0, 0, 0, 0, "", tbl, cnt}
+/** @} */
 
 const Am32Field AM32_FIELDS[] = {
 	// ---- Motor -----------------------------------------------------------

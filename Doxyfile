@@ -1,8 +1,8 @@
 # Doxygen configuration for DshotDisplay.
 # Only non-default settings are listed; run `doxygen -u Doxyfile` to expand.
 #
-#   doxygen                 -> docs/html/index.html
-#   doxygen 2>&1 | grep -i warn   -> undocumented symbols
+#   doxygen                       -> docs/html/index.html
+#   doxygen 2>&1 | grep -i warn   -> anything that needs attention
 
 PROJECT_NAME           = "DshotDisplay"
 PROJECT_BRIEF          = "Bidirectional DShot ESC tester for the Waveshare RP2350-Touch-LCD-2"
@@ -12,7 +12,8 @@ GENERATE_LATEX         = NO
 
 # --- input ---------------------------------------------------------------
 # The .ino sits at the sketch root because Arduino requires it there; every
-# other translation unit lives in src/.
+# other translation unit lives in src/. test/ holds host-side stubs whose whole
+# job is to imitate headers we do not own, so documenting them is meaningless.
 INPUT                  = DshotDisplay.ino src README.md
 EXCLUDE                = docs test
 FILE_PATTERNS          = *.h *.cpp *.ino *.md
@@ -21,9 +22,14 @@ RECURSIVE              = YES
 # Arduino sketches are C++; Doxygen does not know that by default.
 EXTENSION_MAPPING      = ino=C++
 
-# Render README.md as the front page, with the @mainpage in the .ino appended.
+# README.md is the front page. The architecture write-up in DshotDisplay.ino is
+# a @page, not a second @mainpage -- two mainpages is an error, not a merge.
 USE_MDFILE_AS_MAINPAGE = README.md
 MARKDOWN_SUPPORT       = YES
+
+# README references docs/ui-preview.png; without this the image is reported
+# missing even though the file is right there.
+IMAGE_PATH             = docs
 
 # --- what to document ----------------------------------------------------
 EXTRACT_ALL            = NO      # NO so missing docs surface as warnings
@@ -32,29 +38,47 @@ EXTRACT_PRIVATE        = YES
 JAVADOC_AUTOBRIEF      = YES
 OPTIMIZE_OUTPUT_FOR_C  = NO
 
-# The firmware is built against the Arduino-Pico core and the Pico SDK, neither
-# of which is in INPUT. Without this every SDK type shows up as unresolved.
-WARN_IF_UNDOCUMENTED   = YES
-WARN_NO_PARAMDOC       = YES
+# Both OFF deliberately, and neither is laziness.
+#
+# WARN_IF_UNDOCUMENTED fires on every file-static too, which here means ~70
+# internals like s_scroll and Z_RPM_Y1. A comment saying "scroll position" on
+# s_scroll informs nobody; the pressure to add them would produce noise that
+# buries the comments that do carry information.
+#
+# WARN_NO_PARAMDOC demands a @param line per argument even where the brief
+# already names them inline with @p -- gfxRect(x, y, w, h, c) does not need
+# five more lines to be understood.
+#
+# What actually matters -- public API in headers being documented, @param names
+# matching their signatures, no dangling @ref -- is enforced precisely by
+# test/check_docs.py, which runs in CI. Doxygen is left to report real
+# structural problems, such as two @mainpage blocks.
+WARN_IF_UNDOCUMENTED   = NO
+WARN_NO_PARAMDOC       = NO
 WARN_AS_ERROR          = NO
 
 # --- presentation --------------------------------------------------------
 GENERATE_TREEVIEW      = YES
 DISABLE_INDEX          = NO
-FULL_SIDEBAR           = NO
 SOURCE_BROWSER         = YES
 INLINE_SOURCES         = NO
 REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
 ALPHABETICAL_INDEX     = YES
 SORT_MEMBER_DOCS       = NO      # keep declaration order; it is meaningful here
-HTML_COLORSTYLE        = TOGGLE
 
 # --- preprocessor --------------------------------------------------------
 # Document the portrait branch of the LCD_ROTATION conditionals rather than
 # leaving GFX_W / GFX_H undefined.
+#
+# EXPAND_ONLY_PREDEF stays YES: the settings table in am32_eeprom.cpp is built
+# from F_BOOL/F_RAW/F_SCALED/F_ENUM macros, and expanding those inline turns a
+# readable table into forty lines of brace soup.
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
-EXPAND_ONLY_PREDEF     = NO
+EXPAND_ONLY_PREDEF     = YES
 PREDEFINED             = LCD_ROTATION=0 \
+                         AM32_PUSH_PULL_TX=1 \
+                         AM32_FORCE_LOW_JUMP=0 \
+                         SERIAL_TELEMETRY=1 \
                          __DOXYGEN__

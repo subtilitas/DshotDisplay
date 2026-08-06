@@ -38,7 +38,16 @@ jobs:
       - name: Compile
         run: |
           sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
-          arduino-cli compile --profile rp2350 --warnings all
+          arduino-cli compile --profile rp2350 --warnings all --output-dir build
+
+      # Every green build produces a flashable image, so a change can be tried
+      # on hardware without cutting a release first.
+      - name: Upload firmware image
+        uses: actions/upload-artifact@v4
+        with:
+          name: DshotDisplay-${{ matrix.arch }}-uf2
+          path: build/*.uf2
+          if-no-files-found: error
 
   # Runs the firmware's own logic on the host, against stubs. Catches the
   # protocol, codec and UI regressions that a compile alone cannot.
@@ -64,13 +73,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # LCD_ROTATION is 0 or 2 only: the screen layout is portrait-only and a
+      # static_assert in ui.cpp says so. Landscape is excluded here because it
+      # is meant to fail, not because it is untested.
       - name: Build each combination with -Werror
         run: |
           set -e
           fail=0
           for tx in 0 1; do
             for jump in 0 1; do
-              for rot in 0 1; do
+              for rot in 0 2; do
                 work=$(mktemp -d)
                 cp -r src "$work/src"
                 cp DshotDisplay.ino "$work/main.cpp"
@@ -89,30 +101,50 @@ jobs:
               done
             done
           done
+
+          # And confirm the portrait guard actually refuses landscape, rather
+          # than the assert being decorative.
+          work=$(mktemp -d)
+          cp -r src "$work/src"; cp DshotDisplay.ino "$work/main.cpp"
+          sed -i '1i void setup(); void loop(); void setup1(); void loop1();' "$work/main.cpp"
+          sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           1/" "$work/src/config.h"
+          if g++ -std=gnu++17 -fsyntax-only -Itest/stubs -I"$work" \
+                 "$work/main.cpp" "$work"/src/*.cpp 2>/dev/null; then
+            echo "landscape guard did NOT fire"; fail=1
+          else
+            echo "landscape correctly rejected ... ok"
+          fi
           exit $fail
 
-  # Undocumented additions surface as warnings rather than silently producing
-  # empty pages, so treat new ones as a failure.
   docs:
-    name: Doxygen
+    name: Docs
     runs-on: ubuntu-latest
-    # Non-blocking for now: this is the one job that has never actually been
-    # run, so its warning threshold is unproven. Once a green run confirms the
-    # Doxyfile is clean, drop this line to make new undocumented code fail CI.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+
+      # Precise check: public API documented, @param names matching their
+      # signatures, no dangling @ref. Narrower than Doxygen's blunt
+      # WARN_IF_UNDOCUMENTED, and correspondingly worth failing on.
+      - name: Documentation checks
+        run: python3 test/check_docs.py
+
       - name: Install doxygen
-        run: sudo apt-get update && sudo apt-get install -y doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
+
+      # Any warning left here is structural -- a broken @ref target, a second
+      # @mainpage, a missing image -- not a style opinion.
       - name: Generate
         run: |
-          doxygen 2>doxygen.log
-          if grep -qi 'warning' doxygen.log; then
-            echo "::error::Doxygen reported warnings:"
-            grep -i 'warning' doxygen.log | head -40
+          set -o pipefail
+          doxygen 2>doxygen.log || { echo "doxygen exited non-zero"; cat doxygen.log; exit 1; }
+          count=$(grep -ci 'warning' doxygen.log || true)
+          if [ "${count:-0}" -gt 0 ]; then
+            echo "::error::Doxygen reported $count warning(s)"
+            head -40 doxygen.log
             exit 1
           fi
           echo "no doxygen warnings"
+
       - uses: actions/upload-artifact@v4
         with:
           name: api-docs

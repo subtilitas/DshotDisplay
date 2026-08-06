@@ -1,5 +1,7 @@
 # DshotDisplay
 
+[![CI](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml/badge.svg)](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml)
+
 A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2**.
 
 Drag the on-screen throttle, and the board sends bidirectional DShot to a single ESC
@@ -8,6 +10,9 @@ wire — RPM, voltage, current, ESC temperature, stress and status — all rende
 2" touch panel. No flight controller, no laptop, no Betaflight.
 
 ![UI preview](docs/ui-preview.png)
+
+*Screens are rendered by the host test suite from the real UI code, so they cannot drift
+away from what the board shows.*
 
 ---
 
@@ -129,6 +134,16 @@ Arduino IDE with the [arduino-pico](https://github.com/earlephilhower/arduino-pi
 4. **Upload** — hold BOOT, tap RESET, release BOOT. The board enumerates as mass storage;
    upload normally after that.
 
+### Or just flash a release
+
+Prebuilt `.uf2` images are attached to every
+[release](https://github.com/subtilitas/DshotDisplay/releases). Hold BOOT, tap RESET,
+release BOOT, and copy the file onto the drive that appears. Take the **arm** build unless
+you specifically want the RP2350's RISC-V cores — both are functionally identical.
+
+Every green CI run also uploads a `.uf2` artifact, so an untagged change can be tried on
+hardware without cutting a release.
+
 ### Reproducible builds
 
 `sketch.yaml` is an arduino-cli build profile — the closest thing Arduino has to a lock
@@ -222,6 +237,8 @@ error rate points at signal integrity, not at the ESC.
 **CFG → AM32 ESC CONFIG** reads and edits an AM32 ESC's settings over the same signal wire,
 with no laptop involved. Settings only for now; the transport is deliberately general so
 firmware flashing drops in later.
+
+![AM32 config](docs/am32-preview.png)
 
 Entering config mode disarms, tears down the DShot driver and hands the signal pin to the
 bootloader transport. Leaving hands it back.
@@ -405,8 +422,21 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 | **Doxygen** | Undocumented additions |
 
 The permutation job exists because those options are exactly the ones nobody compiles by
-hand. The Doxygen job is `continue-on-error` until a green run proves its warning threshold
-is realistic.
+hand. `check_docs.py` enforces documentation precisely — public API documented, `@param`
+names matching signatures, no dangling `@ref` — where Doxygen's `WARN_IF_UNDOCUMENTED`
+would also demand a comment on every file-static `s_scroll`.
+
+### Releases
+
+```sh
+git tag -a v1.0.0 -m "First release"
+git push origin v1.0.0
+```
+
+`release.yml` runs the host tests, builds `.uf2` images for both cores, generates
+checksums, and publishes a GitHub Release with flashing instructions. It refuses to build
+from code that fails the tests — a broken image with a version number on it is worse than
+no release.
 
 ### API documentation
 

@@ -4,14 +4,18 @@
  */
 
 /**
- * @mainpage DshotDisplay
+ * @page architecture Architecture
+ *
+ * README.md is the front page (`USE_MDFILE_AS_MAINPAGE`), so this is a @page
+ * rather than a second @mainpage — Doxygen treats two mainpages as an error
+ * and silently drops one of them.
  *
  * A self-contained bidirectional DShot ESC tester for the Waveshare
  * RP2350-Touch-LCD-2. Drag the on-screen throttle and the board sends
  * bidirectional DShot to a single ESC while decoding the eRPM and Extended
  * DShot Telemetry that comes back on the same wire.
  *
- * @section arch Architecture
+ * @section arch Two cores
  *
  * Bidirectional DShot is half-duplex: the ESC only answers a frame that *you*
  * sent, and it disarms if frames stop arriving. So a telemetry display cannot
@@ -82,11 +86,7 @@ void setup() {
 	uiInit();
 
 	// splash while core1 brings the PIO up and the ESC finishes booting
-	gfxFill(C_BG);
-	gfxTextCenter(104, "DSHOT", C_LIME, 4);
-	gfxTextCenter(144, "DISPLAY", C_TEXT, 4);
-	gfxTextCenter(188, "BIDIRECTIONAL ESC TESTER", C_DIM, 1);
-	gfxTextCenter(216, "JuWi made", C_CYAN, 2);
+	uiDrawSplash();
 	st7789FlushDirty();
 	delay(SPLASH_MS);
 	gfxFill(C_BG);

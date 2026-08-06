@@ -1,0 +1,127 @@
+name: Release
+
+# Cut a release by pushing a tag:
+#
+#   git tag -a v1.0.0 -m "First release"
+#   git push origin v1.0.0
+#
+# Builds flashable .uf2 images for both RP2350 cores, checksums them, and
+# publishes a GitHub Release with generated notes.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release"
+        required: true
+
+permissions:
+  contents: write   # required to create the release and upload assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true   # never publish a half-complete set of assets
+      matrix:
+        arch: [arm, riscv]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino
+          key: arduino-${{ matrix.arch }}-${{ hashFiles('sketch.yaml') }}
+
+      # Refuse to build a release from unverified code. The tests are cheap and
+      # a broken .uf2 with a version number on it is worse than no release.
+      - name: Host tests
+        working-directory: test
+        run: make run
+
+      - name: Compile
+        run: |
+          sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
+          arduino-cli compile --profile rp2350 --warnings all --output-dir build
+
+      - name: Name the artifact after the tag
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [ -n "${{ inputs.tag }}" ] && version="${{ inputs.tag }}"
+          mkdir -p dist
+          cp build/*.uf2 "dist/DshotDisplay-${version}-rp2350-${{ matrix.arch }}.uf2"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uf2-${{ matrix.arch }}
+          path: dist/*.uf2
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # generated notes need the history
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: uf2-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum *.uf2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # gh is preinstalled on the runner, so this needs no third-party action.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          [ -n "${{ inputs.tag }}" ] && version="${{ inputs.tag }}"
+          cat > notes.md <<'EOF'
+          ## Flashing
+
+          1. Hold **BOOT**, tap **RESET**, release **BOOT**. The board appears as a
+             USB drive.
+          2. Copy the `.uf2` onto it. The board reboots into the new firmware.
+
+          Take the **arm** build unless you specifically want the RP2350's RISC-V
+          cores; both are functionally identical.
+
+          ## Wiring
+
+          | ESC | Board |
+          |---|---|
+          | Signal | **GP4** — P2 header, pin 11 |
+          | Ground | **GND** — P2 header, pin 13 |
+
+          Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output
+          and RP2350 GPIO is not 5 V tolerant.
+
+          ## Verify the download
+
+          ```
+          sha256sum -c SHA256SUMS.txt
+          ```
+
+          ---
+          EOF
+          gh release create "$version" \
+            --title "$version" \
+            --notes-file notes.md \
+            --generate-notes \
+            dist/*.uf2 dist/SHA256SUMS.txt

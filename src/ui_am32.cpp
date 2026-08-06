@@ -44,6 +44,13 @@
 #define FOOT_Y       268     /**< Top of the write/revert/hex row. */
 #define FOOT_H       46
 
+// Layout invariants, asserted rather than eyeballed. A caption that runs under
+// a button is invisible in code review and obvious only in a screenshot.
+static_assert(LIST_Y1 < EDIT_Y, "list overlaps the editor bar");
+static_assert(EDIT_Y + EDIT_H <= FOOT_Y, "editor bar overlaps the footer");
+static_assert(FOOT_Y + FOOT_H <= GFX_H, "footer runs off the panel");
+static_assert(BTN_MINUS_X + EDIT_BTN_W < BTN_PLUS_X, "editor buttons overlap");
+
 /** @brief Screen states. */
 enum Am32Screen : uint8_t {
 	S_HANDOVER,  /**< Waiting for core1 to release the DShot pin. */
@@ -234,7 +241,9 @@ static void drawList() {
 		bool ch = s_eeprom[sel->offset] != s_original[sel->offset];
 		gfxText(cx + (cw - gfxTextW(val, 2)) / 2, EDIT_Y + 14, val,
 		        ch ? C_AMBER : C_LIME, 2);
-		const char *hint = "SWIPE ROW = COARSE";
+		// Short enough to clear both buttons: the gap between them is only
+		// (BTN_PLUS_X - cx) px, and a longer caption ran under them.
+		const char *hint = "SWIPE = COARSE";
 		gfxText(cx + (cw - gfxTextW(hint, 1)) / 2, EDIT_Y + 33, hint, C_GRID, 1);
 	} else if (!s_hexView) {
 		gfxTextCenter(EDIT_Y + 12, "TAP A SETTING TO EDIT", C_GRID, 1);

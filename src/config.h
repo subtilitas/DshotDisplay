@@ -154,12 +154,18 @@
  * @brief Panel orientation.
  *
  * - 0 — portrait, USB port at the bottom (default)
- * - 1 — landscape
+ * - 1 — landscape *(not supported, see below)*
  * - 2 — portrait, flipped
- * - 3 — landscape, flipped
+ * - 3 — landscape, flipped *(not supported)*
  *
  * Changing this rotates both the framebuffer geometry (@ref GFX_W / @ref GFX_H)
  * and the touch coordinate mapping.
+ *
+ * @warning Only the portrait values work. The screen layout is a fixed set of
+ *          pixel rows in a 240x320 frame, so landscape puts the buttons off the
+ *          bottom of the panel. A static_assert in ui.cpp enforces this rather
+ *          than letting it fail silently on hardware; laying the UI out
+ *          responsively would be the fix if landscape is ever wanted.
  */
 #define LCD_ROTATION           0
 
