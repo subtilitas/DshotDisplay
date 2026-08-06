@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Compiles the real firmware for the real target. sketch.yaml pins the core,
+  # its toolchain and the library, so this builds identically here and locally.
+  firmware:
+    name: Firmware (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # pico-bidir-dshot supports both RP2350 cores, so build both. The
+        # RISC-V build catches anything that quietly assumes Cortex-M.
+        arch: [arm, riscv]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Cache the core and toolchain
+        uses: actions/cache@v4
+        with:
+          # ~1 GB of core plus GCC; without this every run re-downloads it.
+          path: |
+            ~/.arduino15
+            ~/Arduino
+          key: arduino-${{ matrix.arch }}-${{ hashFiles('sketch.yaml') }}
+
+      # Prints flash and RAM usage, which is worth watching: the framebuffer
+      # alone is 150 KB of the RP2350's 520 KB.
+      - name: Compile
+        run: |
+          sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
+          arduino-cli compile --profile rp2350 --warnings all
+
+  # Runs the firmware's own logic on the host, against stubs. Catches the
+  # protocol, codec and UI regressions that a compile alone cannot.
+  tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run
+        working-directory: test
+        run: make run
+      - name: Upload rendered frames on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-frames
+          path: test/*.ppm
+
+  # Every build-time option, with warnings fatal. These permutations are easy
+  # to break precisely because nobody compiles them by hand.
+  variants:
+    name: Config permutations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build each combination with -Werror
+        run: |
+          set -e
+          fail=0
+          for tx in 0 1; do
+            for jump in 0 1; do
+              for rot in 0 1; do
+                work=$(mktemp -d)
+                cp -r src "$work/src"
+                cp DshotDisplay.ino "$work/main.cpp"
+                sed -i '1i void setup(); void loop(); void setup1(); void loop1();' "$work/main.cpp"
+                sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
+                sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
+                sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
+                printf 'TX=%s JUMP=%s ROT=%s ... ' "$tx" "$jump" "$rot"
+                if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
+                       -Wno-unused-parameter -Itest/stubs -I"$work" \
+                       "$work/main.cpp" "$work"/src/*.cpp; then
+                  echo ok
+                else
+                  echo FAIL; fail=1
+                fi
+              done
+            done
+          done
+          exit $fail
+
+  # Undocumented additions surface as warnings rather than silently producing
+  # empty pages, so treat new ones as a failure.
+  docs:
+    name: Doxygen
+    runs-on: ubuntu-latest
+    # Non-blocking for now: this is the one job that has never actually been
+    # run, so its warning threshold is unproven. Once a green run confirms the
+    # Doxyfile is clean, drop this line to make new undocumented code fail CI.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen
+      - name: Generate
+        run: |
+          doxygen 2>doxygen.log
+          if grep -qi 'warning' doxygen.log; then
+            echo "::error::Doxygen reported warnings:"
+            grep -i 'warning' doxygen.log | head -40
+            exit 1
+          fi
+          echo "no doxygen warnings"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-docs
+          path: docs/html

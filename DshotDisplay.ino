@@ -83,11 +83,12 @@ void setup() {
 
 	// splash while core1 brings the PIO up and the ESC finishes booting
 	gfxFill(C_BG);
-	gfxTextCenter(112, "DSHOT", C_LIME, 4);
-	gfxTextCenter(152, "DISPLAY", C_TEXT, 4);
-	gfxTextCenter(196, "BIDIRECTIONAL ESC TESTER", C_DIM, 1);
+	gfxTextCenter(104, "DSHOT", C_LIME, 4);
+	gfxTextCenter(144, "DISPLAY", C_TEXT, 4);
+	gfxTextCenter(188, "BIDIRECTIONAL ESC TESTER", C_DIM, 1);
+	gfxTextCenter(216, "JuWi made", C_CYAN, 2);
 	st7789FlushDirty();
-	delay(800);
+	delay(SPLASH_MS);
 	gfxFill(C_BG);
 	st7789FlushDirty();
 

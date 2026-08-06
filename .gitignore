@@ -10,3 +10,7 @@ build/
 *.elf
 *.bin
 *.hex
+
+# Host test build output
+test/dshot_tests
+test/*.ppm
