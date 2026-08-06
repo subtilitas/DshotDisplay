@@ -433,10 +433,28 @@ git tag -a v1.0.0 -m "First release"
 git push origin v1.0.0
 ```
 
-`release.yml` runs the host tests, builds `.uf2` images for both cores, generates
-checksums, and publishes a GitHub Release with flashing instructions. It refuses to build
-from code that fails the tests — a broken image with a version number on it is worse than
-no release.
+`release.yml` runs the host and documentation checks, builds `.uf2` images for both RP2350
+cores, checksums them, and publishes a GitHub Release with the images attached.
+
+Assets per release:
+
+```
+DshotDisplay-v1.0.0-rp2350-arm.uf2
+DshotDisplay-v1.0.0-rp2350-riscv.uf2
+SHA256SUMS.txt
+```
+
+Four things it refuses to do, each because the failure is otherwise silent:
+
+- **Build from failing code** — a broken image carrying a version number is worse than no
+  release at all.
+- **Publish an implausible image** — the `.uf2` is checked for the `UF2\n` magic and a
+  512-byte-multiple size, so a truncated or mis-copied file fails the build rather than the
+  user's board.
+- **Invent a tag** — `--verify-tag` aborts if the tag was never pushed.
+- **Leave a half-populated release** — creating a release and attaching assets are separate
+  API calls, so the workflow reads the release back and confirms every expected asset is
+  actually there.
 
 ### API documentation
 
