@@ -9,6 +9,7 @@
  */
 
 #include "ui.h"
+#include "ui_am32.h"
 #include "gfx.h"
 #include "cst816.h"
 #include "st7789.h"
@@ -65,7 +66,8 @@ static const Btn BTN_MAXT_M  = { 14, 148, 46, 40 };
 static const Btn BTN_MAXT_P  = { 180, 148, 46, 40 };
 static const Btn BTN_EDT     = { 14, 208, 100, 40 };
 static const Btn BTN_BEEP    = { 126, 208, 100, 40 };
-static const Btn BTN_BACK    = { 14, 272, 212, 42 };
+static const Btn BTN_AM32    = { 14, 254, 212, 40 };
+static const Btn BTN_BACK    = { 14, 300, 212, 18 };
 
 // ---------------------------------------------------------------------------
 // state
@@ -73,6 +75,7 @@ static const Btn BTN_BACK    = { 14, 272, 212, 42 };
 static bool     s_armed = false;
 static bool     s_hold = false;
 static bool     s_config = false;
+static bool     s_am32 = false;   /**< AM32 config mode owns the screen. */
 static uint16_t s_throttle = 0;
 static uint16_t s_maxThrottle = DEFAULT_MAX_THROTTLE;
 static uint8_t  s_poles = DEFAULT_MOTOR_POLES;
@@ -416,10 +419,10 @@ static void drawConfig() {
 
 	drawBtn(BTN_EDT, "EDT ON", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_BEEP, "BEEP", C_PANEL, C_CYAN, 1);
+	gfxText(14, 240, "COMMANDS ONLY WORK WHILE DISARMED", C_DIM, 1);
 
-	gfxText(14, 256, "COMMANDS ONLY WORK WHILE DISARMED", C_DIM, 1);
-
-	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 2);
+	drawBtn(BTN_AM32, "AM32 ESC CONFIG", C_PANEL, C_CYAN, 2);
+	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1);
 }
 
 /** @brief Dispatch a press on the settings overlay. */
@@ -445,6 +448,10 @@ static void handleConfigTouch() {
 		escRequestEdtEnable();
 	} else if (hit(BTN_BEEP, x, y)) {
 		escRequestBeep(1);
+	} else if (hit(BTN_AM32, x, y)) {
+		s_am32 = true;
+		gfxFill(C_BG);
+		uiAm32Enter();
 	} else if (hit(BTN_BACK, x, y)) {
 		s_config = false;
 		invalidateAll();
@@ -598,6 +605,18 @@ void uiTick() {
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 
 	if (s_touch.down) s_lastTouchMs = millis();
+
+	// AM32 config owns the whole screen and the signal pin while it runs.
+	if (s_am32) {
+		if (!uiAm32Tick(&s_touch)) {
+			s_am32 = false;
+			invalidateAll();
+			gfxFill(C_BG);
+			s_shown.config = -1;
+		}
+		st7789FlushDirty();
+		return;
+	}
 
 	// s_zeroSince tracks the last moment throttle was non-zero, so
 	// (millis() - s_zeroSince) is "how long we have been at idle".

@@ -217,6 +217,109 @@ error rate points at signal integrity, not at the ESC.
 
 ---
 
+## AM32 ESC configuration
+
+**CFG → AM32 ESC CONFIG** reads and edits an AM32 ESC's settings over the same signal wire,
+with no laptop involved. Settings only for now; the transport is deliberately general so
+firmware flashing drops in later.
+
+Entering config mode disarms, tears down the DShot driver and hands the signal pin to the
+bootloader transport. Leaving hands it back.
+
+### Connecting
+
+Power the ESC, then open config mode. Each attempt **holds the signal line low** for
+`AM32_BOOT_LOW_MS` (default 200 ms), which makes AM32's running firmware give up on finding
+a valid input and jump to its bootloader. That's what allows connecting to an ESC that is
+already powered, instead of having to catch the brief listening window right after power-up.
+The line is then released, and the greeting is sent.
+
+If it doesn't connect, the screen tells you *which* half failed:
+
+| Message | Meaning | What to change |
+|---|---|---|
+| `NO REPLY - ESC DID NOT JUMP` | Line stayed silent | Raise `AM32_BOOT_LOW_MS`; try `AM32_PUSH_PULL_TX 0` |
+| `GOT n BYTES: xx xx xx` | ESC is talking, reply didn't parse | Baud or framing, not the jump — the bytes are shown so you can see what arrived |
+
+That distinction matters: silence and garbage need completely different fixes, and without
+a scope on the signal wire there's otherwise no way to tell them apart.
+
+Set `AM32_DEBUG 1` in `config.h` to mirror every transport step to USB serial.
+
+### Editing
+
+Two gestures, coarse and fine:
+
+| Gesture | Effect |
+|---|---|
+| Tap a row | Selects it; the editor bar at the bottom shows its name and value |
+| **Swipe the row sideways** | **Coarse** — one full-width swipe covers the field's entire range |
+| `-` / `+` buttons | **Fine** — one step per press; hold to repeat, accelerating |
+| Drag up/down | Scrolls the list |
+
+Axes are locked exclusively after 10 px of travel, so a swipe is either a scroll or an edit
+and never both. Coarse swipes snap to each field's own step, so motor poles stay even, and
+they re-anchor at the ends — overshoot the top and a small swipe back responds immediately
+instead of unwinding.
+
+Changed rows are marked amber down the left edge. **REVERT** restores everything to what
+was read. **HEX** shows the raw 48 bytes, which is the escape hatch if a field is ever
+decoded wrongly.
+
+Writing needs a **one second hold** on `HOLD TO WRITE` — a stray tap must never reprogram a
+motor controller. After writing, the block is read back and compared; a write that reports
+success but lands wrong is worse than one that fails loudly, so the screen only says
+`WRITE VERIFIED` if the readback matches byte for byte.
+
+### Protocol
+
+| | |
+|---|---|
+| Link | one-wire half-duplex serial, 19200 8N1, on `DSHOT_PIN` |
+| Init string | 21 bytes: twelve `0x00`, `0x0D`, `"BLHeli"`, `0xF4 0x7D` |
+| Commands | `SET_ADDRESS 0xFF 00 hi lo`, `SET_BUFFER 0xFE 00 00 len`, `PROG_FLASH 0x01 0x01`, `READ_FLASH 0x03 len`, `ERASE 0x02`, `RUN 0x00` |
+| Checksum | CRC-16/ARC — polynomial `0xA001`, init 0, appended low byte first |
+| ACK | `0x30`, always the last byte received |
+| Settings | 48 bytes, at an address that depends on the MCU |
+
+The settings page is **not** at a fixed address. The handshake reply identifies the MCU
+family in its fifth-from-last byte, and that decides where to look:
+
+| Type byte | Family | Settings at |
+|---|---|---|
+| `0x2B` | STM32G071, 2 KB pages | `0x7E00` |
+| `0x1F` | STM32F051, 1 KB pages | `0x7C00` |
+| `0x35` | STM32F3, 2 KB pages | `0xF800` |
+
+Indexing the reply from the *end* rather than the start is deliberate: a host with a
+hardware UART on the shared wire also captures its own transmission, so only the tail is
+in a predictable place.
+
+Bytes `0x05..0x0C` are overloaded — device name before layout revision 3, ramp and
+current-PID settings from revision 3 on — so fields are version-gated and the wrong set is
+never shown.
+
+Because host and ESC share one conductor, everything transmitted is echoed back and
+discarded before the reply is read. Interrupts are masked per byte rather than per frame:
+masking for a whole frame would starve the system for milliseconds, while per byte keeps
+the critical section near half a millisecond.
+
+### Verification
+
+Two independent cross-checks, both run from the host test harness:
+
+- Every protocol constant is asserted against a known-working Python configurator —
+  init string, all six command encodings, CRC polynomial and byte order, ACK position, and
+  all three MCU-to-address mappings.
+- The field table is decoded against that tool's own default settings blob and compared to
+  the semantics documented in its byte comments: 14 poles, 24 kHz, 2200 KV, 15° advance,
+  3.0 V cell cutoff, 1502 µs servo neutral, 204 A current limit, and so on.
+
+The current-limit `×2` factor and the one-based protocol enum were both wrong until that
+second check caught them.
+
+---
+
 ## Safety
 
 A motor on a bench is genuinely dangerous, and a propeller on a bench doubly so.
@@ -253,6 +356,9 @@ src/
   board_pins.h          RP2350-Touch-LCD-2 pin map, annotated from the schematic
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
+  ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
+  am32_bl.{h,cpp}       one-wire bootloader transport (reused for FW flashing)
+  am32_eeprom.{h,cpp}   AM32 settings layout, decoding and presentation
   gfx.{h,cpp}           RGB565 framebuffer, dirty bands, 5x7 font, 7-seg digits
   st7789.{h,cpp}        panel init + DMA blitter
   cst816.{h,cpp}        capacitive touch

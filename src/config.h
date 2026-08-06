@@ -185,3 +185,68 @@
 #define SERIAL_TELEMETRY       1
 
 /** @} */
+
+/**
+ * @defgroup cfg_am32 AM32 configuration mode
+ * @brief Timings for reaching an ESC's bootloader. Tune these first if the
+ *        config screen never connects.
+ * @{
+ */
+
+/**
+ * @brief Set to 1 to try forcing the bootloader by holding the signal low.
+ *
+ * Off by default. The reference configurator does no such thing — it simply
+ * repeats the init string and relies on the window the bootloader opens at
+ * power-up. Holding the line low also makes us deaf for the duration, which
+ * costs more windows than it creates.
+ */
+#define AM32_FORCE_LOW_JUMP    0
+
+/** @brief How long to hold the signal low when AM32_FORCE_LOW_JUMP is set. */
+#define AM32_BOOT_LOW_MS       200
+
+/** @brief Settling time after releasing the line, before the greeting is sent. */
+#define AM32_BOOT_SETTLE_MS    50
+
+/**
+ * @brief Timeout for the first reply byte of a handshake, in milliseconds.
+ *
+ * Kept short so a failed attempt costs little: catching the power-up window
+ * depends on how often we can retry, not on how patiently we wait.
+ */
+#define AM32_GREET_TMO_MS      30
+
+/**
+ * @brief Pause after a settings write before reading it back.
+ *
+ * The bootloader is erasing and programming a flash page and will not answer
+ * until it finishes. Reading too soon is what makes a good write look failed.
+ */
+#define AM32_WRITE_SETTLE_MS   300
+
+/**
+ * @brief Set to 1 to drive the line push-pull, 0 for open-drain plus pull-up.
+ *
+ * Push-pull gives clean fast edges. Open-drain is the safer choice if you are
+ * unsure whether the ESC might drive the line at the same time, and is worth
+ * trying if the link is unreliable on a long signal wire.
+ */
+#define AM32_PUSH_PULL_TX      1
+
+/**
+ * @brief Settling gap between bootloader commands, in milliseconds.
+ *
+ * The reference configurator waits 25 ms after each write. The bootloader is
+ * doing flash operations between commands and will drop anything that arrives
+ * while it is busy.
+ */
+#define AM32_CMD_GAP_MS        25
+
+/** @brief Extra gap for settings-page operations, which are slower still. */
+#define AM32_EEPROM_GAP_MS     50
+
+/** @brief Log every AM32 transport step to USB serial. */
+#define AM32_DEBUG             1
+
+/** @} */
