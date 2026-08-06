@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Documentation checks for DshotDisplay.
 
-Enforces the three things that actually go wrong, and nothing else:
+Enforces what actually goes wrong, and nothing else:
 
   1. every function declared in a header carries a doc comment
   2. every @param names a parameter that exists in the signature it precedes
-  3. every @ref points at something that exists
+  3. @param coverage is all-or-nothing -- Doxygen warns on partial coverage
+     regardless of WARN_NO_PARAMDOC, so documenting one argument out of six
+     is worse than documenting none
+  4. every @ref points at something that exists
+  5. Doxygen commands are escaped when merely being talked about; writing
+     "@mainpage" in prose makes Doxygen execute it, which silently produces a
+     second main page
+  6. backticks inside a doc comment are balanced, otherwise Doxygen hits the
+     end of the block still waiting to close a code span
 
 Deliberately narrower than Doxygen's WARN_IF_UNDOCUMENTED, which also fires on
 file-static internals. A comment on `s_scroll` saying "scroll position" is
@@ -73,7 +81,35 @@ def main():
                     problems.append(
                         f"{path}: @param '{name}' is not in ({', '.join(actual)})")
 
-        # --- 3. @ref targets must exist ---
+            # --- 3. all-or-nothing coverage ---
+            undocumented = [a for a in actual if a not in names]
+            if undocumented:
+                problems.append(
+                    f"{path}: partial @param coverage, missing "
+                    f"{', '.join(undocumented)} (document all or none)")
+
+        # --- 5. commands referred to in prose must be escaped ---
+        for m in re.finditer(r"/\*\*(.*?)\*/", text, re.S):
+            body = m.group(1)
+            line = text[:m.start()].count("\n") + 1
+            # A real @page/@mainpage is the first command in its block; any
+            # later one is prose that Doxygen will execute.
+            for cmd in ("mainpage", "page"):
+                for hit in re.finditer(r"(?<!\\)@" + cmd + r"\b(.*)", body):
+                    before = body[:hit.start()].strip(" *\n")
+                    if before:
+                        problems.append(
+                            f"{path}:{line}: unescaped @{cmd} in prose "
+                            f"(write \\@{cmd})")
+                    elif cmd == "page" and not hit.group(1).strip():
+                        problems.append(f"{path}:{line}: @page has no identifier")
+
+            # --- 6. balanced backticks ---
+            if body.count("`") % 2:
+                problems.append(
+                    f"{path}:{line}: odd number of backticks in a doc comment")
+
+        # --- 4. @ref targets must exist ---
         for ref in re.findall(r"@ref\s+([\w./]+)", text):
             target = ref.rstrip(".")
             if target in symbols:
