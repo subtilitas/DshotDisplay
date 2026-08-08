@@ -153,6 +153,16 @@ static void testGlyphs() {
 	checkInt("clipped-left glyph column, row 1", gfxBuffer()[1 * GFX_W + 0], 0);
 	checkInt("clipped-left glyph still dirties", gfxDirtyCount(), 1);
 
+	// Left clip at scale 2: '0' at x = -2 drops its first column, so screen
+	// column 0 shows glyph column 1 (0x51: rows 0, 4 and 6 lit) as a 2x2 block.
+	resetGfx();
+	gfxText(-2, 0, "0", C_WHITE, 2);
+	checkInt("scaled left-clip dirties", gfxDirtyCount(), 1);
+	checkInt("scaled left-clip column, row 0", gfxBuffer()[0 * GFX_W + 0], C_WHITE);
+	checkInt("scaled left-clip column, row 8", gfxBuffer()[8 * GFX_W + 0], C_WHITE);
+	checkInt("scaled left-clip column, row 12", gfxBuffer()[12 * GFX_W + 0], C_WHITE);
+	checkInt("scaled left-clip column, row 2", gfxBuffer()[2 * GFX_W + 0], 0);
+
 	// Lowercase folds to uppercase, unknown characters render as space.
 	resetGfx();
 	gfxText(0, 0, "a", C_WHITE, 1);            // 'A' has lit pixels
