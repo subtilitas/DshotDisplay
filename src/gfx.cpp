@@ -251,14 +251,39 @@ static void gfxChar(int x, int y, char ch, uint16_t fg, int scale) {
 	if (ch >= 'a' && ch <= 'z') ch -= 32;
 	if (ch < 0x20 || ch > 0x60) ch = 0x20;
 	const uint8_t *g = FONT5X7[(uint8_t)ch - 0x20];
-	for (int col = 0; col < 5; col++) {
+
+	// Clip the whole character once rather than clipping each pixel through
+	// gfxRect: a steady screen can redraw hundreds of pixels per frame, and
+	// the per-rect route costs bounds checks and up to MAX_BANDS merges per
+	// pixel for zero benefit.
+	if (x + 5 * scale <= 0 || x > GFX_W - 1 || y > GFX_H - 1) return;
+	int w = 5 * scale;
+	int h = 7 * scale;
+	// Clip on the left: the glyph shifts right by however many pixels are
+	// off-screen, and its columns are renumbered to match.
+	int colOff = 0;
+	if (x < 0) {
+		colOff = (-x + scale - 1) / scale;
+		x += colOff * scale;
+	}
+	int colEnd = (x + w > GFX_W) ? (GFX_W - x + scale - 1) / scale : 5 - colOff;
+	int rowEnd = (y + h > GFX_H) ? (GFX_H - y + scale - 1) / scale : 7;
+	int rowDrawn = -1;   // first row with a lit pixel
+
+	for (int col = colOff; col < colOff + colEnd; col++) {
 		uint8_t bits = g[col];
-		for (int row = 0; row < 7; row++) {
-			if (bits & (1 << row)) {
-				gfxRect(x + col * scale, y + row * scale, scale, scale, fg);
+		for (int row = 0; row < rowEnd; row++) {
+			if (!(bits & (1 << row))) continue;
+			if (rowDrawn < 0) rowDrawn = row;
+			uint16_t *p = &s_fb[(y + row * scale) * GFX_W + x + (col - colOff) * scale];
+			for (int sy = 0; sy < scale; sy++) {
+				for (int sx = 0; sx < scale; sx++) p[sx] = fg;
+				p += GFX_W;
 			}
 		}
 	}
+	if (rowDrawn < 0) return;   // nothing visible was drawn
+	gfxMarkDirty(y + rowDrawn * scale, y + rowEnd * scale - 1);
 }
 
 void gfxText(int x, int y, const char *s, uint16_t fg, int scale) {
