@@ -265,6 +265,7 @@ static void gfxChar(int x, int y, char ch, uint16_t fg, int scale) {
 	if (x < 0) {
 		colOff = (-x + scale - 1) / scale;
 		x += colOff * scale;
+		w -= colOff * scale;
 	}
 	int colEnd = (x + w > GFX_W) ? (GFX_W - x + scale - 1) / scale : 5 - colOff;
 	int rowEnd = (y + h > GFX_H) ? (GFX_H - y + scale - 1) / scale : 7;
