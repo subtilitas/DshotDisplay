@@ -12,12 +12,16 @@ int g_failures = 0;
 
 void runAm32Tests();
 void runUiTests();
+void runBridgeTests();
+void runDumpTest();
 
 int main() {
 	printf("DshotDisplay host tests\n");
 	printf("=======================\n");
 
 	runAm32Tests();
+	runBridgeTests();
+	runDumpTest();
 	runUiTests();
 
 	printf("\n=======================\n");

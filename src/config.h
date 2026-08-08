@@ -195,8 +195,16 @@
  * @{
  */
 
-/** @brief Set to 1 to mirror telemetry to USB serial at 10 Hz. */
-#define SERIAL_TELEMETRY       1
+/**
+ * @brief Set to 1 to mirror telemetry to USB serial at 10 Hz.
+ *
+ * Off by default. It shares the one USB port with the AM32 bridge and its
+ * traffic dump, and 10 lines a second of telemetry buries a dump you are trying
+ * to copy. Turn it on only when the tester itself is what you are debugging.
+ */
+#ifndef SERIAL_TELEMETRY
+#define SERIAL_TELEMETRY       0
+#endif
 
 /** @} */
 
@@ -262,5 +270,30 @@
 
 /** @brief Log every AM32 transport step to USB serial. */
 #define AM32_DEBUG             1
+
+/**
+ * @brief Capture USB-bridge traffic and dump it when bridge mode is left.
+ *
+ * **Off by default.** The dump shares the one USB port with the bridge, so it
+ * lands in whatever your desktop tool is doing the moment you leave bridge
+ * mode. Useful when debugging the link itself, in the way; turn it on only for
+ * that.
+ *
+ * At 0 the whole facility compiles out: no ring buffer, no output, every entry
+ * point an empty inline. With @ref SERIAL_TELEMETRY also 0, the only thing the
+ * firmware ever writes to USB is the bridge's own forwarded traffic.
+ */
+#ifndef AM32_BRIDGE_LOG
+#define AM32_BRIDGE_LOG        0
+#endif
+
+/**
+ * @brief Size of the bridge capture buffer, in bytes.
+ *
+ * Records are [ms:4][dir:1][len:1][payload], so this holds roughly 4 KB of
+ * traffic plus headers -- ample for a handshake and the first commands, which
+ * is where bridge problems show up. Oldest records are dropped first.
+ */
+#define AM32_BRIDGE_LOG_BYTES  4096
 
 /** @} */

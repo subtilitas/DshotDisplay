@@ -175,3 +175,69 @@ Am32Result am32BlRun();
 
 /** @brief Human-readable form of an @ref Am32Result. */
 const char *am32ResultText(Am32Result r);
+
+/**
+ * @defgroup am32_raw Raw line access
+ * @brief Byte-level access for the USB bridge, below the command layer.
+ *
+ * The bridge forwards traffic it does not interpret, so it needs the bit-banged
+ * UART without the frame, CRC and ACK handling built on top of it.
+ * @{
+ */
+
+/**
+ * @brief Transmit bytes verbatim, then release the line for a reply.
+ * @param data Bytes to send.
+ * @param len  Number of bytes.
+ */
+void am32WriteRaw(const uint8_t *data, uint16_t len);
+
+/** @brief Called with each byte the instant it has been clocked out. */
+typedef void (*Am32ByteSink)(uint8_t b);
+
+/**
+ * @brief Transmit bytes, reporting each one as it goes out on the wire.
+ *
+ * Identical to am32WriteRaw() but for the callback, which exists so the USB
+ * bridge can reproduce a real one-wire echo *at wire speed*.
+ *
+ * That pacing is not cosmetic. On a genuine one-wire link the host's receiver
+ * sees its own transmission as it happens, and the reference configurator
+ * depends on it:
+ *
+ * ```
+ * time.sleep(0.025)
+ * self.last_result = self.serial_port.read_all()
+ * if len(self.last_result) > 1:
+ *     if int(self.last_result[-1]) == 0x30: ...
+ *     else: self.last_result = None        # discarded
+ * ```
+ *
+ * A lone ACK fails `len > 1`, and a read that does not end in one is thrown
+ * away. So the ACK has to arrive in the same 25 ms window as at least one other
+ * byte. For a 256-byte payload -- 134 ms on the wire at 19200 baud -- what
+ * satisfies that on real hardware is the *tail of the echo* still arriving when
+ * the ESC acknowledges.
+ *
+ * Echo the whole frame at once instead and the tool sees a big burst that does
+ * not end in 0x30 (discarded), then silence, then a solitary ACK it will not
+ * accept. Settings survive it because the tool sleeps twice as long for those;
+ * firmware writes cannot.
+ *
+ * @param data Bytes to send.
+ * @param len  Number of bytes.
+ * @param sink Called after each byte reaches the wire. May be nullptr.
+ */
+void am32WriteRawEchoed(const uint8_t *data, uint16_t len, Am32ByteSink sink);
+
+/**
+ * @brief Collect whatever arrives within a window.
+ * @param[out] buf      Destination.
+ * @param      maxLen   Capacity of @p buf.
+ * @param      windowMs How long to wait for the first byte; subsequent bytes
+ *                      are gathered until the line goes idle.
+ * @return Number of bytes received.
+ */
+uint16_t am32ReadRaw(uint8_t *buf, uint16_t maxLen, uint32_t windowMs);
+
+/** @} */

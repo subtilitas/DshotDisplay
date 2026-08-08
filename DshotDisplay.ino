@@ -61,7 +61,9 @@
 #include "src/st7789.h"
 #include "src/cst816.h"
 #include "src/esc_task.h"
+#include "src/bridge_wire.h"
 #include "src/ui.h"
+#include "src/usb_bridge.h"
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
 #define UI_PERIOD_MS 25
@@ -78,9 +80,10 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  * shares, so touchInit() has to follow it.
  */
 void setup() {
-#if SERIAL_TELEMETRY
+	// Unconditional: the USB bridge and its traffic dump both need this port,
+	// and they are useful with telemetry logging switched off. Tying it to
+	// SERIAL_TELEMETRY would silently disable the bridge.
 	Serial.begin(115200);
-#endif
 
 	gfxInit();
 	st7789Init();       // also pulses the shared LCD/touch reset line
@@ -107,8 +110,10 @@ void loop() {
 		uiTick();
 	}
 
-#if SERIAL_TELEMETRY 
-	if ((int32_t)(millis() - s_nextLogMs) >= 0) {
+#if SERIAL_TELEMETRY
+	// The USB bridge owns the serial port while it runs; telemetry text
+	// interleaved with forwarded bytes would corrupt traffic both ways.
+	if (!usbBridgeActive() && (int32_t)(millis() - s_nextLogMs) >= 0) {
 		s_nextLogMs = millis() + 100;
 		EscTelemetry t;
 		escSnapshot(&t);
@@ -129,11 +134,17 @@ void setup1() {
 }
 
 /**
- * @brief Core1 loop: nothing but the DShot frame pump.
+ * @brief Core1 loop: the DShot frame pump, and the AM32 wire when bridging.
  *
  * Deliberately kept free of anything that can block, so frame spacing stays
  * within tolerance regardless of what core0 is doing.
+ *
+ * The two are mutually exclusive and both no-op when inactive, so they can be
+ * called unconditionally: the bridge only runs once the DShot driver has been
+ * suspended and handed over the pin. Both are here for the same reason -- they
+ * are bit-timed, and core0 is busy driving a display.
  */
 void loop1() {
 	escTaskPoll();
+	bridgeWirePoll();
 }
