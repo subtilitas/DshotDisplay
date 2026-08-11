@@ -11,15 +11,15 @@ what was actually built and why it diverged.
 | Document | Status |
 |---|---|
 | [kiss-telemetry.md](kiss-telemetry.md) | In progress |
-| [blackbox-logging.md](blackbox-logging.md) | Design |
+| [blackbox-logging.md](blackbox-logging.md) | In progress |
 
 ## Shared context
 
-Both features are on `dev/telemetry-logging`, cut from `main`. They are related:
+Both features landed on `dev/telemetry-logging`, cut from `main`. They are related:
 KISS supplies higher-resolution voltage and current, and the log is the main
 reason that resolution is worth having — a 0.25 V/LSB voltage trace is not worth
 plotting.
 
-KISS telemetry is partially implemented; SD logging is not implemented yet. Order of work is KISS first: the logger's field set
-depends on what the telemetry layer can supply, and building the log around EDT
-resolution first would mean revisiting the field table.
+Both are partially implemented. KISS telemetry decodes and merges but has no UI;
+SD logging has a validated encoder, a ring buffer and a FatFs writer, but no UI
+and no hardware bring-up. Neither has run against a real ESC or a real card.

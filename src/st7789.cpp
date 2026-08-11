@@ -8,7 +8,9 @@
 #include "config.h"
 #include "gfx.h"
 
-#include <Arduino.h>
+#include "plat.h"
+#include <hardware/pwm.h>
+#include <hardware/clocks.h>
 #include <hardware/spi.h>
 #include <hardware/dma.h>
 #include <hardware/gpio.h>
@@ -141,14 +143,25 @@ void st7789Init() {
 	delay(50);
 
 	// --- backlight on GPIO15 via an NPN, PWM-able ---
-	pinMode(PIN_LCD_BL, OUTPUT);
-	analogWriteFreq(20000);
-	analogWriteRange(255);
+	//
+	// 20 kHz, comfortably above audible: the backlight boost inductor whines at
+	// PWM frequencies inside the audio band, which is a surprising and annoying
+	// thing to track down later.
+	//
+	// clk_sys is 150 MHz. Wrap 255 gives an 8-bit duty range to match the
+	// existing API, so the divider is 150e6 / (20e3 * 256) = 29.3.
+	gpio_set_function(PIN_LCD_BL, GPIO_FUNC_PWM);
+	unsigned slice = pwm_gpio_to_slice_num(PIN_LCD_BL);
+	pwm_config cfg = pwm_get_default_config();
+	pwm_config_set_clkdiv(&cfg, (float)clock_get_hz(clk_sys) / (20000.0f * 256.0f));
+	pwm_config_set_wrap(&cfg, 255);
+	pwm_init(slice, &cfg, true);
+
 	st7789SetBacklight(LCD_BACKLIGHT_DEFAULT);
 }
 
 void st7789SetBacklight(uint8_t level) {
-	analogWrite(PIN_LCD_BL, level);
+	pwm_set_gpio_level(PIN_LCD_BL, level);
 }
 
 void st7789Sleep(bool on) {

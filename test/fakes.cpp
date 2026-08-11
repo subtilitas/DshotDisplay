@@ -11,7 +11,12 @@
  * dependent on how fast the machine runs.
  */
 
-#include "Arduino.h"
+#include "pico/stdlib.h"
+#include "hardware/adc.h"
+#include "hardware/pwm.h"
+#include "hardware/clocks.h"
+#include "hardware/i2c.h"
+#include "hardware/uart.h"
 #include "gfx.h"
 #include "st7789.h"
 #include "cst816.h"
@@ -24,27 +29,54 @@
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// virtual clock and Arduino surface
+// virtual clock and the Pico SDK surface the firmware uses
 // ---------------------------------------------------------------------------
+
+// Time is virtual: it advances only when a test says so. plat.h's millis() and
+// micros() are inline wrappers over these, so faking the SDK timebase fakes
+// both without the firmware knowing.
 static uint32_t g_ms = 0;
 
 void fakeAdvance(uint32_t ms) { g_ms += ms; }
-uint32_t millis() { return g_ms; }
-uint32_t time_us_32() { return g_ms * 1000; }
-void delay(uint32_t d) { g_ms += d; }
+uint64_t time_us_64() { return (uint64_t)g_ms * 1000u; }
+uint32_t time_us_32() { return g_ms * 1000u; }
+void sleep_ms(uint32_t d) { g_ms += d; }
+void sleep_us(uint64_t us) { g_ms += (uint32_t)(us / 1000u); }
 
-void pinMode(uint32_t, uint32_t) {}
-void digitalWrite(uint32_t, uint32_t) {}
-void analogWrite(uint32_t, int) {}
-void analogWriteFreq(uint32_t) {}
-void analogWriteRange(uint32_t) {}
-void analogReadResolution(int) {}
-/** @brief ~3.92 V pack through the board's 200k/100k divider. */
-int analogRead(uint32_t) { return (int)(3.92f / 3.0f / 3.3f * 4095.0f); }
+// --- ADC: a steady ~3.92 V pack through the board's 200k/100k divider ---
+void adc_init() {}
+void adc_gpio_init(unsigned) {}
+void adc_select_input(unsigned) {}
+uint16_t adc_read() { return (uint16_t)(3.92f / 3.0f / 3.3f * 4095.0f); }
 
-SerialStub Serial;
-void SerialStub::begin(unsigned long) {}
-int SerialStub::printf(const char *, ...) { return 0; }
+// --- PWM: the backlight. Levels are accepted and discarded ---
+unsigned pwm_gpio_to_slice_num(unsigned) { return 0; }
+pwm_config pwm_get_default_config() { return pwm_config{}; }
+void pwm_config_set_clkdiv(pwm_config *, float) {}
+void pwm_config_set_wrap(pwm_config *, uint16_t) {}
+void pwm_init(unsigned, pwm_config *, bool) {}
+void pwm_set_gpio_level(unsigned, uint16_t) {}
+
+uint32_t clock_get_hz(enum clock_index) { return 150000000u; }
+
+// --- I2C: every transfer fails, which is what an absent touch controller
+//     does. touchPoll() then reports no contact and the fake touch injector
+//     in this file drives the UI tests instead ---
+i2c_inst_t *i2c0 = nullptr;
+i2c_inst_t *i2c1 = nullptr;
+void i2c_init(i2c_inst_t *, unsigned) {}
+int i2c_write_timeout_us(i2c_inst_t *, uint8_t, const uint8_t *, size_t, bool, unsigned) { return -1; }
+int i2c_read_timeout_us(i2c_inst_t *, uint8_t, uint8_t *, size_t, bool, unsigned) { return -1; }
+
+// --- UART: never readable. No ESC here to answer a telemetry request ---
+uart_inst_t *uart0 = nullptr;
+uart_inst_t *uart1 = nullptr;
+unsigned uart_init(uart_inst_t *, unsigned baud) { return baud; }
+void uart_deinit(uart_inst_t *) {}
+bool uart_is_readable(uart_inst_t *) { return false; }
+uint8_t uart_getc(uart_inst_t *) { return 0; }
+void uart_set_format(uart_inst_t *, unsigned, unsigned, enum uart_parity_t) {}
+void uart_set_fifo_enabled(uart_inst_t *, bool) {}
 
 // ---------------------------------------------------------------------------
 // display: render into the real framebuffer, never push pixels anywhere

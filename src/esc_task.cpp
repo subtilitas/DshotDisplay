@@ -2,10 +2,12 @@
 #include "config.h"
 #include "kiss_telem.h"
 
-#include <Arduino.h>
+#include "plat.h"
 #include <string.h>
 #include <PIO_DShot.h>
 #include <pico/critical_section.h>
+#include <hardware/uart.h>
+#include <hardware/gpio.h>
 
 /**
  * @file esc_task.cpp
@@ -65,10 +67,9 @@ static uint32_t    s_kissReqMs = 0;     /**< millis() of the outstanding request
 static void kissDrain(uint32_t ms) {
 	KissFrame f;
 
-	while (KISS_SERIAL.available() > 0) {
-		int c = KISS_SERIAL.read();
-		if (c < 0) break;
-		if (kissFeed(&s_kiss, (uint8_t)c, &f)) {
+	while (uart_is_readable(KISS_UART)) {
+		uint8_t c = uart_getc(KISS_UART);
+		if (kissFeed(&s_kiss, c, &f)) {
 			s_kissPending = false;
 			critical_section_enter_blocking(&s_cs);
 			s_tel.kissVolts  = f.volts;
@@ -171,10 +172,12 @@ void escTaskBegin() {
 
 #if KISS_TELEM_ENABLE
 	memset(&s_kiss, 0, sizeof(s_kiss));
-	// RX only: the ESC talks, we never answer. Setting TX would drive a pin the
-	// ESC is already driving.
-	KISS_SERIAL.setRX(KISS_TELEM_PIN);
-	KISS_SERIAL.begin(KISS_BAUD);
+	// RX only: the ESC talks, we never answer. Claiming a TX pin would drive a
+	// line the ESC is already driving.
+	uart_init(KISS_UART, KISS_BAUD);
+	gpio_set_function(KISS_TELEM_PIN, GPIO_FUNC_UART);
+	uart_set_format(KISS_UART, 8, 1, UART_PARITY_NONE);
+	uart_set_fifo_enabled(KISS_UART, true);
 #endif
 
 	s_nextSendUs = time_us_32();
@@ -255,7 +258,7 @@ void escTaskPoll() {
 		// The AM32 bootloader owns the signal pin from here. Nothing will be
 		// requesting telemetry, so a UART left running would only accumulate
 		// noise into a decoder that has no way to tell it from a reply.
-		KISS_SERIAL.end();
+		uart_deinit(KISS_UART);
 		s_kissPending = false;
 #endif
 		s_suspended = true;
@@ -271,8 +274,10 @@ void escTaskPoll() {
 		memset(&s_kiss, 0, sizeof(s_kiss));
 		s_kissCountdown = 0;
 		s_kissPending = false;
-		KISS_SERIAL.setRX(KISS_TELEM_PIN);
-		KISS_SERIAL.begin(KISS_BAUD);
+		uart_init(KISS_UART, KISS_BAUD);
+		gpio_set_function(KISS_TELEM_PIN, GPIO_FUNC_UART);
+		uart_set_format(KISS_UART, 8, 1, UART_PARITY_NONE);
+		uart_set_fifo_enabled(KISS_UART, true);
 #endif
 		critical_section_enter_blocking(&s_cs);
 		s_tel.initError = s_esc->initError();

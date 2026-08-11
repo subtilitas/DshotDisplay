@@ -1,7 +1,8 @@
 # SD logging in Betaflight blackbox format
 
-Status: design, not implemented.
-Branch: `dev/telemetry-logging`.
+Status: implemented, not yet run against a card.
+Branch: `dev/telemetry-logging`, ported to the native Pico SDK on
+`dev/pico-sdk-native`.
 
 ## Why blackbox format rather than CSV
 
@@ -22,6 +23,7 @@ validating its output with the actual `blackbox_decode` binary in CI.
 instance — `SD_SCK` is GP19, which is SPI0 **TX** in the RP2350 pin mux, not
 SCK — so it would need a PIO-SPI or SDIO driver. Out of scope. This branch is
 cut from `main`, which is 2.0"-only, so there is nothing to compile out.
+(`SD_LOG_ENABLE` exists anyway, and CI builds both settings.)
 
 ## Hardware
 
@@ -37,10 +39,13 @@ Pins are already in `board_pins.h` and map cleanly onto SPI1:
 The display is on SPI0, so SD writes and the display's multi-millisecond DMA
 bursts do not contend for a peripheral. They still contend for core0 time.
 
-Library: SdFat (`greiman/SdFat`), which arduino-pico supports and which has the
-pre-allocated contiguous-file support that matters below. `FsFile::preAllocate()`
+Library: FatFs, via carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`. `f_expand()`
 reserves a contiguous cluster run up front so writes do not stall on FAT
 allocation mid-log.
+
+(The original plan named SdFat. That was written while this was still an Arduino
+project; SdFat is Arduino-bound and did not survive the move to the native Pico
+SDK.)
 
 ## File format
 
@@ -119,15 +124,17 @@ Blackbox Explorer only draws graphs it recognises.
 | `eRPMkiss[0]` | KISS | eRPM | ~50 Hz; flat 100 eRPM steps |
 | `vbatLatest` | KISS, else EDT | 0.01 V | `vbatscale`/`vbatref` in the header |
 | `amperageLatest` | KISS, else EDT | 0.01 A | |
+| `vbatEdt` | EDT | 0.01 V | non-standard name |
+| `amperageEdt` | EDT | 0.01 A | non-standard name |
 | `escTemperature[0]` | KISS, else EDT | °C | slow-moving; candidate for an S frame |
+| `escConsumption` | KISS only | mAh | non-standard name |
+| `escStress` | EDT | 0..255 | non-standard name |
 
 `vbatLatest` and `amperageLatest` are certain — `parser.c` looks them up by name.
 `eRPM[0]` and `escTemperature[0]` follow Betaflight's own naming but are *not* in
 the parser's well-known list, so they decode as ordinary columns. Confirm against
 a real Betaflight log before settling on them; matching the exact spelling is the
 whole reason to prefer these names over invented ones.
-| `escConsumption` | KISS only | mAh | non-standard name |
-| `escStress` | EDT | 0..255 | non-standard name |
 
 Voltage and current units are chosen to match `escSensorData_t`, so KISS values
 go in unscaled and the lossy step is only on the EDT fallback path.
@@ -167,7 +174,7 @@ whatever else it was doing.
   would destroy it.
 - Core0 owns the card. Core0 already tolerates multi-millisecond display DMA,
   and the UI is not real-time critical.
-- Pre-allocate the file with `preAllocate()` so FAT updates do not land
+- Pre-allocate the file with `f_expand()` so FAT updates do not land
   mid-flight.
 - Drop-and-count on buffer overrun rather than blocking. A gap in the log is
   recoverable; a stalled UI with a live motor is not. Surface the drop count —
@@ -213,8 +220,8 @@ the workflow or vendoring a binary. Building from source is slower but honest.
    emission, I and P frame assembly, predictor state. No hardware.
 2. Host tests for the primitives.
 3. CI step: build `blackbox-tools`, generate a log, decode it, assert clean.
-4. `src/log_sink.h` — the interface the encoder writes into; file-backed on
-   host, SdFat-backed on device.
+4. `src/log_ring.h` — the buffer the encoder writes into; drained to the card
+   by `sd_log.cpp`, or to a file in the host tests.
 5. `src/sd_log.cpp` — card init, pre-allocation, ring buffer, chunked flush,
    overrun counting.
 6. Field table wired to `EscTelemetry` + throttle.
@@ -239,4 +246,4 @@ the workflow or vendoring a binary. Building from source is slower but honest.
 
 - [`betaflight/blackbox-tools`](https://github.com/betaflight/blackbox-tools) — `src/parser.c` and `src/blackbox_fielddefs.h`, the definitive reader
 - [Betaflight blackbox source](https://github.com/betaflight/betaflight/tree/master/src/main/blackbox) — the reference writer
-- [`greiman/SdFat`](https://github.com/greiman/SdFat) — SD library, pre-allocation
+- [`carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`](https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico) — FatFs over SPI, RP2350-capable
