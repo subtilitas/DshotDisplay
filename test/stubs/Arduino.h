@@ -7,6 +7,8 @@
 #include <string.h>
 #define OUTPUT 1
 #define INPUT_PULLUP 2
+#define LOW 0
+#define HIGH 1
 #define A0 26
 #define A1 27
 #define A2 28

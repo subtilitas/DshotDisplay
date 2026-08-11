@@ -4,10 +4,13 @@
  *
  * Everything in this file is safe to change without touching the rest of the
  * firmware. Anything that describes the board itself rather than a preference
- * lives in @ref board_pins.h instead.
+ * lives in @ref board_pins.h instead, and which board you are building for is
+ * @ref board.h.
  */
 
 #pragma once
+
+#include "board.h"
 
 /**
  * @defgroup cfg_esc ESC connection
@@ -16,19 +19,33 @@
  */
 
 /**
- * @brief GPIO the ESC signal wire goes to.
+ * @brief GPIO the ESC signal wire goes to. Board-dependent default.
  *
- * GP4 is P2 header pin 11, two positions from GND on P2 pin 13, so a 3-pin
- * servo plug lands SIGNAL / (skip) / GND. The skipped middle position is GP10
- * (P2 pin 12), an unused camera pin — that is the whole reason GP4 was chosen
- * over the other candidates. See the "Plugging an ESC in directly" section of
- * README.md for why GP20 and GP29 are not usable.
+ * On the **RP2350-Touch-LCD-2** this is **GP4**: P2 header pin 11, two
+ * positions from GND on P2 pin 13, so a 3-pin servo plug lands
+ * SIGNAL / (skip) / GND. The skipped middle position is GP10 (P2 pin 12), an
+ * unused camera pin — that is the whole reason GP4 was chosen over the other
+ * candidates. See the "Plugging an ESC in directly" section of README.md for
+ * why GP20 and GP29 are not usable there.
+ *
+ * On the **RP2350-Touch-LCD-2.8** this is **GP28**, J4 pin 11. That board has
+ * an RTC, a codec and an SD slot where the other one has a camera header, and
+ * GP28 and GP29 are the only two GPIOs left unclaimed. GP29 works identically
+ * if you prefer the end of the connector.
+ *
+ * Override with `-DDSHOT_PIN=n` or by editing the value here.
  *
  * @warning The middle wire of an ESC lead is the BEC +5 V output, and RP2350
  *          GPIO is **not** 5 V tolerant. Depin or cut that wire before
  *          plugging anything in.
  */
-#define DSHOT_PIN              4
+#ifndef DSHOT_PIN
+  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
+    #define DSHOT_PIN          4
+  #else
+    #define DSHOT_PIN          28
+  #endif
+#endif
 
 /**
  * @brief DShot bitrate in kBaud. 300 / 600 / 1200 are the common ones.

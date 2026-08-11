@@ -14,7 +14,7 @@
 #include "Arduino.h"
 #include "gfx.h"
 #include "st7789.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
 #include "am32_bl.h"
 #include "am32_eeprom.h"

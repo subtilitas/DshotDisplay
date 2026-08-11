@@ -14,4 +14,6 @@ struct TwoWire {
   uint8_t requestFrom(uint8_t, uint8_t);
   int read();
 };
+// Wire is i2c0, Wire1 is i2c1. Which one a board uses is BOARD_I2C.
 extern TwoWire Wire;
+extern TwoWire Wire1;

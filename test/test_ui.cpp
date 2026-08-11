@@ -12,8 +12,9 @@
 #include "fakes.h"
 #include "gfx.h"
 #include "ui.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
+#include "board_pins.h"
 
 #include "../src/ui_am32.cpp"   // NOLINT -- see the note above
 
@@ -228,6 +229,9 @@ void runUiTests() {
 		checkTrue("\"DISPLAY\" at scale 4 fits", gfxTextW("DISPLAY", 4) <= GFX_W);
 		checkTrue("subtitle fits", gfxTextW("BIDIRECTIONAL ESC TESTER", 1) <= GFX_W);
 		checkTrue("credit line fits", gfxTextW("JuWi made", 2) <= GFX_W);
+		// The board name is the one splash string that changes with the build,
+		// and the 2.8" name is six characters longer than the 2.0" one.
+		checkTrue("board name fits", gfxTextW(BOARD_LABEL, 1) <= GFX_W);
 		// Regression: the original splash was drawn at a hardcoded x=24, which
 		// pushed the trailing "Y" 15 px off a 240 px panel.
 		checkTrue("old hardcoded placement would overflow",
