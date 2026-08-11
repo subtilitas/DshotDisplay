@@ -198,6 +198,14 @@
 /** @brief Set to 1 to mirror telemetry to USB serial at 10 Hz. */
 #define SERIAL_TELEMETRY       1
 
+/**
+ * @brief UI theme selection.
+ *
+ * - 0 — Default dark theme
+ * - 1 — LCARS (Star Trek) theme
+ */
+#define UI_THEME               1
+
 /** @} */
 
 /**

@@ -17,7 +17,7 @@ WARN     := -Wall -Wextra -Wshadow -Wno-unused-parameter
 INCLUDES := -Istubs -I../src -I.
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp fakes.cpp \
-        ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp
+        ../src/gfx.cpp ../src/ui.cpp ../src/ui_lcars.cpp ../src/am32_eeprom.cpp
 
 BIN := dshot_tests
 
@@ -35,3 +35,10 @@ run: $(BIN)
 
 clean:
 	rm -f $(BIN) *.ppm
+
+previews: run
+	@python3 -c "\
+from PIL import Image; \
+[Image.open(f'shot_{n}.ppm').save(f'../docs/lcars-{n}.png') \
+ for n in ('splash','tester_disarmed','tester_armed','settings')]"
+	@echo "LCARS previews written to docs/"
