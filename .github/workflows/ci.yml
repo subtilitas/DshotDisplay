@@ -91,21 +91,24 @@ jobs:
           for tx in 0 1; do
             for jump in 0 1; do
               for rot in 0 2; do
-                work=$(mktemp -d)
-                cp -r src "$work/src"
-                cp DshotDisplay.ino "$work/main.cpp"
-                sed -i '1i void setup(); void loop(); void setup1(); void loop1();' "$work/main.cpp"
-                sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
-                sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
-                sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
-                printf 'TX=%s JUMP=%s ROT=%s ... ' "$tx" "$jump" "$rot"
-                if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
-                       -Wno-unused-parameter -Itest/stubs -I"$work" \
-                       "$work/main.cpp" "$work"/src/*.cpp; then
-                  echo ok
-                else
-                  echo FAIL; fail=1
-                fi
+                for kiss in 0 1; do
+                  work=$(mktemp -d)
+                  cp -r src "$work/src"
+                  cp DshotDisplay.ino "$work/main.cpp"
+                  sed -i '1i void setup(); void loop(); void setup1(); void loop1();' "$work/main.cpp"
+                  sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
+                  sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
+                  sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
+                  printf 'TX=%s JUMP=%s ROT=%s KISS=%s ... ' "$tx" "$jump" "$rot" "$kiss"
+                  if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
+                         -Wno-unused-parameter -DKISS_TELEM_ENABLE=$kiss \
+                         -Itest/stubs -I"$work" \
+                         "$work/main.cpp" "$work"/src/*.cpp; then
+                    echo ok
+                  else
+                    echo FAIL; fail=1
+                  fi
+                done
               done
             done
           done

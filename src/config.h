@@ -72,6 +72,82 @@
 /** @} */
 
 /**
+ * @defgroup cfg_kiss KISS telemetry
+ * @brief The separate telemetry wire. Optional; the firmware works without it.
+ *
+ * Extended DShot Telemetry gives voltage in 0.25 V steps and current in whole
+ * amps, which is too coarse to see a 200 mV sag or measure idle draw. A KISS
+ * ESC will send 0.01 V and 0.01 A over a dedicated wire if the DShot frame asks
+ * for it. See docs/design/kiss-telemetry.md.
+ * @{
+ */
+
+/**
+ * @brief Compile the KISS telemetry path in at all.
+ *
+ * `#ifndef` so a build can override it with `-D`; the host tests compile
+ * esc_task.cpp both ways to keep the disabled path from rotting.
+ */
+#ifndef KISS_TELEM_ENABLE
+#define KISS_TELEM_ENABLE      1
+#endif
+
+/**
+ * @brief GPIO the ESC's telemetry pad connects to. Receive only.
+ *
+ * GP5 is UART1 RX and lands on P1 header pin 10. UART1 is chosen over UART0 so
+ * the USB-serial debug path is left alone. In arduino-pico, UART1 is `Serial2`.
+ *
+ * Other candidates, all free and broken out: GP9 (UART1 RX, P1 pin 2), GP21
+ * (UART1 RX, P1 pin 5), GP1 (UART0 RX, P2 pin 8).
+ *
+ * @warning The KISS spec puts this line at 3.6 V, which is exactly the RP2350's
+ *          absolute-maximum GPIO voltage — no margin at all. Most BLHeli_32 and
+ *          AM32 ESCs actually drive 3.3 V and are fine, but measure yours
+ *          before connecting it, and consider a 1 k series resistor.
+ */
+#define KISS_TELEM_PIN         5
+
+/**
+ * @brief Arduino serial object for @ref KISS_TELEM_PIN.
+ *
+ * arduino-pico maps `Serial1` to UART0 and `Serial2` to UART1. This must agree
+ * with the pin: GP5 is a UART1 RX pin, so `Serial2`. Changing @ref
+ * KISS_TELEM_PIN to a UART0 pin such as GP1 means changing this to `Serial1`.
+ */
+#define KISS_SERIAL            Serial2
+
+/**
+ * @brief Request telemetry on every Nth DShot frame.
+ *
+ * A KISS frame occupies ~870 us on the wire and the ESC begins sending it about
+ * 900 us after the request, so at the 1 kHz @ref DSHOT_PERIOD_US frame rate
+ * anything below about 2 would overlap replies. 20 gives 50 Hz, far faster than
+ * the display repaints, and leaves the wire idle most of the time.
+ */
+#define KISS_REQUEST_EVERY_N   20
+
+/**
+ * @brief How long a KISS frame stays authoritative, in milliseconds.
+ *
+ * Past this, the merged reading falls back to EDT. Unplugging the telemetry
+ * wire mid-session should visibly drop back to coarse values rather than freeze
+ * the last fine ones, which would look like a working sensor reporting a
+ * perfectly steady pack.
+ */
+#define KISS_STALE_MS          500
+
+/**
+ * @brief Abandon a reply that has not completed this long after the request.
+ *
+ * Only matters for the timeout counter and for discarding a partial frame; the
+ * next request resynchronises regardless.
+ */
+#define KISS_REPLY_TIMEOUT_MS  10
+
+/** @} */
+
+/**
  * @defgroup cfg_safety Safety
  * @brief Interlocks. Read these before raising any of them.
  * @{
