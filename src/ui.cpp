@@ -10,6 +10,7 @@
 
 #include "ui.h"
 #include "ui_am32.h"
+#include "ui_lcars.h"
 #include "gfx.h"
 #include "cst816.h"
 #include "st7789.h"
@@ -160,18 +161,26 @@ static bool hit(const Btn &b, int x, int y) {
 /** @brief Draw a rounded button with its label centred. */
 static void drawBtn(const Btn &b, const char *label, uint16_t fill,
                     uint16_t fg, int scale) {
+#if UI_THEME == 1
+	lcarsBtn(b.x, b.y, b.w, b.h, label, fill, fg, scale);
+#else
 	gfxRoundRect(b.x, b.y, b.w, b.h, 6, fill);
 	gfxRoundFrame(b.x, b.y, b.w, b.h, 6, C_GRID);
 	int tw = gfxTextW(label, scale);
 	gfxText(b.x + (b.w - tw) / 2, b.y + (b.h - 7 * scale) / 2, label, fg, scale);
+#endif
 }
 
 /** @brief Draw one telemetry tile: dim caption above a larger value. */
 static void drawLabelled(int x, int y, int w, int h, const char *label,
                          const char *value, uint16_t vcol) {
+#if UI_THEME == 1
+	lcarsLabelled(x, y, w, h, label, value, vcol);
+#else
 	gfxRect(x, y, w, h, C_PANEL);
 	gfxText(x + 6, y + 4, label, C_DIM, 1);
 	gfxText(x + 6, y + 15, value, vcol, 2);
+#endif
 }
 
 /**
@@ -239,6 +248,16 @@ static void drawStatusBar() {
 
 	gfxRect(0, Z_STATUS_Y0, GFX_W, Z_STATUS_Y1 - Z_STATUS_Y0 + 1, C_PANEL);
 
+#if UI_THEME == 1
+	uint16_t badge = s_armed ? LC_RED : LC_GREEN;
+	gfxRoundRect(4, 3, 92, 20, 10, badge);
+	const char *txt = s_armed ? "ARMED" : "SAFE";
+	gfxText(4 + (92 - gfxTextW(txt, 2)) / 2, 7, txt, LC_BG, 2);
+
+	if (!s_armed && progress > 0) {
+		gfxRect(4, 21, 92 * progress / 100, 2, LC_ORANGE);
+	}
+#else
 	uint16_t badge = s_armed ? C_RED : C_GREEN;
 	gfxRoundRect(4, 3, 92, 20, 4, badge);
 	const char *txt = s_armed ? "ARMED" : "SAFE";
@@ -247,6 +266,7 @@ static void drawStatusBar() {
 	if (!s_armed && progress > 0) {
 		gfxRect(4, 21, 92 * progress / 100, 2, C_LIME);
 	}
+#endif
 
 	char buf[24];
 	snprintf(buf, sizeof(buf), "DS%d", DSHOT_SPEED_KBAUD);
@@ -274,10 +294,15 @@ static void drawRpm() {
 
 	gfxRect(0, Z_RPM_Y0, GFX_W, Z_RPM_Y1 - Z_RPM_Y0 + 1, C_BG);
 
+#if UI_THEME == 1
+	uint16_t on = alive ? LC_ORANGE : C_REDDARK;
+	gfxSegNumber(226, 32, 36, 62, 8, 6, rpm, 5, on, 0x1082);
+	gfxText(226 - gfxTextW("RPM", 2), 100, "RPM", LC_DIM, 2);
+#else
 	uint16_t on = alive ? C_LIME : C_REDDARK;
 	gfxSegNumber(226, 32, 36, 62, 8, 6, rpm, 5, on, 0x1082);
-
 	gfxText(226 - gfxTextW("RPM", 2), 100, "RPM", C_DIM, 2);
+#endif
 
 	char buf[32];
 	if (alive) snprintf(buf, sizeof(buf), "ERPM %lu", (unsigned long)erpm);
@@ -368,6 +393,35 @@ static void drawThrottle() {
 	gfxRect(0, Z_THR_Y0, GFX_W, Z_THR_Y1 - Z_THR_Y0 + 1, C_BG);
 
 	char buf[24];
+#if UI_THEME == 1
+	gfxText(THR_TRACK_X, 236, s_hold ? "THROTTLE REL" : "THROTTLE", LC_DIM, 1);
+	snprintf(buf, sizeof(buf), "MAX %d%%", maxPct);
+	gfxText(THR_TRACK_X + 80, 236, buf, LC_RED, 1);
+
+	snprintf(buf, sizeof(buf), "%d%%", pct);
+	gfxText(GFX_W - THR_TRACK_X - gfxTextW(buf, 2), 234, buf,
+	        pct > 0 ? LC_ORANGE : LC_DIM, 2);
+
+	gfxRoundRect(THR_TRACK_X, THR_TRACK_Y, THR_TRACK_W, THR_TRACK_H, 12, LC_DKBLUE);
+	int fillW = s_maxThrottle
+	                ? (int)((uint32_t)s_throttle * THR_TRACK_W / s_maxThrottle)
+	                : 0;
+	if (fillW > THR_TRACK_W) fillW = THR_TRACK_W;
+	if (fillW > 0) {
+		gfxRoundRect(THR_TRACK_X, THR_TRACK_Y, fillW, THR_TRACK_H, 12,
+		             s_armed ? LC_ORANGE : LC_PURPLE);
+	}
+	if (s_armed && s_hold) {
+		int hx = THR_TRACK_X + fillW - 3;
+		if (hx < THR_TRACK_X) hx = THR_TRACK_X;
+		if (hx > THR_TRACK_X + THR_TRACK_W - 6) hx = THR_TRACK_X + THR_TRACK_W - 6;
+		gfxRect(hx, THR_TRACK_Y - 3, 6, THR_TRACK_H + 6, LC_WHITE);
+	}
+	gfxRoundFrame(THR_TRACK_X, THR_TRACK_Y, THR_TRACK_W, THR_TRACK_H, 12, LC_TAN);
+	if (!s_armed) {
+		gfxText(THR_TRACK_X + 8, THR_TRACK_Y + 10, "ARM TO ENABLE", LC_DIM, 1);
+	}
+#else
 	gfxText(THR_TRACK_X, 236, s_hold ? "THROTTLE REL" : "THROTTLE", C_DIM, 1);
 	snprintf(buf, sizeof(buf), "MAX %d%%", maxPct);
 	gfxText(THR_TRACK_X + 80, 236, buf, C_AMBER, 1);
@@ -401,6 +455,7 @@ static void drawThrottle() {
 	if (!s_armed) {
 		gfxText(THR_TRACK_X + 8, THR_TRACK_Y + 10, "ARM TO ENABLE", C_DIM, 1);
 	}
+#endif
 }
 
 /** @brief ARM/DISARM, HOLD and CFG buttons. */
@@ -413,11 +468,19 @@ static void drawButtons() {
 	s_shown.config = s_config;
 
 	gfxRect(0, Z_BTN_Y0, GFX_W, Z_BTN_Y1 - Z_BTN_Y0 + 1, C_BG);
+#if UI_THEME == 1
+	drawBtn(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
+	        s_armed ? LC_RED : LC_TAN, LC_BG, s_armed ? 2 : 1);
+	drawBtn(BTN_HOLD, "HOLD", s_hold ? LC_BLUE : LC_PURPLE,
+	        s_hold ? LC_WHITE : LC_BG, 1);
+	drawBtn(BTN_CFG, "CFG", LC_PURPLE, LC_BG, 1);
+#else
 	drawBtn(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
 	        s_armed ? C_RED : C_PANEL, C_WHITE, s_armed ? 2 : 1);
 	drawBtn(BTN_HOLD, "HOLD", s_hold ? C_BLUE : C_PANEL,
 	        s_hold ? C_WHITE : C_DIM, 1);
 	drawBtn(BTN_CFG, "CFG", C_PANEL, C_DIM, 1);
+#endif
 }
 
 /** @} */
@@ -609,11 +672,15 @@ static void handleMainTouch() {
 }
 
 void uiDrawSplash() {
+#if UI_THEME == 1
+	lcarsDrawSplash();
+#else
 	gfxFill(C_BG);
 	gfxTextCenter(104, "DSHOT", C_LIME, 4);
 	gfxTextCenter(144, "DISPLAY", C_TEXT, 4);
 	gfxTextCenter(188, "BIDIRECTIONAL ESC TESTER", C_DIM, 1);
 	gfxTextCenter(216, "JuWi made", C_CYAN, 2);
+#endif
 }
 
 uint16_t uiThrottle() { return s_throttle; }
