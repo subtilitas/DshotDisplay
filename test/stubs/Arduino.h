@@ -31,3 +31,17 @@ struct SerialStub {
   int printf(const char*, ...);
 };
 extern SerialStub Serial;
+
+// arduino-pico's UART objects. Only the members the firmware actually calls;
+// the point is to typecheck esc_task.cpp on the host, not to emulate a UART.
+// The KISS path is RX-only, hence no write()/print().
+struct UartStub {
+  void setRX(unsigned);
+  void setTX(unsigned);
+  void begin(unsigned long);
+  void end();
+  int  available();
+  int  read();
+};
+extern UartStub Serial1; /**< UART0. */
+extern UartStub Serial2; /**< UART1. @see KISS_SERIAL */

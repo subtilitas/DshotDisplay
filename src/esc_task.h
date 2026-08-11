@@ -54,6 +54,27 @@ struct EscTelemetry {
 	bool     haveTemp;      /**< True once a temperature frame has arrived. */
 	bool     haveStress;    /**< True once a stress frame has arrived. */
 	bool     initError;     /**< PIO state machine setup failed. */
+
+	/**
+	 * @name KISS telemetry
+	 * From the separate telemetry wire, not the DShot signal line. Kept
+	 * distinct from the EDT fields above rather than overwriting them, so the
+	 * two can be compared against each other during bring-up — which is how
+	 * the KISS decoder gets validated against a source already trusted.
+	 * @see escMerge(), docs/design/kiss-telemetry.md
+	 * @{
+	 */
+	float    kissVolts;     /**< Pack voltage, 0.01 V resolution. */
+	float    kissAmps;      /**< Current, 0.01 A resolution. */
+	int16_t  kissTempC;     /**< ESC temperature, degrees Celsius. */
+	uint16_t kissMah;       /**< Consumption since ESC power-on, not since arm. */
+	uint32_t kissErpm;      /**< Electrical RPM, 100 eRPM steps. */
+	uint32_t kissLastMs;    /**< millis() of the last CRC-valid frame. */
+	uint32_t kissGood;      /**< Frames that passed CRC since boot. */
+	uint32_t kissBad;       /**< Frames that failed CRC since boot. */
+	uint32_t kissTimeouts;  /**< Requests that drew no complete reply. */
+	bool     haveKiss;      /**< True once any frame has been decoded. */
+	/** @} */
 };
 
 /**

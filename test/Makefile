@@ -1,7 +1,8 @@
 # Host tests for DshotDisplay.
 #
-#   make          build and run
+#   make          syntax-check, build and run
 #   make build    build only
+#   make syntax   typecheck the device-only sources
 #   make clean
 #
 # Needs nothing but a C++17 compiler: the firmware is compiled against the
@@ -21,9 +22,9 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp fakes.cpp \
 
 BIN := dshot_tests
 
-.PHONY: all build run clean
+.PHONY: all build run syntax clean
 
-all: run
+all: syntax run
 
 build: $(BIN)
 
@@ -32,6 +33,15 @@ $(BIN): $(SRCS) $(wildcard ../src/*.h) $(wildcard *.h)
 
 run: $(BIN)
 	./$(BIN)
+
+# Both settings of KISS_TELEM_ENABLE, so the disabled path cannot rot unnoticed.
+syntax:
+	@for f in $(DEVICE_SRCS); do \
+		$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -fsyntax-only $$f || exit 1; \
+	done
+	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DKISS_TELEM_ENABLE=0 \
+		-fsyntax-only ../src/esc_task.cpp || exit 1
+	@echo "device sources typecheck"
 
 clean:
 	rm -f $(BIN) *.ppm
