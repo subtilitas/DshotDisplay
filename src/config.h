@@ -126,6 +126,9 @@
  * the display repaints, and leaves the wire idle most of the time.
  */
 #define KISS_REQUEST_EVERY_N   20
+#if KISS_REQUEST_EVERY_N < 2
+#error "KISS_REQUEST_EVERY_N must be >= 2 to avoid overlapping KISS replies"
+#endif
 
 /**
  * @brief How long a KISS frame stays authoritative, in milliseconds.
