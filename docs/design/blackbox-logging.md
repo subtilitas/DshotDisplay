@@ -115,7 +115,8 @@ Blackbox Explorer only draws graphs it recognises.
 | `loopIteration` | counter | — | required at index 0 |
 | `time` | `micros()` | µs | required at index 1 |
 | `motor[0]` | commanded throttle | 0..2000 | `rcCommand[3]` is the other candidate |
-| `eRPM[0]` | bidir DShot | eRPM | full resolution, not the KISS field |
+| `eRPM[0]` | bidir DShot | eRPM | 1 kHz; relative resolution ~0.2–0.4% |
+| `eRPMkiss[0]` | KISS | eRPM | ~50 Hz; flat 100 eRPM steps |
 | `vbatLatest` | KISS, else EDT | 0.01 V | `vbatscale`/`vbatref` in the header |
 | `amperageLatest` | KISS, else EDT | 0.01 A | |
 | `escTemperature[0]` | KISS, else EDT | °C | slow-moving; candidate for an S frame |
@@ -130,6 +131,12 @@ whole reason to prefer these names over invented ones.
 
 Voltage and current units are chosen to match `escSensorData_t`, so KISS values
 go in unscaled and the lossy step is only on the EDT fallback path.
+
+Both eRPM sources are logged. Neither dominates the other: bidirectional DShot
+wins on rate, KISS wins on resolution above roughly 5,000 RPM on a 12–16 pole
+motor. See [kiss-telemetry.md](kiss-telemetry.md#erpm-which-source-is-actually-finer).
+`eRPMkiss[0]` updates at ~50 Hz, so under a `PREVIOUS` predictor it costs one
+byte per P frame for the ~19 frames in 20 where it has not changed.
 
 Open: whether to log the merged value plus a source flag, or KISS and EDT as
 separate fields. Separate is better for validating the KISS decoder and worse

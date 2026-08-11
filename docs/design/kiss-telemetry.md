@@ -16,16 +16,78 @@ payload:
 | Current | 1 A/LSB, 255 A max | 0.01 A/LSB, 655.35 A max | 100x |
 | Temperature | 1 °C/LSB | 1 °C/LSB | same |
 | Consumption | not carried | 1 mAh/LSB | — |
-| eRPM | full eRPM frame resolution | **100 eRPM/LSB** | **KISS is worse** |
+| eRPM | ~eRPM/256 to eRPM/511 | 100 eRPM/LSB | see below |
 
 On a 6S pack, 0.25 V/LSB means the voltage readout moves in ~1% steps and a sag
 of 200 mV is invisible. 1 A/LSB makes idle current unmeasurable and makes any
 efficiency figure derived from it meaningless.
 
-The last row is the important one and it drives the whole design: **KISS is not
-a replacement for bidirectional DShot.** Its eRPM field is quantised to 100
-eRPM, which is far coarser than the eRPM frame we already decode. KISS is a
-better source for volts, amps and consumption, and a worse source for RPM.
+The eRPM row is not a simple win either way — see the next section.
+
+## eRPM: which source is actually finer
+
+Worth working out rather than assuming, because the intuition that "100 eRPM/LSB
+is coarse" is wrong for the motors this tool is used with.
+
+The bidirectional DShot eRPM frame does not carry eRPM. It carries a **period**,
+as a 3-bit exponent and a 9-bit mantissa. ESCs normalise the mantissa — that is
+exactly what EDT's frame detection relies on — so the mantissa sits in 256..511
+and the period step is `2^exponent ≈ period/512`.
+
+That makes bidirectional DShot a **relative** measurement: about 0.2–0.4%
+regardless of speed. Its *absolute* eRPM error therefore grows with RPM:
+
+```
+d(eRPM) = 60e6/P² × step ≈ eRPM / mantissa,   mantissa ∈ [256, 511]
+```
+
+KISS is the opposite: a flat **absolute** 100 eRPM, so its *relative* error
+shrinks as RPM rises. The two cross over, and the crossover is low:
+
+| Poles | Crossover (mechanical RPM) |
+|---|---|
+| 12 | ~6,455 |
+| 14 | ~5,533 |
+| 16 | ~4,841 |
+
+Above that, KISS is the finer measurement. In mechanical RPM after dividing by
+`poles/2` — which is the number actually displayed — on a 14-pole motor:
+
+| Mechanical RPM | Bidir DShot step | KISS step |
+|---|---|---|
+| 3,000 | 8.4 | 14.3 |
+| 5,000 | 11.7 | 14.3 |
+| 8,000 | 29.9 | 14.3 |
+| 12,000 | 33.6 | 14.3 |
+| 20,000 | 46.7 | 14.3 |
+| 30,000 | 105.0 | 14.3 |
+
+KISS is flat at ~14 RPM while bidirectional DShot degrades to 105 RPM at 30k.
+For a 12–16 pole motor anywhere above idle, **KISS resolves RPM better**.
+
+### So why keep bidirectional DShot as the RPM source
+
+Rate and latency, not resolution.
+
+- Bidirectional DShot returns eRPM on **every** frame — 1 kHz at the current
+  `DSHOT_PERIOD_US`. KISS runs at the request cadence, ~50 Hz proposed.
+- Anything dynamic — spin-up, step response, oscillation, a desync — lives in
+  that 1 kHz stream and is invisible at 50 Hz.
+- KISS adds ~900 µs of transport latency plus request scheduling.
+
+For the **log**, temporal resolution is the whole point, so eRPM comes from
+bidirectional DShot. For the **display**, which repaints far slower than either
+source, KISS is arguably the better number above the crossover.
+
+One caveat before treating averaging as a fix: averaging N bidirectional samples
+only beats quantisation if the underlying signal is noisy enough to dither it. On
+a genuinely steady RPM the quantisation error is deterministic and averaging
+returns the same wrong value more confidently.
+
+Proposal: log both, display bidirectional DShot with KISS shown alongside during
+bring-up, and revisit which one the main readout uses once there is hardware to
+compare them on. Logging both costs one field and settles the question with
+data instead of arithmetic.
 
 ## Protocol
 
@@ -150,14 +212,15 @@ volts  = kissFresh && kissHaveVolts ? kiss.volts : edt.volts
 amps   = kissFresh && kissHaveAmps  ? kiss.amps  : edt.amps
 tempC  = kissFresh                  ? kiss.tempC : edt.tempC
 mAh    = kissFresh                  ? kiss.mAh   : (none)
-rpm    = always from the bidirectional DShot eRPM frame
+rpm    = bidirectional DShot eRPM frame; kiss.eRPM kept alongside, not merged
 ```
 
 `kissFresh` = a CRC-valid frame within the last `KISS_STALE_MS` (proposal: 500
 ms). Unplugging the telemetry wire mid-session should fall back to EDT within
 half a second rather than freezing the last reading.
 
-RPM deliberately never comes from KISS — see the table at the top.
+RPM is the one field that is *not* merged. Both sources are kept and logged
+separately — see the eRPM section above for why neither is strictly better.
 
 The UI should show which source is live. A number that silently changes
 provenance and resolution is worse than no number: 12.25 V from EDT and 12.25 V
@@ -172,6 +235,7 @@ float    kissVolts;      /**< 0.01 V resolution. */
 float    kissAmps;       /**< 0.01 A resolution. */
 int16_t  kissTempC;
 uint16_t kissMah;        /**< Cumulative consumption since ESC power-on. */
+uint32_t kissErpm;       /**< 100 eRPM steps. Kept for comparison, not merged. */
 uint32_t kissLastMs;     /**< millis() of the last CRC-valid frame. */
 uint32_t kissGood;       /**< CRC-valid frames since boot. */
 uint32_t kissBad;        /**< CRC failures since boot. */
@@ -241,6 +305,13 @@ Host tests, following the existing `test/` pattern:
 - Consumption is cumulative since ESC power-on, not since app start. Show raw,
   or subtract a zero taken at arm time?
 - Is 50 Hz the right default, or should it follow the UI refresh rate?
+- Which eRPM source should the main readout use above the crossover? Decide from
+  logged data, not from the arithmetic above — the analysis assumes the ESC's
+  period measurement is itself exact, and the real noise floor may swamp the
+  difference entirely.
+- If KISS eRPM turns out to be the better steady-state number, is a fused
+  estimate worth it — bidirectional DShot for dynamics, KISS to correct slow
+  bias — or is that more machinery than the readout justifies?
 
 ## Sources
 
