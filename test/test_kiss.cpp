@@ -8,6 +8,8 @@
 #include "check.h"
 
 #include "../src/kiss_telem.h"
+#include "../src/esc_merge.h"
+#include "../src/esc_task.h"
 
 #include <string.h>
 
@@ -255,6 +257,102 @@ static void testPayloadBuilder() {
 	checkTrue("matches sendThrottle() encoding", true);
 }
 
+/** @brief An EDT-only telemetry block: every EDT field present, no KISS. */
+static void edtOnly(EscTelemetry *t) {
+	memset(t, 0, sizeof(*t));
+	t->volts = 12.25f; t->haveVolts = true;   // EDT resolution: 0.25 V steps
+	t->amps  = 3.0f;   t->haveAmps  = true;   // EDT resolution: whole amps
+	t->tempC = 40;     t->haveTemp  = true;
+	t->erpm  = 70000;
+	t->rpm   = 10000;
+}
+
+/** @brief Per-field preference and the staleness edge. */
+static void testMerge() {
+	section("Merging KISS with EDT");
+
+	EscTelemetry t;
+	EscReading r;
+
+	// No KISS at all: everything falls back to EDT.
+	edtOnly(&t);
+	escMerge(&t, 1000, 500, &r);
+	checkTrue("EDT used when KISS absent", r.voltsFrom == EscSource::Edt);
+	checkInt("EDT volts x100", (long)(r.volts * 100.0f + 0.5f), 1225);
+	checkTrue("no mAh without KISS", r.mahFrom == EscSource::None);
+	checkInt("mAh reads zero", r.mah, 0);
+	checkTrue("kiss not fresh", !r.kissFresh);
+
+	// A fresh KISS frame takes over the electrical fields.
+	t.haveKiss = true;
+	t.kissLastMs = 900;
+	t.kissVolts = 12.37f;
+	t.kissAmps = 3.42f;
+	t.kissTempC = 41;
+	t.kissMah = 250;
+	t.kissErpm = 69900;
+	escMerge(&t, 1000, 500, &r);
+	checkTrue("KISS preferred when fresh", r.voltsFrom == EscSource::Kiss);
+	checkInt("KISS volts x100", (long)(r.volts * 100.0f + 0.5f), 1237);
+	checkInt("KISS amps x100", (long)(r.amps * 100.0f + 0.5f), 342);
+	checkInt("KISS temperature", r.tempC, 41);
+	checkTrue("mAh appears", r.mahFrom == EscSource::Kiss);
+	checkInt("mAh value", r.mah, 250);
+
+	// RPM is never taken from KISS, however fresh it is.
+	checkInt("rpm still from DShot", r.rpm, 10000);
+	checkInt("erpm still from DShot", r.erpm, 70000);
+	checkInt("KISS erpm carried alongside", r.kissErpm, 69900);
+	checkTrue("KISS erpm flagged present", r.haveKissErpm);
+
+	// The staleness edge. 499 ms old is fresh, 500 is not.
+	escMerge(&t, 900 + 499, 500, &r);
+	checkTrue("499 ms old is fresh", r.voltsFrom == EscSource::Kiss);
+	escMerge(&t, 900 + 500, 500, &r);
+	checkTrue("500 ms old is stale", r.voltsFrom == EscSource::Edt);
+	checkInt("falls back to EDT volts", (long)(r.volts * 100.0f + 0.5f), 1225);
+
+	// Consumption goes to zero rather than freezing. A stale mAh sitting beside
+	// a live voltage would read as "the motor stopped drawing current".
+	checkTrue("stale mAh is dropped", r.mahFrom == EscSource::None);
+	checkInt("stale mAh reads zero", r.mah, 0);
+	checkTrue("stale KISS erpm dropped", !r.haveKissErpm);
+
+	// KISS present but EDT never seen: stale KISS leaves nothing behind.
+	memset(&t, 0, sizeof(t));
+	t.haveKiss = true; t.kissLastMs = 0; t.kissVolts = 12.0f;
+	escMerge(&t, 5000, 500, &r);
+	checkTrue("no source at all", r.voltsFrom == EscSource::None);
+	checkInt("reads zero, not stale data", (long)(r.volts * 100.0f), 0);
+}
+
+/** @brief millis() wraps every 49 days; the staleness test must survive it. */
+static void testMergeWraparound() {
+	section("Staleness across millis() rollover");
+
+	EscTelemetry t;
+	EscReading r;
+	edtOnly(&t);
+	t.haveKiss = true;
+
+	// Frame arrived 100 ms before the counter wrapped; "now" is 50 ms after.
+	t.kissLastMs = 0xFFFFFF9Cu;      // -100 as unsigned
+	escMerge(&t, 50, 500, &r);
+	checkTrue("150 ms across the wrap is fresh", r.voltsFrom == EscSource::Kiss);
+
+	// Same frame, but now 600 ms have passed across the wrap.
+	escMerge(&t, 500, 500, &r);
+	checkTrue("600 ms across the wrap is stale", r.voltsFrom == EscSource::Edt);
+}
+
+/** @brief Source labels, which the UI prints verbatim. */
+static void testSourceLabels() {
+	section("Source labels");
+	checkStr("KISS", escSourceLabel(EscSource::Kiss), "KISS");
+	checkStr("EDT",  escSourceLabel(EscSource::Edt),  "EDT");
+	checkStr("none", escSourceLabel(EscSource::None), "--");
+}
+
 /** @brief Run every KISS suite. */
 void runKissTests() {
 	testCrc();
@@ -265,4 +363,7 @@ void runKissTests() {
 	testStreamingRecovery();
 	testResync();
 	testPayloadBuilder();
+	testMerge();
+	testMergeWraparound();
+	testSourceLabels();
 }
