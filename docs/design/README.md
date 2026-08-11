@@ -20,6 +20,6 @@ KISS supplies higher-resolution voltage and current, and the log is the main
 reason that resolution is worth having — a 0.25 V/LSB voltage trace is not worth
 plotting.
 
-Neither is implemented. Order of work is KISS first: the logger's field set
+KISS telemetry is partially implemented; SD logging is not implemented yet. Order of work is KISS first: the logger's field set
 depends on what the telemetry layer can supply, and building the log around EDT
 resolution first would mean revisiting the field table.
