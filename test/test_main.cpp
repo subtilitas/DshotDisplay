@@ -12,6 +12,7 @@ int g_failures = 0;
 
 void runAm32Tests();
 void runUiTests();
+void runKissTests();
 void runGfxTests();
 
 int main() {
@@ -20,6 +21,7 @@ int main() {
 
 	runAm32Tests();
 	runUiTests();
+	runKissTests();
 	runGfxTests();
 
 	printf("\n=======================\n");
