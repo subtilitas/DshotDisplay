@@ -23,6 +23,7 @@
 #include "esc_task.h"
 #include "am32_bl.h"
 #include "am32_eeprom.h"
+#include "sd_log.h"
 #include "fakes.h"
 
 #include <stdio.h>
@@ -202,3 +203,39 @@ void fakeDumpFrame(const char *name) {
 	}
 	fclose(f);
 }
+
+// ---------------------------------------------------------------------------
+// SD logging: a fake card the tests drive directly
+// ---------------------------------------------------------------------------
+//
+// sd_log.cpp itself cannot be linked here -- it pulls in FatFs and the SPI
+// driver -- so the UI is tested against this instead. It is not a simulation of
+// a card: it is a way to put the logger into a given state and check the screen
+// renders it.
+
+static SdLogStatus g_log = { SdLogState::NoCard, 0, 0, 0, 0, 0, 0, 0 };
+
+void fakeSdLogSet(const SdLogStatus *st) { g_log = *st; }
+
+bool sdLogBegin() {
+	g_log.state = SdLogState::Idle;
+	return true;
+}
+
+bool sdLogStart() {
+	if (g_log.state == SdLogState::NoCard) return false;
+	g_log.state = SdLogState::Logging;
+	if (!g_log.fileNumber) g_log.fileNumber = 1;
+	return true;
+}
+
+void sdLogStop() {
+	if (g_log.state == SdLogState::Logging) g_log.state = SdLogState::Idle;
+	g_log.fileNumber = 0;
+}
+
+bool sdLogActive() { return g_log.state == SdLogState::Logging; }
+void sdLogTick(uint32_t, uint16_t) {}
+void sdLogFlush() {}
+void sdLogSetArmed(bool armed) { if (armed) sdLogStart(); else sdLogStop(); }
+void sdLogStatus(SdLogStatus *out) { *out = g_log; }

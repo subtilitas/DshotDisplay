@@ -53,7 +53,8 @@ QMI8658 IMU, LiPo charger.
 | Touch INT | 29 | active low |
 | Touch RESET | 20 | **same net as LCD_RST** — resetting one resets both |
 | Battery sense | 28 | ADC2, 200k/100k divider → `VBAT = Vadc × 3` |
-| microSD | 24–27 | SPI1, unused here |
+| microSD | 24–27 | SPI1 — blackbox logging, see below |
+| KISS telemetry RX | 5 | UART1 RX, P1 pin 10 — optional third wire |
 | Camera bus | 0–11, 21–23 | **free if no camera is fitted** |
 
 ### Wiring the ESC
@@ -233,6 +234,68 @@ the checksum error rate — at 1 kHz you should see close to 1000/s and 0 % err.
 error rate points at signal integrity, not at the ESC.
 
 ---
+
+## Telemetry and logging
+
+### KISS telemetry (optional third wire)
+
+Extended DShot Telemetry rides inside the eRPM frame and costs no extra wiring,
+but it is coarse: voltage in 0.25 V steps, current in whole amps. On a 6S pack
+that means a 200 mV sag is invisible and idle current is unmeasurable.
+
+A KISS-compatible ESC — most BLHeli_32 and AM32 firmware — will send **0.01 V
+and 0.01 A** over a dedicated wire when the DShot frame asks for it, plus a mAh
+consumption figure EDT has no room for at all.
+
+| ESC | Board |
+|---|---|
+| Telemetry pad | **GP5** — P1 header, pin 10 |
+
+That is the only extra connection; the line is transmit-only from the ESC.
+Requests go out at 50 Hz by default (`KISS_REQUEST_EVERY_N`).
+
+The voltage, current and temperature tiles show which source they are using —
+**KISS** in cyan, **EDT** dimmed. That tag is not decoration: 12.25 V from EDT
+means "somewhere in a 0.25 V bucket" and the same reading from KISS means
+"within 0.01 V", so a readout quietly dropping back to coarse values is worth
+seeing. Unplug the wire and the tiles fall back within `KISS_STALE_MS`.
+
+> **Voltage.** The KISS spec puts this line at 3.6 V, which is exactly the
+> RP2350's absolute-maximum GPIO voltage — no margin at all. Most ESCs actually
+> drive 3.3 V and are fine, but measure yours before connecting it, and consider
+> a 1 k series resistor.
+
+RPM is deliberately **not** taken from KISS. Not because it is coarser — above
+about 5,000 RPM on a 12–16 pole motor it is actually finer, since bidirectional
+DShot encodes a period with a 9-bit mantissa and degrades in absolute terms as
+RPM rises — but because it arrives at 50 Hz against DShot's 1 kHz, and spin-up,
+oscillation and desync all live in the fast stream. Both are written to the log
+so the question can be settled with data. The arithmetic is in
+`docs/design/erpm_resolution.py`.
+
+### Blackbox logging to microSD
+
+Logs are written in Betaflight's blackbox format, so they open directly in
+Blackbox Explorer, `blackbox_decode` and PIDtoolbox. Files are named
+`LOGnnnnn.BFL` on a FAT-formatted card.
+
+Reach it from **CFG → SD LOG**. The screen shows card state, the current file,
+frames and kB written, dropped frames, buffer high-water mark and the worst
+single card write. Logging starts and stops with **ARM** by default
+(`SD_LOG_AUTO_ON_ARM`), and the START/STOP button is always available.
+
+At the default 500 Hz the log runs about **14.5 bytes per frame — 7.3 kB/s, or
+26 MB/hour**, which no card will struggle with.
+
+The two numbers worth watching on first use are **BUF PEAK** and **WORST
+FLUSH**. `SD_LOG_BUFFER_BYTES` defaults to 8 kB, which is roughly a second of
+data, but the right size depends on how long your card stalls for an internal
+erase — and that is a property of the card, not something to guess. A peak
+approaching the buffer size, or a flush longer than the buffer holds, means
+raise it. **DROPPED FRAMES** above zero means it was already too small.
+
+Frames are dropped rather than blocking, always. A gap in the log is
+recoverable; a stalled UI with a live motor is not.
 
 ## AM32 ESC configuration
 

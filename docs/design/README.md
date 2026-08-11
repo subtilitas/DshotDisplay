@@ -20,6 +20,8 @@ KISS supplies higher-resolution voltage and current, and the log is the main
 reason that resolution is worth having — a 0.25 V/LSB voltage trace is not worth
 plotting.
 
-Both are partially implemented. KISS telemetry decodes and merges but has no UI;
-SD logging has a validated encoder, a ring buffer and a FatFs writer, but no UI
-and no hardware bring-up. Neither has run against a real ESC or a real card.
+Both are now implemented end to end -- decode, merge, encode, buffer, write and
+UI -- and neither has run against a real ESC or a real card. Hardware bring-up
+is the only remaining step, and the logging screen exists largely to make it
+possible: BUF PEAK and WORST FLUSH are what size the ring buffer, and there was
+previously no way to read them.

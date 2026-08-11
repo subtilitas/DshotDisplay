@@ -1,6 +1,6 @@
 # SD logging in Betaflight blackbox format
 
-Status: implemented, not yet run against a card.
+Status: implemented including UI; not yet run against a card.
 Branch: `dev/telemetry-logging`, ported to the native Pico SDK on
 `dev/pico-sdk-native`.
 
@@ -145,9 +145,10 @@ motor. See [kiss-telemetry.md](kiss-telemetry.md#erpm-which-source-is-actually-f
 `eRPMkiss[0]` updates at ~50 Hz, so under a `PREVIOUS` predictor it costs one
 byte per P frame for the ~19 frames in 20 where it has not changed.
 
-Open: whether to log the merged value plus a source flag, or KISS and EDT as
-separate fields. Separate is better for validating the KISS decoder and worse
-for tool compatibility. Possibly a debug-mode switch.
+Settled: both sources are logged separately. It costs about two bytes a frame
+and it means the KISS decoder can be checked against EDT from the log itself
+rather than trusted. The UI shows the merged value with a source tag; the log
+keeps them apart.
 
 ## Rate and volume
 
@@ -225,7 +226,8 @@ the workflow or vendoring a binary. Building from source is slower but honest.
 5. `src/sd_log.cpp` — card init, pre-allocation, ring buffer, chunked flush,
    overrun counting.
 6. Field table wired to `EscTelemetry` + throttle.
-7. UI: card status, start/stop, bytes written, drops.
+7. UI: card status, start/stop, bytes written, drops. *Done: CFG -> SD LOG,
+   plus a REC indicator in the status bar.*
 8. `config.h`: log rate, I interval, buffer size, field selection.
 9. Hardware bring-up: measure real throughput and worst-case stall; size the
    buffer from that rather than the guess above.
@@ -233,11 +235,8 @@ the workflow or vendoring a binary. Building from source is slower but honest.
 
 ## Open questions
 
-- Log the merged voltage/current, or KISS and EDT separately? Affects the field
-  table and tool compatibility.
-- Auto-start on arm, or manual only?
 - Is a `S` (slow) frame worth it for temperature and status, or is the saving
-  too small to justify the extra frame type?
+  too small to justify the extra frame type? Still open, and minor.
 - Does anything downstream care that `Firmware type` claims Cleanflight? That is
   what Betaflight itself writes, so probably not, but it is a lie worth knowing
   we are telling.

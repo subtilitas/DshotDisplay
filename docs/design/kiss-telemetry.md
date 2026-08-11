@@ -1,6 +1,6 @@
 # KISS ESC telemetry
 
-Status: partially implemented (decoder + core1 integration); UI/logging integration pending.
+Status: implemented (decoder, core1 integration, merge, UI); not yet run against a real ESC.
 Branch: `dev/telemetry-logging`.
 
 ## Why
@@ -291,7 +291,8 @@ Host tests, following the existing `test/` pattern:
    in `config.h`; UART stub in `test/stubs/`.
 4. Wire into `esc_task.cpp`: telemetry-bit request path via `sendRaw12Bit()`,
    UART drain in `escTaskPoll()`, new `EscTelemetry` fields.
-5. Merge policy + source indicator in the UI.
+5. Merge policy + source indicator in the UI. *Done: the voltage, current and
+   temperature tiles read through escMerge() and carry a KISS/EDT tag.*
 6. Hardware bring-up: verify the wire level, confirm frames arrive, cross-check
    KISS against EDT on the same ESC.
 7. README wiring section.

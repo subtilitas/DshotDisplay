@@ -14,6 +14,9 @@
 #include "ui.h"
 #include "cst816.h"
 #include "esc_task.h"
+#include "esc_merge.h"
+#include "sd_log.h"
+#include "plat.h"
 
 #include "../src/ui_am32.cpp"   // NOLINT -- see the note above
 
@@ -58,7 +61,12 @@ static void swipe(int x0, int x1, int y, int step) {
 #define BTN_ARM_Y   299
 #define BTN_HOLD_X  143
 #define BTN_CFG_X   205
-#define BTN_AM32_Y  275   // BTN_AM32 spans 256..293
+// The AM32 row is split: AM32 on the left, SD LOG on the right, with a gap
+// between them. Tapping the row centre lands in that gap and hits neither,
+// which is how this constant first went wrong.
+#define BTN_AM32_X   66   // BTN_AM32 spans x 14..117
+#define BTN_LOG_X   174   // BTN_LOG  spans x 122..225
+#define BTN_AM32_Y  275   // both span y 256..293
 // --- config-screen coordinates ---
 #define AM32_BACK_X 216
 #define AM32_BACK_Y  23
@@ -67,6 +75,118 @@ static void swipe(int x0, int x1, int y, int step) {
 #define AM32_EDIT_Y 240
 #define AM32_WRITE_X 50
 #define AM32_WRITE_Y 290
+// --- logging-screen coordinates, mirroring ui.cpp ---
+#define LOG_TOGGLE_Y 232
+#define LOG_BACK_Y   292
+
+/**
+ * @brief Navigate main -> SETTINGS -> SD LOG.
+ *
+ * Assumes the main screen is showing and the ESC is disarmed.
+ */
+static void enterLogScreen() {
+	tap(BTN_CFG_X, BTN_ARM_Y);
+	tap(BTN_LOG_X, BTN_AM32_Y);
+}
+
+/**
+ * @brief The logging screen's buttons, checked through the fake logger.
+ *
+ * No probe into ui.cpp is needed: the fake *is* the observable. Tapping START
+ * has to reach sdLogStart() for the fake's state to change, so this exercises
+ * the real navigation, hit-testing and dispatch rather than asserting on
+ * pixels.
+ */
+static void testLogScreen() {
+	section("SD logging screen");
+
+	// A card that mounted but is not recording.
+	SdLogStatus st;
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Idle;
+	fakeSdLogSet(&st);
+
+	enterLogScreen();
+	frames(2);
+	checkTrue("not recording on arrival", !sdLogActive());
+
+	tap(120, LOG_TOGGLE_Y + 20);
+	checkTrue("START begins a log", sdLogActive());
+
+	sdLogStatus(&st);
+	checkTrue("a file number is assigned", st.fileNumber != 0);
+
+	tap(120, LOG_TOGGLE_Y + 20);
+	checkTrue("STOP ends it", !sdLogActive());
+
+	// Counters worth showing: a full buffer and lost frames are the two things
+	// the screen exists to make visible.
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Logging;
+	st.fileNumber = 42;
+	st.framesLogged = 12345;
+	st.bytesWritten = 178000;
+	st.dropEvents = 3;
+	st.peakBuffer = 7000;
+	st.worstFlushMs = 64;
+	fakeSdLogSet(&st);
+	frames(2);
+	fakeDumpFrame("shot_log_screen.ppm");
+
+	// With no card, START must not pretend to have started.
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::NoCard;
+	fakeSdLogSet(&st);
+	frames(2);
+	tap(120, LOG_TOGGLE_Y + 20);
+	checkTrue("START does nothing without a card", !sdLogActive());
+
+	tap(120, LOG_BACK_Y + 9);
+	frames(2);
+}
+
+/**
+ * @brief The main screen with KISS telemetry live.
+ *
+ * The merge policy itself is unit-tested in test_kiss.cpp; what this covers is
+ * that the UI actually goes through escMerge() rather than reading the EDT
+ * fields directly, which is what it did before.
+ */
+static void testKissDisplay() {
+	section("KISS on the main screen");
+
+	EscTelemetry tel;
+	memset(&tel, 0, sizeof(tel));
+	tel.erpm = 84210; tel.rpm = 12030;
+	tel.volts = 15.75f; tel.haveVolts = true;   // EDT: 0.25 V steps
+	tel.amps = 23.0f;   tel.haveAmps = true;    // EDT: whole amps
+	tel.tempC = 46;     tel.haveTemp = true;
+	tel.stress = 12;    tel.haveStress = true;
+	tel.packetRate = 998;
+
+	// Fresh KISS, with values deliberately distinguishable from the EDT ones so
+	// a screenshot shows which source won.
+	tel.haveKiss   = true;
+	tel.kissLastMs = millis();
+	tel.kissVolts  = 15.83f;
+	tel.kissAmps   = 23.47f;
+	tel.kissTempC  = 47;
+	tel.kissMah    = 812;
+	tel.kissErpm   = 84200;
+	fakeSetTelemetry(&tel);
+	frames(2);
+	fakeDumpFrame("shot_tester_kiss.ppm");
+
+	// Merge is per-field and time-based, so let KISS go stale and confirm the
+	// screen falls back rather than freezing the fine values.
+	EscReading r;
+	escMerge(&tel, tel.kissLastMs + KISS_STALE_MS, KISS_STALE_MS, &r);
+	checkTrue("stale KISS falls back to EDT", r.voltsFrom == EscSource::Edt);
+	escMerge(&tel, tel.kissLastMs + 1, KISS_STALE_MS, &r);
+	checkTrue("fresh KISS is preferred", r.voltsFrom == EscSource::Kiss);
+	checkInt("and carries 0.01 V resolution",
+	         (long)(r.volts * 100.0f + 0.5f), 1583);
+}
 
 void runUiTests() {
 	EscTelemetry tel;
@@ -149,7 +269,7 @@ void runUiTests() {
 		tap(BTN_CFG_X, BTN_ARM_Y);
 		checkTrue("entering settings force-disarms", !fakeArmed());
 		fakeDumpFrame("shot_settings.ppm");
-		tap(120, BTN_AM32_Y);
+		tap(BTN_AM32_X, BTN_AM32_Y);
 		for (int i = 0; i < 8; i++) frames(1);
 		checkTrue("settings read and decoded", uiVisibleCount() > 0);
 		checkInt("poles decoded", uiByte(0x1B), 14);
@@ -233,4 +353,7 @@ void runUiTests() {
 		checkTrue("old hardcoded placement would overflow",
 		          24 + gfxTextW("DSHOT DISPLAY", 3) > GFX_W);
 	}
+
+	testLogScreen();
+	testKissDisplay();
 }
