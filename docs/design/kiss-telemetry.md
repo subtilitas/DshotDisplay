@@ -1,6 +1,6 @@
 # KISS ESC telemetry
 
-Status: design, not implemented.
+Status: partially implemented (decoder + core1 integration); UI/logging integration pending.
 Branch: `dev/telemetry-logging`.
 
 ## Why
