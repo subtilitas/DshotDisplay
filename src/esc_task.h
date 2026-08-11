@@ -6,6 +6,10 @@
  * steady @ref DSHOT_PERIOD_US and drain telemetry. That keeps DShot timing
  * immune to the multi-millisecond SPI DMA bursts the display does on core0.
  *
+ * The ESC's answer to a frame lands 30 us after that frame ends (fixed by the
+ * bidirectional-DShot spec, independent of speed), so each slot first drains
+ * the previous frame's reply, then sends the next one.
+ *
  * Core0 talks to it through a small critical-section-guarded state block:
  * escSetThrottle() and escSetArmed() to command, escSnapshot() to read back.
  *
