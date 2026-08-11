@@ -151,6 +151,86 @@
 /** @} */
 
 /**
+ * @defgroup cfg_log SD card logging
+ * @brief Betaflight blackbox logs on the microSD slot.
+ *
+ * The card is on SPI1 with its own pins, so it does not contend with the
+ * display on SPI0 for a peripheral — only for core0's time.
+ * See docs/design/blackbox-logging.md.
+ * @{
+ */
+
+/** @brief Compile the SD logging path in at all. */
+#ifndef SD_LOG_ENABLE
+#define SD_LOG_ENABLE          1
+#endif
+
+/**
+ * @brief SPI clock for the card, in MHz.
+ *
+ * Cards are specified to 25 MHz in SPI mode. Starting conservatively: a card
+ * that misbehaves at speed fails in ways that look like corruption rather than
+ * like a bus problem, which is a miserable thing to debug.
+ */
+#define SD_LOG_SPI_MHZ         12
+
+/**
+ * @brief Log frame rate, in Hz.
+ *
+ * Not the DShot rate. eRPM is the only genuinely 1 kHz signal here; KISS
+ * arrives at 50 Hz and the display repaints far slower. At ~14.5 bytes/frame
+ * measured, 500 Hz is about 7.3 kB/s or 26 MB/hour.
+ */
+#define SD_LOG_RATE_HZ         500
+
+/**
+ * @brief I frames every this many frames.
+ *
+ * I frames are the resynchronisation points: a decoder joining mid-file, or
+ * recovering from a damaged region, cannot do anything until it reaches one.
+ * 32 is Betaflight's usual value.
+ */
+#define SD_LOG_I_INTERVAL      32
+
+/**
+ * @brief Ring buffer size, in bytes.
+ *
+ * Has to cover the worst write stall the card produces, times the byte rate.
+ * At 7.3 kB/s an 8 kB buffer absorbs roughly a second, which should be ample
+ * for an erase pause — but this is a guess until measured. @ref LogRing tracks
+ * a high-water mark; the UI shows it, and it is the number to size this from.
+ */
+#define SD_LOG_BUFFER_BYTES    8192
+
+/**
+ * @brief Flush granularity, in bytes. Should be a multiple of 512.
+ *
+ * Cards erase in blocks and write whole sectors regardless; handing over
+ * sector-aligned chunks avoids read-modify-write cycles inside the card.
+ */
+#define SD_LOG_CHUNK_BYTES     512
+
+/**
+ * @brief Contiguous space reserved per log file, in bytes.
+ *
+ * Pre-allocating means the FAT is not updated mid-log, which is where a long
+ * unpredictable stall would otherwise come from. 16 MB is about ten minutes at
+ * the default rate. Unused space is released when the file is closed.
+ */
+#define SD_LOG_PREALLOC_BYTES  (16u * 1024u * 1024u)
+
+/**
+ * @brief Start logging automatically when the tester arms.
+ *
+ * Manual start/stop is always available. With this on, arming also starts a log
+ * and disarming closes it, so a run cannot be missed by forgetting to press
+ * record.
+ */
+#define SD_LOG_AUTO_ON_ARM     1
+
+/** @} */
+
+/**
  * @defgroup cfg_safety Safety
  * @brief Interlocks. Read these before raising any of them.
  * @{

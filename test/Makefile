@@ -18,17 +18,17 @@ CXXFLAGS ?= -std=gnu++17 -O1 -g
 WARN     := -Wall -Wextra -Wshadow -Wno-unused-parameter
 INCLUDES := -Istubs -I../src -I.
 
-SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp test_blackbox.cpp \
+SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp test_blackbox.cpp test_log_ring.cpp \
         fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp \
-        ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp
+        ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp ../src/log_ring.cpp
 
 # Sources the tests cannot link -- they drive real hardware -- but which still
 # have to compile. CI's "Config permutations" job already builds all of src/
 # with -Werror, so this is not new coverage; it moves the feedback from a CI
 # round-trip to the same `make` you were going to run anyway.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
-               ../src/am32_bl.cpp
+               ../src/am32_bl.cpp ../src/sd_log.cpp
 
 BIN := dshot_tests
 
@@ -51,6 +51,8 @@ syntax:
 	done
 	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DKISS_TELEM_ENABLE=0 \
 		-fsyntax-only ../src/esc_task.cpp || exit 1
+	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DSD_LOG_ENABLE=0 \
+		-fsyntax-only ../src/sd_log.cpp || exit 1
 	@echo "device sources typecheck"
 
 # Round-trip a generated log through the upstream decoder.

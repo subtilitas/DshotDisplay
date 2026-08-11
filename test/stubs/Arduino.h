@@ -13,6 +13,7 @@
 #define A3 29
 extern "C" {
 uint32_t millis();
+uint32_t micros();
 uint32_t time_us_32();
 void delay(uint32_t);
 void pinMode(uint32_t, uint32_t);

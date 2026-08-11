@@ -109,6 +109,7 @@ jobs:
             for jump in 0 1; do
               for rot in 0 2; do
                 for kiss in 0 1; do
+                 for sd in 0 1; do
                   work=$(mktemp -d)
                   cp -r src "$work/src"
                   cp DshotDisplay.ino "$work/main.cpp"
@@ -116,15 +117,16 @@ jobs:
                   sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
                   sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
                   sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
-                  printf 'TX=%s JUMP=%s ROT=%s KISS=%s ... ' "$tx" "$jump" "$rot" "$kiss"
+                  printf 'TX=%s JUMP=%s ROT=%s KISS=%s SD=%s ... ' "$tx" "$jump" "$rot" "$kiss" "$sd"
                   if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
-                         -Wno-unused-parameter -DKISS_TELEM_ENABLE=$kiss \
+                         -Wno-unused-parameter -DKISS_TELEM_ENABLE=$kiss -DSD_LOG_ENABLE=$sd \
                          -Itest/stubs -I"$work" \
                          "$work/main.cpp" "$work"/src/*.cpp; then
                     echo ok
                   else
                     echo FAIL; fail=1
                   fi
+                 done
                 done
               done
             done

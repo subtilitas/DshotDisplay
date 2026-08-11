@@ -31,5 +31,10 @@ profiles:
     libraries:
       # Bidirectional DShot over PIO. GPL-3.0 -- see the licence note in README.
       - Pico_Bidir_DShot (1.0.2)
+      # microSD access for blackbox logging. Chosen over the core's SD library
+      # for preAllocate(), which reserves a contiguous cluster run so the FAT is
+      # not rewritten mid-log -- that rewrite is the long unpredictable stall
+      # the whole logging design is built to avoid. MIT.
+      - SdFat (2.3.0)
 
 default_profile: rp2350
