@@ -4,7 +4,9 @@
 #include <stdint.h>
 #define GPIO_OUT 1
 #define GPIO_IN 0
-enum gpio_function { GPIO_FUNC_SPI = 1 };
+enum gpio_function {
+  GPIO_FUNC_SPI = 1, GPIO_FUNC_UART, GPIO_FUNC_I2C, GPIO_FUNC_PWM
+};
 extern "C" {
 void gpio_init(uint32_t);
 void gpio_set_dir(uint32_t, int);

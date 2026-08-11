@@ -3,7 +3,7 @@
  * @brief Blackbox logging to the microSD slot.
  *
  * Ties together @ref BlackboxEncoder (which turns telemetry into bytes),
- * @ref LogRing (which absorbs card stalls) and SdFat (which does the writing).
+ * @ref LogRing (which absorbs card stalls) and FatFs (which does the writing).
  *
  * @section sdlog_cores Which core
  *

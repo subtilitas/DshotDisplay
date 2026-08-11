@@ -17,7 +17,8 @@
 #include "board_pins.h"
 #include "config.h"
 
-#include <Arduino.h>
+#include "plat.h"
+#include <hardware/adc.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -624,7 +625,9 @@ void uiInit() {
 	memset(&s_tel, 0, sizeof(s_tel));
 	invalidateAll();
 
-	analogReadResolution(12);
+	// 12-bit SAR, 3.3 V reference. adc_init() must precede the GPIO setup.
+	adc_init();
+	adc_gpio_init(PIN_BAT_ADC);
 
 	escSetPoles(s_poles);
 	escSetArmed(false);
@@ -640,7 +643,8 @@ void uiTick() {
 	touchPoll(&s_touch);
 
 	// battery, lightly smoothed
-	int raw = analogRead(BAT_ADC_CHAN);
+	adc_select_input(BAT_ADC_CHAN);
+	int raw = (int)adc_read();
 	float v = (raw * 3.3f / 4095.0f) * BAT_DIVIDER;
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 

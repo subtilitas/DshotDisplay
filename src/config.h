@@ -96,7 +96,7 @@
  * @brief GPIO the ESC's telemetry pad connects to. Receive only.
  *
  * GP5 is UART1 RX and lands on P1 header pin 10. UART1 is chosen over UART0 so
- * the USB-serial debug path is left alone. In arduino-pico, UART1 is `Serial2`.
+ * the USB-serial debug path is left alone. @see KISS_UART
  *
  * Other candidates, all free and broken out: GP9 (UART1 RX, P1 pin 2), GP21
  * (UART1 RX, P1 pin 5), GP1 (UART0 RX, P2 pin 8).
@@ -109,13 +109,17 @@
 #define KISS_TELEM_PIN         5
 
 /**
- * @brief Arduino serial object for @ref KISS_TELEM_PIN.
+ * @brief UART instance for @ref KISS_TELEM_PIN.
  *
- * arduino-pico maps `Serial1` to UART0 and `Serial2` to UART1. This must agree
- * with the pin: GP5 is a UART1 RX pin, so `Serial2`. Changing @ref
- * KISS_TELEM_PIN to a UART0 pin such as GP1 means changing this to `Serial1`.
+ * Must agree with the pin: on RP2350, GP1/5/9/21/25/29 are UART1 RX and
+ * GP1/13/17/29 are UART0 RX. GP5 is UART1, so `uart1`. Moving
+ * @ref KISS_TELEM_PIN to a UART0 pin means changing this too — the SDK will not
+ * catch the mismatch, it will simply never receive anything.
+ *
+ * UART0 is deliberately left alone; stdio can have it if a build ever wants a
+ * debug UART instead of USB CDC.
  */
-#define KISS_SERIAL            Serial2
+#define KISS_UART              uart1
 
 /**
  * @brief Request telemetry on every Nth DShot frame.

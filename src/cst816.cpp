@@ -8,8 +8,16 @@
 #include "config.h"
 #include "gfx.h"
 
-#include <Arduino.h>
-#include <Wire.h>
+#include "plat.h"
+#include <hardware/i2c.h>
+#include <hardware/gpio.h>
+
+/** @brief I2C instance the touch controller sits on. @see board_pins.h */
+#define TOUCH_I2C i2c0
+
+/** @brief Per-transfer I2C timeout. Long enough for a 400 kHz byte, short
+ *         enough that a wedged bus does not stall the UI. */
+#define I2C_TIMEOUT_US 2000
 
 /**
  * @defgroup cst816_regs CST816 register map
@@ -35,10 +43,12 @@ static int16_t s_downX = 0, s_downY = 0; /**< Where the current press started. *
  * @return true if the device acknowledged.
  */
 static bool wrReg(uint8_t reg, uint8_t val) {
-	Wire.beginTransmission(CST816_I2C_ADDR);
-	Wire.write(reg);
-	Wire.write(val);
-	return Wire.endTransmission() == 0;
+	uint8_t b[2] = { reg, val };
+	// Timed out rather than blocking: this bus is shared with the IMU, and a
+	// device holding SDA low would otherwise hang the UI thread forever.
+	int n = i2c_write_timeout_us(TOUCH_I2C, CST816_I2C_ADDR, b, 2, false,
+	                             I2C_TIMEOUT_US);
+	return n == 2;
 }
 
 /**
@@ -46,21 +56,25 @@ static bool wrReg(uint8_t reg, uint8_t val) {
  * @return true if the full read completed.
  */
 static bool rdRegs(uint8_t reg, uint8_t *buf, uint8_t n) {
-	Wire.beginTransmission(CST816_I2C_ADDR);
-	Wire.write(reg);
-	if (Wire.endTransmission(false) != 0) return false;
-	if (Wire.requestFrom((uint8_t)CST816_I2C_ADDR, n) != n) return false;
-	for (uint8_t i = 0; i < n; i++) buf[i] = Wire.read();
-	return true;
+	// nostop=true leaves a repeated start between the write and the read, which
+	// is what the controller expects; a stop in between makes it forget the
+	// register pointer.
+	if (i2c_write_timeout_us(TOUCH_I2C, CST816_I2C_ADDR, &reg, 1, true,
+	                         I2C_TIMEOUT_US) != 1) return false;
+	return i2c_read_timeout_us(TOUCH_I2C, CST816_I2C_ADDR, buf, n, false,
+	                           I2C_TIMEOUT_US) == n;
 }
 
 bool touchInit() {
-	pinMode(PIN_TP_INT, INPUT_PULLUP);
+	gpio_init(PIN_TP_INT);
+	gpio_set_dir(PIN_TP_INT, GPIO_IN);
+	gpio_pull_up(PIN_TP_INT);
 
-	Wire.setSDA(PIN_I2C_SDA);
-	Wire.setSCL(PIN_I2C_SCL);
-	Wire.begin();
-	Wire.setClock(400000);
+	i2c_init(TOUCH_I2C, 400 * 1000);
+	gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
+	gpio_pull_up(PIN_I2C_SDA);
+	gpio_pull_up(PIN_I2C_SCL);
 
 	// The touch chip shares its RESET net with the LCD, so st7789Init() has
 	// already pulsed it. Give the controller time to come up.
