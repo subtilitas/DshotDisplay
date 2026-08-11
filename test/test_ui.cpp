@@ -109,6 +109,7 @@ static void testLogScreen() {
 	enterLogScreen();
 	frames(2);
 	checkTrue("not recording on arrival", !sdLogActive());
+	fakeDumpFrame("shot_log_ready.ppm");
 
 	tap(120, LOG_TOGGLE_Y + 20);
 	checkTrue("START begins a log", sdLogActive());
@@ -138,6 +139,8 @@ static void testLogScreen() {
 	st.state = SdLogState::NoCard;
 	fakeSdLogSet(&st);
 	frames(2);
+	// The first thing anyone sees, since the card slot is empty by default.
+	fakeDumpFrame("shot_log_nocard.ppm");
 	tap(120, LOG_TOGGLE_Y + 20);
 	checkTrue("START does nothing without a card", !sdLogActive());
 
