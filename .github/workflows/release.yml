@@ -5,8 +5,8 @@ name: Release
 #   git tag -a v1.0.0 -m "First release"
 #   git push origin v1.0.0
 #
-# Builds flashable .uf2 images for both RP2350 cores, checksums them, and
-# publishes a GitHub Release with the images attached.
+# Builds a flashable .uf2 for the RP2350 (Cortex-M33), checksums it, and
+# publishes a GitHub Release with the image attached.
 on:
   push:
     tags: ["v*"]
@@ -18,6 +18,9 @@ on:
 
 permissions:
   contents: write   # required to create the release and upload assets
+
+env:
+  PICO_SDK_VERSION: "2.1.1"
 
 jobs:
   # Resolve the version once so both jobs agree, and so the tag never reaches a
@@ -43,24 +46,34 @@ jobs:
           echo "building $tag"
 
   build:
-    name: Build ${{ matrix.arch }}
+    name: Build
     needs: version
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true   # never publish a half-complete set of assets
-      matrix:
-        arch: [arm, riscv]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: arduino/setup-arduino-cli@v2
+      - name: Install the ARM toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "13.3.Rel1"
+
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.arduino15
-            ~/Arduino
-          key: arduino-${{ matrix.arch }}-${{ hashFiles('sketch.yaml') }}
+            ~/pico-sdk
+            build/_deps
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Fetch the Pico SDK
+        run: |
+          if [ ! -d ~/pico-sdk/.git ]; then
+            git clone --depth 1 --branch "$PICO_SDK_VERSION" \
+              https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+            git -C ~/pico-sdk submodule update --init --depth 1 lib/tinyusb
+          fi
 
       # Refuse to build a release from unverified code. The tests are cheap and
       # a broken image carrying a version number is worse than no release.
@@ -72,9 +85,12 @@ jobs:
         run: python3 test/check_docs.py
 
       - name: Compile
+        env:
+          PICO_SDK_PATH: ~/pico-sdk
         run: |
-          sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
-          arduino-cli compile --profile rp2350 --warnings all --output-dir build
+          cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
+          ninja -C build
+          arm-none-eabi-size build/DshotDisplay.elf
 
       # Prove the validator works before trusting its verdict. The first version
       # of this check was inlined here, never executed, and rejected every
@@ -85,17 +101,15 @@ jobs:
       - name: Name and validate the image
         env:
           TAG: ${{ needs.version.outputs.tag }}
-          ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p dist
-          src=$(ls build/*.uf2 | head -1)
-          out="dist/DshotDisplay-${TAG}-rp2350-${ARCH}.uf2"
-          cp "$src" "$out"
+          out="dist/DshotDisplay-${TAG}-rp2350.uf2"
+          cp build/DshotDisplay.uf2 "$out"
           bash test/check_uf2.sh "$out"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: uf2-${{ matrix.arch }}
+          name: uf2
           path: dist/*.uf2
           if-no-files-found: error
 
@@ -110,7 +124,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: uf2-*
+          pattern: uf2
           path: dist
           merge-multiple: true
 
@@ -129,9 +143,6 @@ jobs:
           1. Hold **BOOT**, tap **RESET**, release **BOOT**. The board appears as a
              USB drive.
           2. Copy the `.uf2` onto it. The board reboots into the new firmware.
-
-          Take the **arm** build unless you specifically want the RP2350's RISC-V
-          cores; the two are functionally identical.
 
           ## Wiring
 
@@ -176,7 +187,7 @@ jobs:
           # a partially-populated release is a real outcome worth catching.
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "$assets"
-          for want in arm riscv SHA256SUMS; do
+          for want in rp2350.uf2 SHA256SUMS; do
             echo "$assets" | grep -q "$want" || {
               echo "::error::no asset matching '$want' on $TAG"; exit 1; }
           done
