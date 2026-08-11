@@ -16,8 +16,8 @@ CXXFLAGS ?= -std=gnu++17 -O1 -g
 WARN     := -Wall -Wextra -Wshadow -Wno-unused-parameter
 INCLUDES := -Istubs -I../src -I.
 
-SRCS := test_main.cpp test_am32.cpp test_ui.cpp fakes.cpp \
-        ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp
+SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_kiss.cpp fakes.cpp \
+        ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp ../src/kiss_telem.cpp
 
 BIN := dshot_tests
 
