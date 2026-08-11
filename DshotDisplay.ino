@@ -45,6 +45,7 @@
  * - @ref gfx.h — RGB565 framebuffer, dirty bands, fonts
  * - @ref st7789.h — panel init and DMA blitter
  * - @ref cst816.h — capacitive touch
+ * - @ref sd_log.h — blackbox logging to the microSD slot (core0)
  *
  * @warning This drives a real motor. Read the safety section of README.md
  *          before connecting anything with a propeller on it.
@@ -62,6 +63,7 @@
 #include "src/cst816.h"
 #include "src/esc_task.h"
 #include "src/ui.h"
+#include "src/sd_log.h"
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
 #define UI_PERIOD_MS 25
@@ -94,11 +96,17 @@ void setup() {
 	gfxFill(C_BG);
 	st7789FlushDirty();
 
+#if SD_LOG_ENABLE
+	// A missing card is the normal bench case, not a fault: logging is
+	// simply unavailable and the UI says so.
+	sdLogBegin();
+#endif
+
 	s_nextUiMs = millis();
 }
 
 /**
- * @brief Core0 loop: run the UI on a fixed cadence, optionally log to serial.
+ * @brief Core0 loop: UI, SD logging, and the optional serial dump.
  */
 void loop() {
 	uint32_t now = millis();
@@ -106,6 +114,19 @@ void loop() {
 		s_nextUiMs = now + UI_PERIOD_MS;
 		uiTick();
 	}
+
+#if SD_LOG_ENABLE
+	// Encoding is cheap and only fills a RAM ring, so it runs every pass to
+	// keep the log cadence even.
+	sdLogSetArmed(uiArmed());
+	sdLogTick(micros(), uiThrottle());
+
+	// Writing is the expensive half -- a card can pause tens of milliseconds
+	// for an internal erase -- so it is a separate call, made once per pass
+	// after the UI has already had its turn. Never on core1: a stall there
+	// would break DShot timing outright.
+	sdLogFlush();
+#endif
 
 #if SERIAL_TELEMETRY 
 	if ((int32_t)(millis() - s_nextLogMs) >= 0) {
