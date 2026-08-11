@@ -14,6 +14,7 @@ void runAm32Tests();
 void runUiTests();
 void runKissTests();
 void runGfxTests();
+void runBlackboxTests();
 
 int main() {
 	printf("DshotDisplay host tests\n");
@@ -23,6 +24,7 @@ int main() {
 	runUiTests();
 	runKissTests();
 	runGfxTests();
+	runBlackboxTests();
 
 	printf("\n=======================\n");
 	if (g_failures) printf("%d CHECK(S) FAILED\n", g_failures);
