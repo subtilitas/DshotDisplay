@@ -1,5 +1,5 @@
 /**
- * @file DshotDisplay.ino
+ * @file main.cpp
  * @brief Top level: core0 and core1 entry points.
  */
 
@@ -51,19 +51,19 @@
  *          before connecting anything with a propeller on it.
  */
 
-#include <Arduino.h>
+#include "plat.h"
+#include <pico/multicore.h>
+#include <pico/stdlib.h>
+#include <stdio.h>
 
-// Implementation lives in src/. The Arduino builder compiles that subdirectory
-// recursively, but only adds the sketch root to the include path, so the paths
-// are explicit here. Files inside src/ include each other as plain siblings.
-#include "src/config.h"
-#include "src/board_pins.h"
-#include "src/gfx.h"
-#include "src/st7789.h"
-#include "src/cst816.h"
-#include "src/esc_task.h"
-#include "src/ui.h"
-#include "src/sd_log.h"
+#include "config.h"
+#include "board_pins.h"
+#include "gfx.h"
+#include "st7789.h"
+#include "cst816.h"
+#include "esc_task.h"
+#include "ui.h"
+#include "sd_log.h"
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
 #define UI_PERIOD_MS 25
@@ -81,7 +81,7 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  */
 void setup() {
 #if SERIAL_TELEMETRY
-	Serial.begin(115200);
+	stdio_init_all();
 #endif
 
 	gfxInit();
@@ -133,13 +133,17 @@ void loop() {
 		s_nextLogMs = millis() + 100;
 		EscTelemetry t;
 		escSnapshot(&t);
-		Serial.printf("arm=%d thr=%4u rpm=%6lu erpm=%6lu %5.2fV %5.1fA %3dC "
-		              "stress=%3u st=0x%02X ok=%u bad=%u none=%u rate=%u err=%u%%\n",
-		              uiArmed() ? 1 : 0, uiThrottle(),
-		              (unsigned long)t.rpm, (unsigned long)t.erpm,
-		              t.volts, t.amps, t.tempC, t.stress, t.statusRaw,
-		              t.goodPackets, t.badPackets, t.noPackets,
-		              t.packetRate, t.errPercent);
+		// uint32_t is `unsigned long` on arm-none-eabi, so the packet counters
+		// are cast rather than printed with %u -- the Arduino core's printf was
+		// lenient about this and newlib's is not.
+		printf("arm=%d thr=%4u rpm=%6lu erpm=%6lu %5.2fV %5.1fA %3dC "
+		       "stress=%3u st=0x%02X ok=%lu bad=%lu none=%lu rate=%u err=%u%%\n",
+		       uiArmed() ? 1 : 0, uiThrottle(),
+		       (unsigned long)t.rpm, (unsigned long)t.erpm,
+		       (double)t.volts, (double)t.amps, t.tempC, t.stress, t.statusRaw,
+		       (unsigned long)t.goodPackets, (unsigned long)t.badPackets,
+		       (unsigned long)t.noPackets,
+		       t.packetRate, t.errPercent);
 	}
 #endif
 }
@@ -157,4 +161,31 @@ void setup1() {
  */
 void loop1() {
 	escTaskPoll();
+}
+
+/**
+ * @brief Core1 entry point.
+ *
+ * The Arduino core used to call setup1()/loop1() for us. Doing it explicitly is
+ * the whole point of the port: nothing runs on core1 that is not written here.
+ */
+static void core1Main() {
+	setup1();
+	for (;;) loop1();
+}
+
+/**
+ * @brief Core0 entry point.
+ *
+ * Order matters. Core1 is launched only after core0 has finished bringing up
+ * the display and the UI, because escTaskBegin() claims a PIO state machine and
+ * st7789Init() claims a DMA channel — starting them concurrently makes which
+ * one wins a matter of timing.
+ *
+ * @return Never returns.
+ */
+int main(void) {
+	setup();
+	multicore_launch_core1(core1Main);
+	for (;;) loop();
 }

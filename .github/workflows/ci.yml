@@ -6,39 +6,52 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  PICO_SDK_VERSION: "2.1.1"
+
 jobs:
-  # Compiles the real firmware for the real target. sketch.yaml pins the core,
-  # its toolchain and the library, so this builds identically here and locally.
+  # Builds the real firmware for the real target with the native Pico SDK.
+  # Dependency versions are pinned in CMakeLists.txt, so this builds identically
+  # here and locally.
   firmware:
-    name: Firmware (${{ matrix.arch }})
+    name: Firmware
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # pico-bidir-dshot supports both RP2350 cores, so build both. The
-        # RISC-V build catches anything that quietly assumes Cortex-M.
-        arch: [arm, riscv]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install arduino-cli
-        uses: arduino/setup-arduino-cli@v2
+      - name: Install the ARM toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "13.3.Rel1"
 
-      - name: Cache the core and toolchain
+      - name: Install ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Cache the SDK and fetched dependencies
         uses: actions/cache@v4
         with:
-          # ~1 GB of core plus GCC; without this every run re-downloads it.
           path: |
-            ~/.arduino15
-            ~/Arduino
-          key: arduino-${{ matrix.arch }}-${{ hashFiles('sketch.yaml') }}
+            ~/pico-sdk
+            build/_deps
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
 
-      # Prints flash and RAM usage, which is worth watching: the framebuffer
-      # alone is 150 KB of the RP2350's 520 KB.
-      - name: Compile
+      # tinyusb is needed for stdio over USB CDC; without the submodule the SDK
+      # silently builds without USB support and SERIAL_TELEMETRY goes nowhere.
+      - name: Fetch the Pico SDK
         run: |
-          sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
-          arduino-cli compile --profile rp2350 --warnings all --output-dir build
+          if [ ! -d ~/pico-sdk/.git ]; then
+            git clone --depth 1 --branch "$PICO_SDK_VERSION" \
+              https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+            git -C ~/pico-sdk submodule update --init --depth 1 lib/tinyusb
+          fi
+
+      - name: Build
+        env:
+          PICO_SDK_PATH: ~/pico-sdk
+        run: |
+          cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
+          ninja -C build
+          arm-none-eabi-size build/DshotDisplay.elf
 
       # Run the same validator the release uses, on every push. Releases are
       # rare, so a check that only runs at release time is a check that rots
@@ -46,15 +59,15 @@ jobs:
       - name: Validate the image
         run: |
           bash test/check_uf2_selftest.sh
-          for f in build/*.uf2; do bash test/check_uf2.sh "$f"; done
+          bash test/check_uf2.sh build/DshotDisplay.uf2
 
       # Every green build produces a flashable image, so a change can be tried
       # on hardware without cutting a release first.
       - name: Upload firmware image
         uses: actions/upload-artifact@v4
         with:
-          name: DshotDisplay-${{ matrix.arch }}-uf2
-          path: build/*.uf2
+          name: DshotDisplay-uf2
+          path: build/DshotDisplay.uf2
           if-no-files-found: error
 
   # Runs the firmware's own logic on the host, against stubs. Catches the
@@ -92,7 +105,8 @@ jobs:
         run: make bbcheck BBDECODE=/tmp/bbt/obj/blackbox_decode
 
   # Every build-time option, with warnings fatal. These permutations are easy
-  # to break precisely because nobody compiles them by hand.
+  # to break precisely because nobody compiles them by hand. Host syntax-only
+  # against the stubs, which is far quicker than a full cross build per combo.
   variants:
     name: Config permutations
     runs-on: ubuntu-latest
@@ -109,24 +123,23 @@ jobs:
             for jump in 0 1; do
               for rot in 0 2; do
                 for kiss in 0 1; do
-                 for sd in 0 1; do
-                  work=$(mktemp -d)
-                  cp -r src "$work/src"
-                  cp DshotDisplay.ino "$work/main.cpp"
-                  sed -i '1i void setup(); void loop(); void setup1(); void loop1();' "$work/main.cpp"
-                  sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
-                  sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
-                  sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
-                  printf 'TX=%s JUMP=%s ROT=%s KISS=%s SD=%s ... ' "$tx" "$jump" "$rot" "$kiss" "$sd"
-                  if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
-                         -Wno-unused-parameter -DKISS_TELEM_ENABLE=$kiss -DSD_LOG_ENABLE=$sd \
-                         -Itest/stubs -I"$work" \
-                         "$work/main.cpp" "$work"/src/*.cpp; then
-                    echo ok
-                  else
-                    echo FAIL; fail=1
-                  fi
-                 done
+                  for sd in 0 1; do
+                    work=$(mktemp -d)
+                    cp -r src "$work/src"
+                    sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
+                    sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
+                    sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
+                    printf 'TX=%s JUMP=%s ROT=%s KISS=%s SD=%s ... ' "$tx" "$jump" "$rot" "$kiss" "$sd"
+                    if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
+                           -Wno-unused-parameter -DKISS_TELEM_ENABLE=$kiss -DSD_LOG_ENABLE=$sd \
+                           -Itest/stubs -I"$work/src" \
+                           "$work"/src/*.cpp; then
+                      echo ok
+                    else
+                      echo FAIL; fail=1
+                    fi
+                    rm -rf "$work"
+                  done
                 done
               done
             done
@@ -135,11 +148,10 @@ jobs:
           # And confirm the portrait guard actually refuses landscape, rather
           # than the assert being decorative.
           work=$(mktemp -d)
-          cp -r src "$work/src"; cp DshotDisplay.ino "$work/main.cpp"
-          sed -i '1i void setup(); void loop(); void setup1(); void loop1();' "$work/main.cpp"
+          cp -r src "$work/src"
           sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           1/" "$work/src/config.h"
-          if g++ -std=gnu++17 -fsyntax-only -Itest/stubs -I"$work" \
-                 "$work/main.cpp" "$work"/src/*.cpp 2>/dev/null; then
+          if g++ -std=gnu++17 -fsyntax-only -Itest/stubs -I"$work/src" \
+                 "$work"/src/*.cpp 2>/dev/null; then
             echo "landscape guard did NOT fire"; fail=1
           else
             echo "landscape correctly rejected ... ok"

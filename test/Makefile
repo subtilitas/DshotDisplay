@@ -28,7 +28,7 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp test_
 # with -Werror, so this is not new coverage; it moves the feedback from a CI
 # round-trip to the same `make` you were going to run anyway.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
-               ../src/am32_bl.cpp ../src/sd_log.cpp
+               ../src/am32_bl.cpp ../src/sd_log.cpp ../src/main.cpp
 
 BIN := dshot_tests
 

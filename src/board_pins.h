@@ -89,7 +89,14 @@
  * @{
  */
 #define PIN_BAT_ADC   28   /**< Divider midpoint, GPIO28 / ADC2. */
-#define BAT_ADC_CHAN  A2   /**< Arduino analog channel for PIN_BAT_ADC. */
+/**
+ * @brief ADC input index for @ref PIN_BAT_ADC.
+ *
+ * The SDK numbers ADC inputs from GPIO26, so GPIO28 is input 2. This is not the
+ * GPIO number and the two are easy to confuse — passing 28 here would select a
+ * non-existent input and read back garbage rather than failing.
+ */
+#define BAT_ADC_CHAN  2
 #define BAT_DIVIDER   3.0f /**< 200 k / 100 k divider: VBAT = Vadc * 3. */
 /** @} */
 

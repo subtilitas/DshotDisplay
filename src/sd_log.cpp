@@ -11,17 +11,21 @@
 #include "esc_merge.h"
 #include "board_pins.h"
 
-#include <Arduino.h>
-#include <SPI.h>
-#include <SdFat.h>
+#include "plat.h"
+#include "ff.h"
+#include "f_util.h"
+#include "hw_config.h"
+
+#include <stdio.h>
 
 /**
  * @file sd_log.cpp
  * @brief SD card blackbox logging. Core0 only.
  */
 
-static SdFs   s_sd;
-static FsFile s_file;
+static FATFS s_fs;
+static FIL   s_file;
+static bool  s_mounted = false;
 
 static SdLogState s_state = SdLogState::NoCard;
 static uint16_t   s_fileNo = 0;
@@ -50,20 +54,19 @@ static void ringSink(void *ctx, const uint8_t *data, size_t len) {
 }
 
 bool sdLogBegin() {
-	// SPI1: the display is on SPI0, so the two never contend for a peripheral.
-	SPI1.setRX(PIN_SD_MISO);
-	SPI1.setTX(PIN_SD_MOSI);
-	SPI1.setSCK(PIN_SD_SCK);
-	SPI1.setCS(PIN_SD_CS);
-
-	SdSpiConfig cfg(PIN_SD_CS, SHARED_SPI, SD_SCK_MHZ(SD_LOG_SPI_MHZ), &SPI1);
-	if (!s_sd.begin(cfg)) {
+	// Pins come from sd_hw_config.c, which the driver reads at link time.
+	// Mounting is the only way to find out whether a card is fitted: this board
+	// brings no card-detect line out.
+	FRESULT fr = f_mount(&s_fs, "0:", 1);
+	if (fr != FR_OK) {
 		// No card is the normal case on a bench, not a fault. Logging is simply
 		// unavailable and the UI says so.
+		s_mounted = false;
 		s_state = SdLogState::NoCard;
 		return false;
 	}
 
+	s_mounted = true;
 	logRingInit(&s_ring, s_ringBuf, sizeof(s_ringBuf));
 	s_state = SdLogState::Idle;
 	return true;
@@ -80,7 +83,8 @@ static uint16_t nextFileNumber() {
 	char name[16];
 	for (uint16_t n = 1; n < 10000; n++) {
 		snprintf(name, sizeof(name), "LOG%05u.BFL", (unsigned)n);
-		if (!s_sd.exists(name)) return n;
+		FILINFO fno;
+		if (f_stat(name, &fno) == FR_NO_FILE) return n;
 	}
 	return 0;
 }
@@ -94,15 +98,16 @@ bool sdLogStart() {
 
 	char name[16];
 	snprintf(name, sizeof(name), "LOG%05u.BFL", (unsigned)n);
-	if (!s_file.open(name, O_WRONLY | O_CREAT | O_TRUNC)) {
+	if (f_open(&s_file, name, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
 		s_state = SdLogState::Error;
 		return false;
 	}
 
-	// Reserve a contiguous run so the FAT is not updated mid-log. An allocation
-	// landing in the middle of a run is the long unpredictable stall this whole
-	// design exists to avoid. Failure is not fatal, just slower and riskier.
-	s_file.preAllocate(SD_LOG_PREALLOC_BYTES);
+	// Reserve a contiguous run so the FAT is not extended mid-log. An
+	// allocation landing in the middle of a run is the long unpredictable stall
+	// this whole design exists to avoid. FA_WRITE|f_expand with opt=1 allocates
+	// immediately rather than lazily. Failure is not fatal, just slower.
+	f_expand(&s_file, SD_LOG_PREALLOC_BYTES, 1);
 
 	logRingReset(&s_ring);
 	s_ring.dropped = s_ring.drops = s_ring.peakUsed = 0;
@@ -128,9 +133,10 @@ void sdLogStop() {
 	// whatever does not make it out is lost, which is what the counters are for.
 	for (int i = 0; i < 64 && logRingUsed(&s_ring) > 0; i++) sdLogFlush();
 
-	s_file.truncate();   // hand back the unused pre-allocation
-	s_file.sync();
-	s_file.close();
+	// Hand back the unused pre-allocation, then commit the directory entry.
+	f_truncate(&s_file);
+	f_sync(&s_file);
+	f_close(&s_file);
 
 	s_fileNo = 0;
 	s_state = SdLogState::Idle;
@@ -191,13 +197,14 @@ void sdLogFlush() {
 	uint32_t n = avail < SD_LOG_CHUNK_BYTES ? avail : SD_LOG_CHUNK_BYTES;
 
 	uint32_t t0 = millis();
-	size_t wrote = s_file.write(p, n);
+	UINT wrote = 0;
+	FRESULT fr = f_write(&s_file, p, n, &wrote);
 	uint32_t took = millis() - t0;
 	if (took > s_worstFlushMs) s_worstFlushMs = took;
 
-	if (wrote != n) {
+	if (fr != FR_OK || wrote != n) {
 		s_state = SdLogState::Error;
-		s_file.close();
+		f_close(&s_file);
 		return;
 	}
 
