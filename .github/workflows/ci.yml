@@ -74,6 +74,23 @@ jobs:
           name: failed-frames
           path: test/*.ppm
 
+  # Round-trips a generated log through Betaflight's own decoder. Separate job
+  # because it needs blackbox-tools built from source, and because a format
+  # regression is a different kind of failure from a logic regression.
+  blackbox:
+    name: Blackbox round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build blackbox-tools
+        run: |
+          git clone --depth 1 https://github.com/betaflight/blackbox-tools.git /tmp/bbt
+          make -C /tmp/bbt -j"$(nproc)"
+          test -x /tmp/bbt/obj/blackbox_decode
+      - name: Encode a log and decode it
+        working-directory: test
+        run: make bbcheck BBDECODE=/tmp/bbt/obj/blackbox_decode
+
   # Every build-time option, with warnings fatal. These permutations are easy
   # to break precisely because nobody compiles them by hand.
   variants:

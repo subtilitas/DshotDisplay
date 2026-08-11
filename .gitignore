@@ -13,4 +13,6 @@ build/
 
 # Host test build output
 test/dshot_tests
+test/gen_blackbox_log
 test/*.ppm
+test/*.BFL

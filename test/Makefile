@@ -3,6 +3,7 @@
 #   make          syntax-check, build and run
 #   make build    build only
 #   make syntax   typecheck the device-only sources
+#   make bbcheck  round-trip a log through the upstream blackbox_decode
 #   make clean
 #
 # Needs nothing but a C++17 compiler: the firmware is compiled against the
@@ -17,10 +18,10 @@ CXXFLAGS ?= -std=gnu++17 -O1 -g
 WARN     := -Wall -Wextra -Wshadow -Wno-unused-parameter
 INCLUDES := -Istubs -I../src -I.
 
-SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
+SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp test_blackbox.cpp \
         fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp \
-        ../src/kiss_telem.cpp ../src/esc_merge.cpp
+        ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp
 
 # Sources the tests cannot link -- they drive real hardware -- but which still
 # have to compile. CI's "Config permutations" job already builds all of src/
@@ -31,9 +32,9 @@ DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
 
 BIN := dshot_tests
 
-.PHONY: all build run syntax clean
+.PHONY: all build run syntax bbcheck clean
 
-all: syntax run
+all: syntax run bbcheck
 
 build: $(BIN)
 
@@ -52,5 +53,27 @@ syntax:
 		-fsyntax-only ../src/esc_task.cpp || exit 1
 	@echo "device sources typecheck"
 
+# Round-trip a generated log through the upstream decoder.
+#
+# The unit tests only prove the encoder agrees with my reading of the format.
+# This proves it agrees with the tool people will open the log in -- and those
+# came apart once already: the I-frame history-rotation bug passed every unit
+# test and produced a file that decoded without complaint, but whose time column
+# stalled every 32 frames.
+#
+# Needs blackbox-tools. Skipped with a notice when absent rather than failing,
+# so a bare checkout still runs `make`. CI builds it and runs this for real.
+BBDECODE ?= $(shell command -v blackbox_decode 2>/dev/null)
+
+bbcheck:
+	@if [ -z "$(BBDECODE)" ]; then \
+		echo "bbcheck: blackbox_decode not found, skipping"; \
+		echo "  build it from https://github.com/betaflight/blackbox-tools"; \
+	else \
+		$(CXX) $(CXXFLAGS) $(INCLUDES) -o gen_blackbox_log \
+			gen_blackbox_log.cpp ../src/blackbox_encode.cpp -lm && \
+		python3 check_blackbox.py "$(BBDECODE)" ./gen_blackbox_log; \
+	fi
+
 clean:
-	rm -f $(BIN) *.ppm
+	rm -f $(BIN) gen_blackbox_log *.ppm *.BFL
