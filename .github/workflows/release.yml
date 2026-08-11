@@ -5,8 +5,8 @@ name: Release
 #   git tag -a v1.0.0 -m "First release"
 #   git push origin v1.0.0
 #
-# Builds flashable .uf2 images for both RP2350 cores, checksums them, and
-# publishes a GitHub Release with the images attached.
+# Builds flashable .uf2 images for both supported boards on both RP2350 cores,
+# checksums them, and publishes a GitHub Release with the images attached.
 on:
   push:
     tags: ["v*"]
@@ -43,13 +43,16 @@ jobs:
           echo "building $tag"
 
   build:
-    name: Build ${{ matrix.arch }}
+    name: Build ${{ matrix.board.slug }} ${{ matrix.arch }}
     needs: version
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true   # never publish a half-complete set of assets
       matrix:
         arch: [arm, riscv]
+        board:
+          - { slug: touch-lcd-2,   id: BOARD_RP2350_TOUCH_LCD_2,   profile: rp2350 }
+          - { slug: touch-lcd-2.8, id: BOARD_RP2350_TOUCH_LCD_2_8, profile: rp2350_28 }
     steps:
       - uses: actions/checkout@v4
 
@@ -64,17 +67,24 @@ jobs:
 
       # Refuse to build a release from unverified code. The tests are cheap and
       # a broken image carrying a version number is worse than no release.
+      # `both` runs them for every board, not just the one being built here.
       - name: Host tests
         working-directory: test
-        run: make run
+        run: make both
 
       - name: Documentation checks
         run: python3 test/check_docs.py
 
+      # Reads the edit back, so a release can never ship two identically-built
+      # images under two different board names.
+      - name: Select the board
+        run: bash test/select_board.sh ${{ matrix.board.id }}
+
       - name: Compile
         run: |
           sed -i 's/arch=arm/arch=${{ matrix.arch }}/' sketch.yaml
-          arduino-cli compile --profile rp2350 --warnings all --output-dir build
+          arduino-cli compile --profile ${{ matrix.board.profile }} \
+            --warnings all --output-dir build
 
       # Prove the validator works before trusting its verdict. The first version
       # of this check was inlined here, never executed, and rejected every
@@ -86,16 +96,17 @@ jobs:
         env:
           TAG: ${{ needs.version.outputs.tag }}
           ARCH: ${{ matrix.arch }}
+          BOARD_SLUG: ${{ matrix.board.slug }}
         run: |
           mkdir -p dist
           src=$(ls build/*.uf2 | head -1)
-          out="dist/DshotDisplay-${TAG}-rp2350-${ARCH}.uf2"
+          out="dist/DshotDisplay-${TAG}-${BOARD_SLUG}-${ARCH}.uf2"
           cp "$src" "$out"
           bash test/check_uf2.sh "$out"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: uf2-${{ matrix.arch }}
+          name: uf2-${{ matrix.board.slug }}-${{ matrix.arch }}
           path: dist/*.uf2
           if-no-files-found: error
 
@@ -124,21 +135,35 @@ jobs:
       - name: Write release notes
         run: |
           cat > notes.md <<'EOF'
+          ## Which image
+
+          Four are attached — pick by board first, then core:
+
+          | Board | File |
+          |---|---|
+          | Waveshare RP2350-Touch-LCD-2 (2.0") | `...-touch-lcd-2-arm.uf2` |
+          | Waveshare RP2350-Touch-LCD-2.8 | `...-touch-lcd-2.8-arm.uf2` |
+
+          Take the **arm** build unless you specifically want the RP2350's RISC-V
+          cores; the two are functionally identical.
+
+          The splash screen names the board the image was built for, so a wrong
+          guess is visible in the first three seconds rather than as a dead panel.
+
           ## Flashing
 
           1. Hold **BOOT**, tap **RESET**, release **BOOT**. The board appears as a
              USB drive.
           2. Copy the `.uf2` onto it. The board reboots into the new firmware.
 
-          Take the **arm** build unless you specifically want the RP2350's RISC-V
-          cores; the two are functionally identical.
-
           ## Wiring
 
-          | ESC | Board |
-          |---|---|
-          | Signal | **GP4** — P2 header, pin 11 |
-          | Ground | **GND** — P2 header, pin 13 |
+          Two wires, and the pin depends on the board:
+
+          | Board | Signal | Ground |
+          |---|---|---|
+          | RP2350-Touch-LCD-2 | **GP4** — P2 header, pin 11 | **GND** — P2 header, pin 13 |
+          | RP2350-Touch-LCD-2.8 | **GP28** — J4 (JST-SH 12P), pin 11 | **GND** — J4 pin 1 or 5 |
 
           Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output,
           and RP2350 GPIO is not 5 V tolerant.
@@ -174,10 +199,13 @@ jobs:
         run: |
           # Creating a release and attaching assets are separate API calls, so
           # a partially-populated release is a real outcome worth catching.
+          # Every board/arch pair is named explicitly: checking only "arm" and
+          # "riscv" would pass with one board's images missing entirely.
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "$assets"
-          for want in arm riscv SHA256SUMS; do
-            echo "$assets" | grep -q "$want" || {
+          for want in touch-lcd-2-arm touch-lcd-2-riscv \
+                      touch-lcd-2.8-arm touch-lcd-2.8-riscv SHA256SUMS; do
+            echo "$assets" | grep -qF "$want" || {
               echo "::error::no asset matching '$want' on $TAG"; exit 1; }
           done
           echo "all expected assets present"
