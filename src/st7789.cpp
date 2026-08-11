@@ -1,6 +1,10 @@
 /**
  * @file st7789.cpp
  * @brief ST7789T3 init sequence, SPI/DMA plumbing and the dirty-band flush.
+ *
+ * The panel is identical on both supported boards — same controller, same
+ * 240x320 geometry, same backlight arrangement — so the only board-dependent
+ * thing here is `LCD_SPI_PORT` and the pin numbers behind it.
  */
 
 #include "st7789.h"
@@ -90,7 +94,7 @@ void st7789Init() {
 	gpio_init(PIN_LCD_CS);  gpio_set_dir(PIN_LCD_CS, GPIO_OUT);  gpio_put(PIN_LCD_CS, 1);
 	gpio_init(PIN_LCD_RST); gpio_set_dir(PIN_LCD_RST, GPIO_OUT); gpio_put(PIN_LCD_RST, 1);
 
-	// --- SPI0 ---
+	// --- SPI (spi0 on the 2.0" board, spi1 on the 2.8") ---
 	spi_init(LCD_SPI, LCD_SPI_HZ);
 	spi_set_format(LCD_SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
 	gpio_set_function(PIN_LCD_SCK,  GPIO_FUNC_SPI);
@@ -99,8 +103,10 @@ void st7789Init() {
 	// --- DMA ---
 	if (s_dma < 0) s_dma = dma_claim_unused_channel(true);
 
-	// --- hardware reset (note: this also resets the CST816D touch chip,
-	//     the two RESET lines are the same net on this board) ---
+	// --- hardware reset ---
+	// On the 2.0" board this also resets the touch controller: the two RESET
+	// lines are the same net there. On the 2.8" board they are separate and the
+	// touch driver pulses its own. Either way touchInit() runs after this.
 	gpio_put(PIN_LCD_RST, 1); delay(20);
 	gpio_put(PIN_LCD_RST, 0); delay(20);
 	gpio_put(PIN_LCD_RST, 1); delay(120);
@@ -140,7 +146,7 @@ void st7789Init() {
 	cmd(0x29);            // DISPON
 	delay(50);
 
-	// --- backlight on GPIO15 via an NPN, PWM-able ---
+	// --- backlight via an NPN low-side switch, PWM-able on both boards ---
 	pinMode(PIN_LCD_BL, OUTPUT);
 	analogWriteFreq(20000);
 	analogWriteRange(255);

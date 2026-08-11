@@ -13,9 +13,17 @@
  * which is itself how this block first went wrong.
  *
  * A self-contained bidirectional DShot ESC tester for the Waveshare
- * RP2350-Touch-LCD-2. Drag the on-screen throttle and the board sends
- * bidirectional DShot to a single ESC while decoding the eRPM and Extended
- * DShot Telemetry that comes back on the same wire.
+ * RP2350-Touch-LCD-2 and RP2350-Touch-LCD-2.8. Drag the on-screen throttle and
+ * the board sends bidirectional DShot to a single ESC while decoding the eRPM
+ * and Extended DShot Telemetry that comes back on the same wire.
+ *
+ * @section arch_boards Two boards
+ *
+ * Both carry an RP2350A and the same 240x320 ST7789T3 panel, so everything
+ * above the driver layer is shared. Below it almost nothing is: the panel is on
+ * a different SPI instance, the touch bus is a different I2C instance, and the
+ * touch controller is a different chip. @ref board.h picks one at compile time;
+ * see @ref board_pins.h for what a board is required to describe.
  *
  * @section arch Two cores
  *
@@ -39,12 +47,13 @@
  * All of these live in `src/`:
  *
  * - @ref config.h — every tunable setting
- * - @ref board_pins.h — RP2350-Touch-LCD-2 pin map, from the schematic
+ * - @ref board.h — which board this build targets
+ * - @ref board_pins.h — pin map for it, from the schematic
  * - @ref esc_task.h — core1 DShot pump and EDT decode
  * - @ref ui.h — screens, touch handling, arm and throttle state machines
  * - @ref gfx.h — RGB565 framebuffer, dirty bands, fonts
  * - @ref st7789.h — panel init and DMA blitter
- * - @ref cst816.h — capacitive touch
+ * - @ref touch.h — capacitive touch, CST816D or CST328
  *
  * @warning This drives a real motor. Read the safety section of README.md
  *          before connecting anything with a propeller on it.
@@ -59,7 +68,7 @@
 #include "src/board_pins.h"
 #include "src/gfx.h"
 #include "src/st7789.h"
-#include "src/cst816.h"
+#include "src/touch.h"
 #include "src/esc_task.h"
 #include "src/ui.h"
 
@@ -78,6 +87,14 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  * shares, so touchInit() has to follow it.
  */
 void setup() {
+#ifdef PIN_BAT_EN
+	// First thing, before anything that could take a millisecond: on the 2.8"
+	// board this is the latch that keeps VBAT connected once the power button
+	// is released. Miss it and the board dies mid-boot on battery.
+	pinMode(PIN_BAT_EN, OUTPUT);
+	digitalWrite(PIN_BAT_EN, HIGH);
+#endif
+
 #if SERIAL_TELEMETRY
 	Serial.begin(115200);
 #endif

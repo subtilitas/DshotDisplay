@@ -1,0 +1,59 @@
+/**
+ * @file board.h
+ * @brief Which piece of hardware this firmware is built for.
+ *
+ * DshotDisplay targets two Waveshare RP2350 boards. They are not variants of
+ * one design — the panel hangs off a different SPI instance, the touch
+ * controller is a different chip with a different register width, and the I2C
+ * bus is a different peripheral. None of that can be probed safely at runtime
+ * (probing an I2C bus means first knowing which pins it is on), so the choice
+ * is a compile-time constant.
+ *
+ * Two ways to set it:
+ *
+ * - Edit the `#define BOARD` line below. This is the only option the Arduino
+ *   IDE gives you, since it has no way to pass `-D` flags, and it is what
+ *   `test/select_board.sh` rewrites for CI.
+ * - Define `BOARD` on the compiler command line. `test/Makefile` and PlatformIO
+ *   do this; the `#ifndef` below gets out of the way when they do.
+ *
+ * @ref board_pins.h turns the choice into an actual pin map.
+ */
+
+#pragma once
+
+/**
+ * @defgroup board_ids Board identifiers
+ * @brief Legal values for @ref BOARD.
+ * @{
+ */
+
+/**
+ * @brief Waveshare RP2350-Touch-LCD-2 — 2.0" panel.
+ *
+ * ST7789T3 on SPI0, CST816D touch on I2C0 sharing the LCD reset line, camera
+ * bus broken out on two 14-pin 2.54 mm headers.
+ */
+#define BOARD_RP2350_TOUCH_LCD_2    2
+
+/**
+ * @brief Waveshare RP2350-Touch-LCD-2.8 — 2.8" panel.
+ *
+ * ST7789T3 on SPI1, CST328 touch on I2C1 with its own reset line, plus an RTC,
+ * an audio codec and an SD slot that between them consume nearly every GPIO.
+ * Only GP28 and GP29 are free.
+ */
+#define BOARD_RP2350_TOUCH_LCD_2_8  29
+
+/** @} */
+
+/**
+ * @brief The board this build targets. One of @ref board_ids.
+ *
+ * @note `test/select_board.sh` rewrites the line below with `sed`, so keep the
+ *       `#define BOARD ` prefix at the start of a line and the value on the
+ *       same line.
+ */
+#ifndef BOARD
+#define BOARD BOARD_RP2350_TOUCH_LCD_2_8
+#endif

@@ -11,7 +11,7 @@
 #include "am32_bl.h"
 #include "am32_eeprom.h"
 #include "esc_task.h"
-#include "cst816.h"
+#include "touch.h"
 #include "gfx.h"
 #include "config.h"
 

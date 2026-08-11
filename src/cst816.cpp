@@ -1,10 +1,19 @@
 /**
  * @file cst816.cpp
- * @brief CST816D register access, coordinate rotation and edge detection.
+ * @brief CST816D register access and edge detection (RP2350-Touch-LCD-2).
+ *
+ * Compiles to nothing unless the selected board fits a CST816D. The Arduino
+ * builder compiles every `.cpp` under `src/` regardless of board, so the guard
+ * is the whole file rather than a build-system exclusion.
+ *
+ * @see touch.h for the interface both touch drivers implement.
  */
 
-#include "cst816.h"
 #include "board_pins.h"
+
+#ifdef BOARD_TOUCH_CST816D
+
+#include "touch.h"
 #include "config.h"
 #include "gfx.h"
 
@@ -24,9 +33,6 @@
 #define REG_DIS_AUTOSLEEP 0xFE /**< Non-zero disables auto-sleep. */
 /** @} */
 
-#define TP_NATIVE_W 240 /**< Panel native width, independent of LCD_ROTATION. */
-#define TP_NATIVE_H 320 /**< Panel native height, independent of LCD_ROTATION. */
-
 static bool s_prevDown = false;        /**< Contact state at the previous poll. */
 static int16_t s_downX = 0, s_downY = 0; /**< Where the current press started. */
 
@@ -35,10 +41,10 @@ static int16_t s_downX = 0, s_downY = 0; /**< Where the current press started. *
  * @return true if the device acknowledged.
  */
 static bool wrReg(uint8_t reg, uint8_t val) {
-	Wire.beginTransmission(CST816_I2C_ADDR);
-	Wire.write(reg);
-	Wire.write(val);
-	return Wire.endTransmission() == 0;
+	BOARD_I2C.beginTransmission(CST816_I2C_ADDR);
+	BOARD_I2C.write(reg);
+	BOARD_I2C.write(val);
+	return BOARD_I2C.endTransmission() == 0;
 }
 
 /**
@@ -46,21 +52,21 @@ static bool wrReg(uint8_t reg, uint8_t val) {
  * @return true if the full read completed.
  */
 static bool rdRegs(uint8_t reg, uint8_t *buf, uint8_t n) {
-	Wire.beginTransmission(CST816_I2C_ADDR);
-	Wire.write(reg);
-	if (Wire.endTransmission(false) != 0) return false;
-	if (Wire.requestFrom((uint8_t)CST816_I2C_ADDR, n) != n) return false;
-	for (uint8_t i = 0; i < n; i++) buf[i] = Wire.read();
+	BOARD_I2C.beginTransmission(CST816_I2C_ADDR);
+	BOARD_I2C.write(reg);
+	if (BOARD_I2C.endTransmission(false) != 0) return false;
+	if (BOARD_I2C.requestFrom((uint8_t)CST816_I2C_ADDR, n) != n) return false;
+	for (uint8_t i = 0; i < n; i++) buf[i] = BOARD_I2C.read();
 	return true;
 }
 
 bool touchInit() {
 	pinMode(PIN_TP_INT, INPUT_PULLUP);
 
-	Wire.setSDA(PIN_I2C_SDA);
-	Wire.setSCL(PIN_I2C_SCL);
-	Wire.begin();
-	Wire.setClock(400000);
+	BOARD_I2C.setSDA(PIN_I2C_SDA);
+	BOARD_I2C.setSCL(PIN_I2C_SCL);
+	BOARD_I2C.begin();
+	BOARD_I2C.setClock(400000);
 
 	// The touch chip shares its RESET net with the LCD, so st7789Init() has
 	// already pulsed it. Give the controller time to come up.
@@ -77,27 +83,6 @@ bool touchInit() {
 	return ok;
 }
 
-/**
- * @brief Map native portrait coordinates into the active framebuffer frame.
- * @param      nx,ny Native panel coordinates.
- * @param[out] ox,oy Framebuffer coordinates for the current @ref LCD_ROTATION.
- */
-static void mapCoords(int16_t nx, int16_t ny, int16_t *ox, int16_t *oy) {
-#if LCD_ROTATION == 1
-	*ox = ny;
-	*oy = (int16_t)(TP_NATIVE_W - 1 - nx);
-#elif LCD_ROTATION == 2
-	*ox = (int16_t)(TP_NATIVE_W - 1 - nx);
-	*oy = (int16_t)(TP_NATIVE_H - 1 - ny);
-#elif LCD_ROTATION == 3
-	*ox = (int16_t)(TP_NATIVE_H - 1 - ny);
-	*oy = nx;
-#else
-	*ox = nx;
-	*oy = ny;
-#endif
-}
-
 void touchPoll(TouchState *t) {
 	uint8_t b[6];
 	bool down = false;
@@ -110,8 +95,8 @@ void touchPoll(TouchState *t) {
 		if (fingers > 0) {
 			int16_t nx = (int16_t)(((b[2] & 0x0F) << 8) | b[3]);
 			int16_t ny = (int16_t)(((b[4] & 0x0F) << 8) | b[5]);
-			if (nx < TP_NATIVE_W && ny < TP_NATIVE_H) {
-				mapCoords(nx, ny, &x, &y);
+			if (nx < TOUCH_NATIVE_W && ny < TOUCH_NATIVE_H) {
+				touchMapCoords(nx, ny, &x, &y);
 				down = true;
 			}
 		}
@@ -133,3 +118,5 @@ void touchPoll(TouchState *t) {
 
 	s_prevDown = down;
 }
+
+#endif /* BOARD_TOUCH_CST816D */
