@@ -70,7 +70,9 @@ BBDECODE ?= $(shell command -v blackbox_decode 2>/dev/null)
 bbcheck:
 	@if [ -z "$(BBDECODE)" ]; then \
 		echo "bbcheck: blackbox_decode not found, skipping"; \
-		echo "  build it from https://github.com/betaflight/blackbox-tools"; \
+		echo "  git clone https://github.com/betaflight/blackbox-tools"; \
+		echo "  make -C blackbox-tools obj/blackbox_decode   # not plain 'make':"; \
+		echo "  the default target also builds blackbox_render, which needs cairo"; \
 	else \
 		$(CXX) $(CXXFLAGS) $(INCLUDES) -o gen_blackbox_log \
 			gen_blackbox_log.cpp ../src/blackbox_encode.cpp -lm && \
