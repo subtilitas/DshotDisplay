@@ -11,18 +11,15 @@ HTML_OUTPUT            = html
 GENERATE_LATEX         = NO
 
 # --- input ---------------------------------------------------------------
-# The .ino sits at the sketch root because Arduino requires it there; every
-# other translation unit lives in src/. test/ holds host-side stubs whose whole
-# job is to imitate headers we do not own, so documenting them is meaningless.
-INPUT                  = DshotDisplay.ino src README.md
+# Every translation unit lives in src/, including main.cpp -- there is no longer
+# a sketch root to keep an .ino at. test/ holds host-side stubs whose whole job
+# is to imitate headers we do not own, so documenting them is meaningless.
+INPUT                  = src README.md
 EXCLUDE                = docs test
-FILE_PATTERNS          = *.h *.cpp *.ino *.md
+FILE_PATTERNS          = *.h *.c *.cpp *.md
 RECURSIVE              = YES
 
-# Arduino sketches are C++; Doxygen does not know that by default.
-EXTENSION_MAPPING      = ino=C++
-
-# README.md is the front page. The architecture write-up in DshotDisplay.ino is
+# README.md is the front page. The architecture write-up in src/main.cpp is
 # a @page, not a second @mainpage -- two mainpages is an error, not a merge.
 USE_MDFILE_AS_MAINPAGE = README.md
 MARKDOWN_SUPPORT       = YES

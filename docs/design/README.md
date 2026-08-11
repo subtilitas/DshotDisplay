@@ -15,11 +15,11 @@ what was actually built and why it diverged.
 
 ## Shared context
 
-Both features are on `dev/telemetry-logging`, cut from `main`. They are related:
+Both features landed on `dev/telemetry-logging`, cut from `main`. They are related:
 KISS supplies higher-resolution voltage and current, and the log is the main
 reason that resolution is worth having — a 0.25 V/LSB voltage trace is not worth
 plotting.
 
 Both are partially implemented. KISS telemetry decodes and merges but has no UI;
-SD logging has a validated encoder, a ring buffer and an SdFat writer, but no UI
+SD logging has a validated encoder, a ring buffer and a FatFs writer, but no UI
 and no hardware bring-up. Neither has run against a real ESC or a real card.

@@ -5,9 +5,9 @@
 #
 # Produces build/DshotDisplay.uf2.
 #
-# PICO_PLATFORM selects the core: rp2350-arm-s for Cortex-M33, rp2350-riscv for
-# the Hazard3 cores. Both are built in CI — the RISC-V build catches anything
-# that quietly assumes Cortex-M.
+# PICO_PLATFORM selects the core. Only rp2350-arm-s (Cortex-M33) is supported and
+# built: rp2350-riscv would work -- the DShot library supports the Hazard3 cores
+# -- but nothing here is built or tested for it.
 #
 # Dependencies are fetched at configure time rather than vendored, so the tree
 # stays free of third-party source, and pinned to exact tags so a build here
@@ -95,8 +95,9 @@ pico_enable_stdio_uart(DshotDisplay 0)
 # .uf2 for drag-and-drop flashing, plus .elf/.map/.dis for debugging.
 pico_add_extra_outputs(DshotDisplay)
 
-# Warnings that the Arduino build had on via --warnings all. Not -Werror on the
-# fetched dependencies, only on our own sources.
+# Warnings on our own sources only. The fetched dependencies are not ours to
+# keep warning-clean, and -Werror on them would make an upstream bump a build
+# break rather than a review.
 target_compile_options(DshotDisplay PRIVATE
     -Wall -Wextra -Wshadow -Wno-unused-parameter
 )
