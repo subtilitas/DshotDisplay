@@ -85,9 +85,11 @@ jobs:
         run: python3 test/check_docs.py
 
       - name: Compile
-        env:
-          PICO_SDK_PATH: ~/pico-sdk
         run: |
+          # Set here rather than in env:, because GitHub does not expand ~ in
+          # env values -- CMake would receive the literal string "~/pico-sdk"
+          # and report the SDK missing.
+          export PICO_SDK_PATH="$HOME/pico-sdk"
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
           ninja -C build
           arm-none-eabi-size build/DshotDisplay.elf

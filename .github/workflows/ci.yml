@@ -46,9 +46,11 @@ jobs:
           fi
 
       - name: Build
-        env:
-          PICO_SDK_PATH: ~/pico-sdk
         run: |
+          # Set here rather than in env:, because GitHub does not expand ~ in
+          # env values -- CMake would receive the literal string "~/pico-sdk"
+          # and report the SDK missing.
+          export PICO_SDK_PATH="$HOME/pico-sdk"
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
           ninja -C build
           arm-none-eabi-size build/DshotDisplay.elf
@@ -95,10 +97,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build blackbox-tools
+      # Only the decoder target. `make` with no target also builds blackbox_render,
+      # which needs cairo and freetype -- neither is on the runner, and neither
+      # has anything to do with checking a log parses.
+      - name: Build blackbox_decode
         run: |
           git clone --depth 1 https://github.com/betaflight/blackbox-tools.git /tmp/bbt
-          make -C /tmp/bbt -j"$(nproc)"
+          make -C /tmp/bbt -j"$(nproc)" obj/blackbox_decode
           test -x /tmp/bbt/obj/blackbox_decode
       - name: Encode a log and decode it
         working-directory: test
