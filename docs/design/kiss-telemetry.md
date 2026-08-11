@@ -191,8 +191,7 @@ and brought out on the 2.54 mm headers:
 | GP21 | UART1 RX | P1 pin 5 |
 
 GP5 is the tentative pick — adjacent to the DShot pin in numbering, and UART1
-leaves UART0 alone for the USB-serial debug path. In arduino-pico, UART1 is
-`Serial2`.
+leaves UART0 alone, in case a build ever wants a debug UART instead of USB CDC.
 
 > **Voltage.** The KISS spec says the line idles at 3.6 V. RP2350 GPIO absolute
 > maximum is IOVDD + 0.3 = 3.6 V, so a strictly conforming KISS ESC sits exactly

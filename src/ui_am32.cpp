@@ -15,7 +15,8 @@
 #include "gfx.h"
 #include "config.h"
 
-#include <Arduino.h>
+#include "plat.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 

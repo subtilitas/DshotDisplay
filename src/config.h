@@ -96,7 +96,7 @@
  * @brief GPIO the ESC's telemetry pad connects to. Receive only.
  *
  * GP5 is UART1 RX and lands on P1 header pin 10. UART1 is chosen over UART0 so
- * the USB-serial debug path is left alone. In arduino-pico, UART1 is `Serial2`.
+ * the USB-serial debug path is left alone. @see KISS_UART
  *
  * Other candidates, all free and broken out: GP9 (UART1 RX, P1 pin 2), GP21
  * (UART1 RX, P1 pin 5), GP1 (UART0 RX, P2 pin 8).
@@ -109,13 +109,17 @@
 #define KISS_TELEM_PIN         5
 
 /**
- * @brief Arduino serial object for @ref KISS_TELEM_PIN.
+ * @brief UART instance for @ref KISS_TELEM_PIN.
  *
- * arduino-pico maps `Serial1` to UART0 and `Serial2` to UART1. This must agree
- * with the pin: GP5 is a UART1 RX pin, so `Serial2`. Changing @ref
- * KISS_TELEM_PIN to a UART0 pin such as GP1 means changing this to `Serial1`.
+ * Must agree with the pin: on RP2350, GP1/5/9/21/25/29 are UART1 RX and
+ * GP1/13/17/29 are UART0 RX. GP5 is UART1, so `uart1`. Moving
+ * @ref KISS_TELEM_PIN to a UART0 pin means changing this too — the SDK will not
+ * catch the mismatch, it will simply never receive anything.
+ *
+ * UART0 is deliberately left alone; stdio can have it if a build ever wants a
+ * debug UART instead of USB CDC.
  */
-#define KISS_SERIAL            Serial2
+#define KISS_UART              uart1
 
 /**
  * @brief Request telemetry on every Nth DShot frame.
@@ -147,6 +151,86 @@
  * next request resynchronises regardless.
  */
 #define KISS_REPLY_TIMEOUT_MS  10
+
+/** @} */
+
+/**
+ * @defgroup cfg_log SD card logging
+ * @brief Betaflight blackbox logs on the microSD slot.
+ *
+ * The card is on SPI1 with its own pins, so it does not contend with the
+ * display on SPI0 for a peripheral — only for core0's time.
+ * See docs/design/blackbox-logging.md.
+ * @{
+ */
+
+/** @brief Compile the SD logging path in at all. */
+#ifndef SD_LOG_ENABLE
+#define SD_LOG_ENABLE          1
+#endif
+
+/**
+ * @brief SPI clock for the card, in MHz.
+ *
+ * Cards are specified to 25 MHz in SPI mode. Starting conservatively: a card
+ * that misbehaves at speed fails in ways that look like corruption rather than
+ * like a bus problem, which is a miserable thing to debug.
+ */
+#define SD_LOG_SPI_MHZ         12
+
+/**
+ * @brief Log frame rate, in Hz.
+ *
+ * Not the DShot rate. eRPM is the only genuinely 1 kHz signal here; KISS
+ * arrives at 50 Hz and the display repaints far slower. At ~14.5 bytes/frame
+ * measured, 500 Hz is about 7.3 kB/s or 26 MB/hour.
+ */
+#define SD_LOG_RATE_HZ         500
+
+/**
+ * @brief I frames every this many frames.
+ *
+ * I frames are the resynchronisation points: a decoder joining mid-file, or
+ * recovering from a damaged region, cannot do anything until it reaches one.
+ * 32 is Betaflight's usual value.
+ */
+#define SD_LOG_I_INTERVAL      32
+
+/**
+ * @brief Ring buffer size, in bytes.
+ *
+ * Has to cover the worst write stall the card produces, times the byte rate.
+ * At 7.3 kB/s an 8 kB buffer absorbs roughly a second, which should be ample
+ * for an erase pause — but this is a guess until measured. @ref LogRing tracks
+ * a high-water mark; the UI shows it, and it is the number to size this from.
+ */
+#define SD_LOG_BUFFER_BYTES    8192
+
+/**
+ * @brief Flush granularity, in bytes. Should be a multiple of 512.
+ *
+ * Cards erase in blocks and write whole sectors regardless; handing over
+ * sector-aligned chunks avoids read-modify-write cycles inside the card.
+ */
+#define SD_LOG_CHUNK_BYTES     512
+
+/**
+ * @brief Contiguous space reserved per log file, in bytes.
+ *
+ * Pre-allocating means the FAT is not updated mid-log, which is where a long
+ * unpredictable stall would otherwise come from. 16 MB is about ten minutes at
+ * the default rate. Unused space is released when the file is closed.
+ */
+#define SD_LOG_PREALLOC_BYTES  (16u * 1024u * 1024u)
+
+/**
+ * @brief Start logging automatically when the tester arms.
+ *
+ * Manual start/stop is always available. With this on, arming also starts a log
+ * and disarming closes it, so a run cannot be missed by forgetting to press
+ * record.
+ */
+#define SD_LOG_AUTO_ON_ARM     1
 
 /** @} */
 

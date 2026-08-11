@@ -16,7 +16,7 @@
 #include "am32_eeprom.h"
 #include "config.h"
 
-#include <Arduino.h>
+#include "plat.h"
 #include <hardware/gpio.h>
 #include <hardware/sync.h>
 #include <string.h>

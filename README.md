@@ -108,66 +108,68 @@ If telemetry is flaky, drop `DSHOT_SPEED_KBAUD` to 300 before blaming the firmwa
 
 ## Building
 
-Arduino IDE with the [arduino-pico](https://github.com/earlephilhower/arduino-pico) core.
+Native [Pico SDK](https://github.com/raspberrypi/pico-sdk) with CMake. No Arduino
+core, no IDE.
 
-1. **Board manager URL** — File → Preferences → Additional boards manager URLs:
+You need `cmake`, `ninja` and an `arm-none-eabi` toolchain:
 
-   ```
-   https://github.com/earlephilhower/arduino-pico/releases/download/4.5.2/package_rp2040_index.json
-   ```
+```sh
+sudo apt install cmake ninja-build gcc-arm-none-eabi   # Debian/Ubuntu
+brew install cmake ninja arm-none-eabi-gcc             # macOS
+```
 
-   Then Tools → Board → Boards Manager → install *Raspberry Pi Pico/RP2040/RP2350*.
+Then fetch the SDK once and point `PICO_SDK_PATH` at it:
 
-2. **Library** — Sketch → Include Library → Manage Libraries → install
-   **`Pico_Bidir_DShot`** ([bastian2001/pico-bidir-dshot](https://github.com/bastian2001/pico-bidir-dshot)).
+```sh
+git clone --depth 1 --branch 2.1.1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+git -C ~/pico-sdk submodule update --init --depth 1 lib/tinyusb
+export PICO_SDK_PATH=~/pico-sdk
+```
 
-3. **Board settings**
+`lib/tinyusb` is not optional: serial telemetry goes over USB CDC, and without the
+submodule the SDK quietly builds with no USB support at all.
 
-   | Setting | Value |
-   |---|---|
-   | Board | Raspberry Pi Pico 2 (or Generic RP2350 to address the full 16 MB) |
-   | CPU Speed | 150 MHz |
-   | CPU Architecture | ARM |
-   | Flash Size | 4 MB is plenty for this sketch |
-   | USB Stack | Pico SDK |
+Build:
 
-4. **Upload** — hold BOOT, tap RESET, release BOOT. The board enumerates as mass storage;
-   upload normally after that.
+```sh
+cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
+ninja -C build
+```
+
+That produces `build/DshotDisplay.uf2`. Hold **BOOT**, tap **RESET**, release **BOOT**,
+and copy it onto the drive that appears.
+
+Only the Cortex-M33 build is supported. The RP2350's Hazard3 RISC-V cores would work —
+the DShot library supports both — but nothing here is built or tested for them.
 
 ### Or just flash a release
 
 Prebuilt `.uf2` images are attached to every
 [release](https://github.com/subtilitas/DshotDisplay/releases). Hold BOOT, tap RESET,
-release BOOT, and copy the file onto the drive that appears. Take the **arm** build unless
-you specifically want the RP2350's RISC-V cores — both are functionally identical.
+release BOOT, and copy the file onto the drive that appears.
 
 Every green CI run also uploads a `.uf2` artifact, so an untagged change can be tried on
 hardware without cutting a release.
 
 ### Reproducible builds
 
-`sketch.yaml` is an arduino-cli build profile — the closest thing Arduino has to a lock
-file. It pins the core, its bundled toolchain, the library and the board options together,
-so you don't depend on whatever happens to be installed:
+Dependency versions are pinned in `CMakeLists.txt` and fetched at configure time, so the
+tree stays free of third-party source and a build here matches a build anywhere. That
+pinning is the point: an unpinned `FetchContent` is a lock file that silently rewrites
+itself.
 
-```sh
-arduino-cli compile --profile rp2350
-arduino-cli upload  --profile rp2350 -p <port>
-```
+Currently pinned: pico-sdk **2.1.1**, Pico_Bidir_DShot **1.0.2**,
+no-OS-FatFS-SD-SDIO-SPI-RPi-Pico **v3.6.2**.
 
-A profile is self-contained: arduino-cli installs the pinned platform and libraries into a
-profile-local directory rather than the global sketchbook, so nothing system-wide affects
-the result. Steps 1–3 above are only needed if you'd rather use the IDE.
+Two notes on those dependencies, both of which cost an afternoon to work out:
 
-Currently pinned: arduino-pico **4.5.2**, Pico_Bidir_DShot **1.0.2**, FQBN
-`rp2040:rp2040:rpipico2:flash=4194304_0,freq=150,arch=arm`. Switch `arch` to `riscv` to
-build for the RP2350's Hazard3 cores instead — the DShot library supports both.
-
-PlatformIO works too — add to `platformio.ini`:
-
-```ini
-lib_deps = https://github.com/bastian2001/pico-bidir-dshot.git
-```
+- Both keep their `CMakeLists.txt` one directory below the repo root, so both need
+  `SOURCE_SUBDIR`. Without it `FetchContent` downloads the source, defines no targets,
+  and the failure surfaces much later as a missing header.
+- The SD driver is the **SDIO-SPI** repo, not the older SPI-only one. That one's
+  `rtc.c` includes `hardware/rtc.h` — a peripheral the RP2040 has and the RP2350 does
+  not, having replaced it with powman. It compiles cleanly for RP2040 and fails
+  outright here.
 
 ---
 
@@ -366,9 +368,11 @@ a backstop for your habits, not a replacement for them.
 ## Layout
 
 ```
-DshotDisplay.ino        core0 setup/loop, core1 setup1/loop1, @mainpage
-sketch.yaml             pinned core + library versions (arduino-cli profile)
+CMakeLists.txt          build + pinned dependency versions
+pico_sdk_import.cmake   locates the SDK via PICO_SDK_PATH
 src/
+  main.cpp              core0 main(), core1 launch, @page architecture
+  plat.h                millis/micros/delay over the SDK timebase
   config.h              everything you'd want to tune
   board_pins.h          RP2350-Touch-LCD-2 pin map, annotated from the schematic
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
@@ -379,22 +383,30 @@ src/
   gfx.{h,cpp}           RGB565 framebuffer, dirty bands, 5x7 font, 7-seg digits
   st7789.{h,cpp}        panel init + DMA blitter
   cst816.{h,cpp}        capacitive touch
+  kiss_telem.{h,cpp}    KISS ESC telemetry decode (pure)
+  esc_merge.{h,cpp}     per-field preference between KISS and EDT (pure)
+  blackbox_encode.{h,cpp} Betaflight blackbox log writer (pure)
+  log_ring.{h,cpp}      ring buffer between encoder and card (pure)
+  sd_log.{h,cpp}        FatFs writer, lifecycle, drop accounting
+  sd_hw_config.c        SD wiring for the FatFs driver
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + UI preview image
-test/                   host test suites + Arduino/Pico SDK stubs
+docs/design/            design notes for work in progress
+test/                   host test suites + Pico SDK stubs
 .github/workflows/      CI
 ```
 
-The `.ino` has to stay at the sketch root — Arduino identifies the sketch by a `.ino` whose
-name matches its folder. Everything else lives in `src/`, which the Arduino builder compiles
-recursively. The sketch includes them as `"src/gfx.h"` because only the sketch root goes on
-the include path; files inside `src/` include each other as plain siblings, since the
-compiler resolves quoted includes relative to the including file.
+Everything is under `src/`, `main.cpp` included — there is no sketch root to keep an `.ino`
+at any more. Files include each other as plain siblings.
+
+The modules marked *pure* have no hardware dependency at all: they are compiled into the
+host test binary and exercised directly. That is deliberate, and it is what makes the
+protocol and codec work testable without a board on the desk.
 
 ### Tests
 
 The firmware's own logic runs on a PC against stubs in `test/stubs/` that mirror the
-Arduino and Pico SDK signatures:
+Pico SDK signatures:
 
 ```sh
 cd test && make
@@ -416,9 +428,10 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 
 | Job | What it catches |
 |---|---|
-| **Firmware** | Real `arduino-cli` build for RP2350, ARM and RISC-V, pinned by `sketch.yaml` |
+| **Firmware** | Real Pico SDK build for RP2350, pinned by `CMakeLists.txt`, plus UF2 validation |
 | **Host tests** | Protocol, codec and UI regressions a compile cannot see |
-| **Config permutations** | All 8 combinations of `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP` and `LCD_ROTATION`, warnings fatal |
+| **Blackbox round-trip** | Encodes a log and decodes it with Betaflight's own `blackbox_decode`, comparing every value |
+| **Config permutations** | All 32 combinations of `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP`, `LCD_ROTATION`, `KISS_TELEM_ENABLE` and `SD_LOG_ENABLE`, warnings fatal |
 | **Doxygen** | Undocumented additions |
 
 The permutation job exists because those options are exactly the ones nobody compiles by
@@ -439,8 +452,7 @@ cores, checksums them, and publishes a GitHub Release with the images attached.
 Assets per release:
 
 ```
-DshotDisplay-v1.0.0-rp2350-arm.uf2
-DshotDisplay-v1.0.0-rp2350-riscv.uf2
+DshotDisplay-v1.0.0-rp2350.uf2
 SHA256SUMS.txt
 ```
 
@@ -472,7 +484,7 @@ doxygen 2>&1 | grep -i warning
 ```
 
 `EXTRACT_STATIC` is on — most of this firmware is file-static, so leaving it off would
-document almost nothing. The `@mainpage` block lives in `DshotDisplay.ino` and covers the
+document almost nothing. The `@page architecture` block lives in `src/main.cpp` and covers the
 two-core architecture; this README is rendered as the front page.
 
 ### Rendering
