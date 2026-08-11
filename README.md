@@ -224,14 +224,36 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
 - **EDT ON** — resends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` (the firmware already does
   this automatically 1.5 s after boot). Only works while disarmed.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
+- **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
+- **SD LOG** — blackbox logging status and manual start/stop. See below.
+
+**SD LOG screen**
+
+- **STATUS** — `NO CARD`, `READY`, `RECORDING` or `CARD ERROR`. No card is not a fault;
+  the board has no card-detect pin, so the only way to know is to try to mount one.
+- **START / STOP** — begins or ends a log immediately. Greyed out with no card.
+- **FILE**, **FRAMES**, **WRITTEN** — what is being recorded and how much of it.
+- **DROPPED FRAMES** — frames the ring buffer refused because the card could not keep
+  up. Anything but zero means the buffer is too small for your card.
+- **BUF PEAK** — high-water mark against the configured buffer size. Amber past half,
+  red past three quarters.
+- **WORST FLUSH** — the longest single write to the card, in milliseconds. This is the
+  stall the buffer has to absorb.
 
 **Reading the telemetry**
 
-`--` means the ESC never sent that frame type. Plain eRPM always works on bidirectional
-DShot; voltage, current, temperature, stress and status need EDT support in the ESC
-firmware (BLHeli_32, Bluejay, AM32). The **LINK** tile shows good packets per second and
-the checksum error rate — at 1 kHz you should see close to 1000/s and 0 % err. A rising
-error rate points at signal integrity, not at the ESC.
+`--` means neither source has ever supplied that field. Plain eRPM always works on
+bidirectional DShot; voltage, current, temperature, stress and status need EDT support in
+the ESC firmware (BLHeli_32, Bluejay, AM32). The **LINK** tile shows good packets per
+second and the checksum error rate — at 1 kHz you should see close to 1000/s and 0 % err.
+A rising error rate points at signal integrity, not at the ESC.
+
+The voltage, current and temperature tiles carry a small **KISS** (cyan) or **EDT**
+(dimmed) tag saying where the number came from. It matters: `12.25 V` from EDT means
+"somewhere in a 0.25 V bucket", the same reading from KISS means "within 0.01 V". If the
+tag drops from KISS back to EDT the telemetry wire has gone quiet, and the readout is
+suddenly 25x coarser without the digits obviously changing. Consumption in mAh appears on
+the temperature tile and is KISS-only — EDT does not carry it.
 
 ---
 
@@ -279,6 +301,8 @@ Logs are written in Betaflight's blackbox format, so they open directly in
 Blackbox Explorer, `blackbox_decode` and PIDtoolbox. Files are named
 `LOGnnnnn.BFL` on a FAT-formatted card.
 
+![SD log screen](docs/log-preview.png)
+
 Reach it from **CFG → SD LOG**. The screen shows card state, the current file,
 frames and kB written, dropped frames, buffer high-water mark and the worst
 single card write. Logging starts and stops with **ARM** by default
@@ -296,6 +320,47 @@ raise it. **DROPPED FRAMES** above zero means it was already too small.
 
 Frames are dropped rather than blocking, always. A gap in the log is
 recoverable; a stalled UI with a live motor is not.
+
+### Tuning
+
+All in `config.h`. The defaults are chosen to be safe rather than optimal, since
+none of this has been measured against real hardware yet.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `KISS_TELEM_ENABLE` | `1` | Compile the KISS path in at all |
+| `KISS_TELEM_PIN` | `5` | GPIO the telemetry wire lands on, receive only |
+| `KISS_UART` | `uart1` | Must match the pin — the SDK will not catch a mismatch, it simply never receives |
+| `KISS_REQUEST_EVERY_N` | `20` | Request every Nth DShot frame; 20 at 1 kHz is 50 Hz. Must be ≥ 2 or replies overlap, and there is an `#error` that says so |
+| `KISS_STALE_MS` | `500` | How long a KISS frame stays authoritative before the display falls back to EDT |
+| `KISS_REPLY_TIMEOUT_MS` | `10` | Abandon a reply that has not completed; only affects the timeout counter |
+| `SD_LOG_ENABLE` | `1` | Compile the logging path in at all |
+| `SD_LOG_SPI_MHZ` | `12` | Card clock. Cards are specified to 25 MHz; a card misbehaving at speed fails in ways that look like corruption |
+| `SD_LOG_RATE_HZ` | `500` | Log frame rate. Not the DShot rate — eRPM is the only genuinely 1 kHz signal |
+| `SD_LOG_I_INTERVAL` | `32` | Frames between keyframes. Lower resynchronises faster after damage, at a size cost |
+| `SD_LOG_BUFFER_BYTES` | `8192` | Ring buffer. **The one to measure** — see BUF PEAK and WORST FLUSH |
+| `SD_LOG_CHUNK_BYTES` | `512` | Flush granularity. Keep it a multiple of 512 or the card does read-modify-write |
+| `SD_LOG_PREALLOC_BYTES` | `16 MB` | Contiguous space reserved per file, so the FAT is not rewritten mid-log. About ten minutes at the default rate |
+| `SD_LOG_AUTO_ON_ARM` | `1` | Start and stop logging with ARM, alongside the manual button |
+
+### Reading the logs
+
+Files land on the card as `LOGnnnnn.BFL`. They open directly in
+[Blackbox Explorer](https://github.com/betaflight/blackbox-log-viewer), or on the
+command line:
+
+```sh
+blackbox_decode LOG00001.BFL      # -> LOG00001.01.csv and .01.event
+```
+
+The `.event` file holds the end-of-log marker and is usually empty otherwise; the CSV is
+what you want.
+
+Both eRPM sources are logged separately, as `eRPM[0]` (bidirectional DShot, 1 kHz) and
+`eRPMkiss[0]` (KISS, 50 Hz), and so are both voltage and current sources — `vbatLatest` /
+`amperageLatest` carry KISS where it was live, `vbatEdt` / `amperageEdt` always carry EDT.
+That redundancy is deliberate: it lets the KISS decoder be checked against a source
+already trusted, from the log itself, rather than taken on faith.
 
 ## AM32 ESC configuration
 
@@ -453,7 +518,8 @@ src/
   sd_log.{h,cpp}        FatFs writer, lifecycle, drop accounting
   sd_hw_config.c        SD wiring for the FatFs driver
 Doxyfile                API doc config -> docs/html/
-docs/                   generated docs + UI preview image
+docs/                   generated docs + preview images
+docs/design/            design notes, kept in step with the code
 docs/design/            design notes for work in progress
 test/                   host test suites + Pico SDK stubs
 .github/workflows/      CI
@@ -479,7 +545,16 @@ Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only
 says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
 than dependent on machine speed. The fake ESC serves a real settings blob recovered from
 the reference configurator, so the UI tests operate on values a real ESC would report.
-Failing tests dump the rendered frame as a PPM, so layout bugs can be looked at.
+The suite renders twelve screens to PPM as it runs — splash, main in three states, both
+settings screens, all three SD log states and the four AM32 screens — so a layout change
+is visible rather than something you find on the board later. Failing tests dump their
+frame too.
+
+`sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the
+logging UI is tested against a fake logger in `fakes.cpp`. The fake is the observable:
+tapping START has to actually reach `sdLogStart()` for its state to change, which covers
+navigation, hit-testing and dispatch without production code carrying test-only
+accessors.
 
 `test_ui.cpp` `#include`s `ui_am32.cpp` rather than linking it, so tests can read its
 file-static state without production code carrying test-only accessors. That's why the
@@ -487,7 +562,7 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs four jobs:
+`.github/workflows/ci.yml` runs five jobs:
 
 | Job | What it catches |
 |---|---|
