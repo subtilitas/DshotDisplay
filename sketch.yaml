@@ -10,10 +10,26 @@
 # libraries into a profile-local directory rather than using whatever happens to
 # be in your global sketchbook. Nothing you have installed system-wide affects
 # the result.
+#
+# CHOOSING A BOARD
+#
+# Both supported boards are the same MCU with the same flash, so they share one
+# FQBN and the profiles below are identical apart from their notes. What differs
+# is a compile-time constant in src/board.h, and an arduino-cli profile has no
+# way to set a compiler define. So pick the board *first*:
+#
+#     test/select_board.sh BOARD_RP2350_TOUCH_LCD_2_8
+#     arduino-cli compile --profile rp2350_28
+#
+# The two profiles exist so the intent is recorded in the build command rather
+# than only in an edited header. Building rp2350_28 without having run
+# select_board.sh produces a perfectly good image for the wrong board.
 
 profiles:
   rp2350:
-    notes: Waveshare RP2350-Touch-LCD-2, built as a Raspberry Pi Pico 2 (ARM core)
+    notes: >-
+      Waveshare RP2350-Touch-LCD-2 (2.0"), built as a Raspberry Pi Pico 2 (ARM
+      core). Run test/select_board.sh BOARD_RP2350_TOUCH_LCD_2 first.
 
     # Board options, all verified against arduino-pico's boards.txt:
     #   flash=4194304_0  4 MB, no filesystem. The board actually has 16 MB, but
@@ -30,6 +46,21 @@ profiles:
 
     libraries:
       # Bidirectional DShot over PIO. GPL-3.0 -- see the licence note in README.
+      - Pico_Bidir_DShot (1.0.2)
+
+  rp2350_28:
+    notes: >-
+      Waveshare RP2350-Touch-LCD-2.8, built as a Raspberry Pi Pico 2 (ARM core).
+      Run test/select_board.sh BOARD_RP2350_TOUCH_LCD_2_8 first.
+
+    # Same RP2350A and the same 16 MB part, so the board options are unchanged.
+    fqbn: rp2040:rp2040:rpipico2:flash=4194304_0,freq=150,arch=arm
+
+    platforms:
+      - platform: rp2040:rp2040 (4.5.2)
+        platform_index_url: https://github.com/earlephilhower/arduino-pico/releases/download/4.5.2/package_rp2040_index.json
+
+    libraries:
       - Pico_Bidir_DShot (1.0.2)
 
 default_profile: rp2350
