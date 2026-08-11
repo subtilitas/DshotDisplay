@@ -14,6 +14,8 @@
 #include "cst816.h"
 #include "st7789.h"
 #include "esc_task.h"
+#include "esc_merge.h"
+#include "sd_log.h"
 #include "board_pins.h"
 #include "config.h"
 
@@ -88,8 +90,33 @@ static const Btn BTN_MAXT_M  = { 14, CFG_MAXT_Y, 46, 40 };
 static const Btn BTN_MAXT_P  = { 180, CFG_MAXT_Y, 46, 40 };
 static const Btn BTN_EDT     = { 14, CFG_CMD_Y, 100, CFG_ROW_H };
 static const Btn BTN_BEEP    = { 126, CFG_CMD_Y, 100, CFG_ROW_H };
-static const Btn BTN_AM32    = { 14, CFG_AM32_Y, 212, 38 };
+// The AM32 row is split in two so LOG has somewhere to live. The settings
+// screen was already full to the bottom edge, and the asserts below keep it
+// honest rather than trusting that it still fits.
+static const Btn BTN_AM32    = { 14, CFG_AM32_Y, 104, 38 };
+static const Btn BTN_LOG     = { 122, CFG_AM32_Y, 104, 38 };
 static const Btn BTN_BACK    = { 14, CFG_BACK_Y, 212, 18 };
+
+/**
+ * @defgroup ui_log_layout Logging screen layout
+ * @{
+ */
+#define LOG_ROW0_Y     44   /**< First status row. */
+#define LOG_ROW_H      25
+#define LOG_ROWS        7
+#define LOG_TOGGLE_Y  232   /**< START / STOP button. */
+#define LOG_TOGGLE_H   44
+#define LOG_BACK_Y    292
+/** @} */
+
+static const Btn BTN_LOG_TOGGLE = { 14, LOG_TOGGLE_Y, 212, LOG_TOGGLE_H };
+static const Btn BTN_LOG_BACK   = { 14, LOG_BACK_Y, 212, 18 };
+
+static_assert(LOG_ROW0_Y + LOG_ROWS * LOG_ROW_H <= LOG_TOGGLE_Y,
+              "logging rows overlap the START/STOP button");
+static_assert(LOG_TOGGLE_Y + LOG_TOGGLE_H <= LOG_BACK_Y,
+              "START/STOP button overlaps BACK");
+static_assert(LOG_BACK_Y + 18 <= GFX_H, "logging BACK runs off the panel");
 
 // Caught by a screenshot rather than by reading the code: the caption used to
 // sit at y=240, inside the 208..248 band the EDT and BEEP buttons occupy, and
@@ -109,6 +136,7 @@ static bool     s_armed = false;
 static bool     s_hold = false;
 static bool     s_config = false;
 static bool     s_am32 = false;   /**< AM32 config mode owns the screen. */
+static bool     s_logScreen = false; /**< Logging status screen is up. */
 static uint16_t s_throttle = 0;
 static uint16_t s_maxThrottle = DEFAULT_MAX_THROTTLE;
 static uint8_t  s_poles = DEFAULT_MOTOR_POLES;
@@ -145,9 +173,12 @@ static struct {
 	int  battMv;
 	uint32_t rpm, erpm;
 	int  linkAlive, rpmArmed;
-	int  volts10, amps10, tempC, stress, status, rate, errPct, edt;
+	int  volts100, amps100, tempC, stress, status, rate, errPct, edt;
+	int  voltsSrc, ampsSrc, mah;
 	int  throttleRaw, maxPct, thrArmed, thrHold;
 	int  config, poles;
+	int  logState, logFile, logDrops;
+	uint32_t logBytes, logFrames, logPeak, logWorstMs;
 } s_shown;
 
 /** @brief Force every region to repaint on the next uiTick(). */
@@ -173,6 +204,24 @@ static void drawLabelled(int x, int y, int w, int h, const char *label,
 	gfxRect(x, y, w, h, C_PANEL);
 	gfxText(x + 6, y + 4, label, C_DIM, 1);
 	gfxText(x + 6, y + 15, value, vcol, 2);
+}
+
+/**
+ * @brief Right-aligned "KISS" / "EDT" tag on a tile's label row.
+ *
+ * Cyan for KISS, dim for EDT: the point is to make the *fine* source obvious at
+ * a glance, so that a readout quietly dropping back to 0.25 V steps is visible
+ * rather than something you notice later in a log.
+ *
+ * @param xRight Right edge of the tile.
+ * @param y      Tile top.
+ * @param src    Which source supplied the value.
+ */
+static void drawSourceTag(int xRight, int y, EscSource src) {
+	if (src == EscSource::None) return;
+	const char *s = escSourceLabel(src);
+	gfxText(xRight - 6 - gfxTextW(s, 1), y + 4, s,
+	        src == EscSource::Kiss ? C_CYAN : C_DIM, 1);
 }
 
 /**
@@ -229,14 +278,19 @@ static void drawStatusBar() {
 	}
 	int battMv = (int)(s_batteryV * 100.0f);
 
+	SdLogStatus log;
+	sdLogStatus(&log);
+
 	if (s_shown.armed == (int)s_armed && s_shown.armProgress == progress &&
-	    s_shown.battMv == battMv && s_shown.edt == (int)escEdtRequested())
+	    s_shown.battMv == battMv && s_shown.edt == (int)escEdtRequested() &&
+	    s_shown.logState == (int)log.state)
 		return;
 
 	s_shown.armed = s_armed;
 	s_shown.armProgress = progress;
 	s_shown.battMv = battMv;
 	s_shown.edt = escEdtRequested();
+	s_shown.logState = (int)log.state;
 
 	gfxRect(0, Z_STATUS_Y0, GFX_W, Z_STATUS_Y1 - Z_STATUS_Y0 + 1, C_PANEL);
 
@@ -251,7 +305,20 @@ static void drawStatusBar() {
 
 	char buf[24];
 	snprintf(buf, sizeof(buf), "DS%d", DSHOT_SPEED_KBAUD);
-	gfxText(104, 9, buf, escEdtRequested() ? C_CYAN : C_DIM, 1);
+	gfxText(104, 3, buf, escEdtRequested() ? C_CYAN : C_DIM, 1);
+
+	// Recording state, under the DShot rate. Only worth a glance -- the detail
+	// lives on the LOG screen -- but "am I actually recording?" is the one
+	// question you want answered without navigating anywhere.
+	const char *lg;
+	uint16_t lgCol;
+	switch (log.state) {
+		case SdLogState::Logging: lg = "REC";   lgCol = C_RED;   break;
+		case SdLogState::Idle:    lg = "SD";    lgCol = C_DIM;   break;
+		case SdLogState::Error:   lg = "SDERR"; lgCol = C_AMBER; break;
+		default:                  lg = "NOSD";  lgCol = C_GRID;  break;
+	}
+	gfxText(104, 14, lg, lgCol, 1);
 
 	snprintf(buf, sizeof(buf), "%d.%02dV", (int)s_batteryV,
 	         (int)((s_batteryV - (int)s_batteryV) * 100.0f + 0.5f));
@@ -296,23 +363,35 @@ static void drawRpm() {
 
 /** @brief Six EDT tiles: voltage, current, temperature, stress, status, link. */
 static void drawTelemetry() {
-	int volts10 = (int)(s_tel.volts * 10.0f + 0.5f);
-	int amps10  = (int)(s_tel.amps * 10.0f + 0.5f);
-	int status  = s_tel.alert ? 3 : s_tel.error ? 2 : s_tel.warning ? 1 : 0;
+	// Merged view: KISS where it is fresh, EDT otherwise, decided per field.
+	EscReading r;
+	escMerge(&s_tel, millis(), KISS_STALE_MS, &r);
 
-	if (s_shown.volts10 == volts10 && s_shown.amps10 == amps10 &&
-	    s_shown.tempC == s_tel.tempC && s_shown.stress == s_tel.stress &&
+	// Hundredths, not tenths. KISS resolves 0.01 V and 0.01 A, and rounding the
+	// display to 0.1 would throw away exactly the precision the extra wire was
+	// run for.
+	int volts100 = (int)(r.volts * 100.0f + 0.5f);
+	int amps100  = (int)(r.amps * 100.0f + 0.5f);
+	int status   = s_tel.alert ? 3 : s_tel.error ? 2 : s_tel.warning ? 1 : 0;
+
+	if (s_shown.volts100 == volts100 && s_shown.amps100 == amps100 &&
+	    s_shown.tempC == r.tempC && s_shown.stress == s_tel.stress &&
 	    s_shown.status == status && s_shown.rate == s_tel.packetRate &&
-	    s_shown.errPct == s_tel.errPercent)
+	    s_shown.errPct == s_tel.errPercent &&
+	    s_shown.voltsSrc == (int)r.voltsFrom && s_shown.ampsSrc == (int)r.ampsFrom &&
+	    s_shown.mah == (int)r.mah)
 		return;
 
-	s_shown.volts10 = volts10;
-	s_shown.amps10  = amps10;
-	s_shown.tempC   = s_tel.tempC;
-	s_shown.stress  = s_tel.stress;
-	s_shown.status  = status;
-	s_shown.rate    = s_tel.packetRate;
-	s_shown.errPct  = s_tel.errPercent;
+	s_shown.volts100 = volts100;
+	s_shown.amps100  = amps100;
+	s_shown.tempC    = r.tempC;
+	s_shown.stress   = s_tel.stress;
+	s_shown.status   = status;
+	s_shown.rate     = s_tel.packetRate;
+	s_shown.errPct   = s_tel.errPercent;
+	s_shown.voltsSrc = (int)r.voltsFrom;
+	s_shown.ampsSrc  = (int)r.ampsFrom;
+	s_shown.mah      = r.mah;
 
 	gfxRect(0, Z_TELE_Y0, GFX_W, Z_TELE_Y1 - Z_TELE_Y0 + 1, C_BG);
 
@@ -321,19 +400,33 @@ static void drawTelemetry() {
 	const int cy[3] = {129, 164, 199};
 	char buf[24];
 
-	if (s_tel.haveVolts) snprintf(buf, sizeof(buf), "%d.%dV", volts10 / 10, volts10 % 10);
-	else                 snprintf(buf, sizeof(buf), "--");
+	// A number whose provenance changes silently is worse than no number:
+	// 12.25 V from EDT means "somewhere in a 0.25 V bucket", the same reading
+	// from KISS means "within 0.01 V". The tag says which claim is being made.
+	if (r.voltsFrom != EscSource::None)
+		snprintf(buf, sizeof(buf), "%d.%02dV", volts100 / 100, volts100 % 100);
+	else
+		snprintf(buf, sizeof(buf), "--");
 	drawLabelled(cx[0], cy[0], cw, ch, "VOLTAGE", buf, C_TEXT);
+	drawSourceTag(cx[0] + cw, cy[0], r.voltsFrom);
 
-	if (s_tel.haveAmps) snprintf(buf, sizeof(buf), "%d.%dA", amps10 / 10, amps10 % 10);
-	else                snprintf(buf, sizeof(buf), "--");
+	if (r.ampsFrom != EscSource::None)
+		snprintf(buf, sizeof(buf), "%d.%02dA", amps100 / 100, amps100 % 100);
+	else
+		snprintf(buf, sizeof(buf), "--");
 	drawLabelled(cx[1], cy[0], cw, ch, "CURRENT", buf, C_TEXT);
+	drawSourceTag(cx[1] + cw, cy[0], r.ampsFrom);
 
-	if (s_tel.haveTemp) snprintf(buf, sizeof(buf), "%d`C", s_tel.tempC);
-	else                snprintf(buf, sizeof(buf), "--");
+	if (r.tempFrom != EscSource::None) snprintf(buf, sizeof(buf), "%d`C", r.tempC);
+	else                               snprintf(buf, sizeof(buf), "--");
 	// backtick renders as a degree sign in the 5x7 font
 	drawLabelled(cx[0], cy[1], cw, ch, "ESC TEMP", buf,
-	             (s_tel.haveTemp && s_tel.tempC >= 90) ? C_RED : C_TEXT);
+	             (r.tempFrom != EscSource::None && r.tempC >= 90) ? C_RED : C_TEXT);
+	// Consumption has no EDT equivalent, so it only ever appears with KISS.
+	if (r.mahFrom == EscSource::Kiss) {
+		snprintf(buf, sizeof(buf), "%umAh", (unsigned)r.mah);
+		gfxText(cx[0] + cw - 6 - gfxTextW(buf, 1), cy[1] + 4, buf, C_DIM, 1);
+	}
 
 	if (s_tel.haveStress) snprintf(buf, sizeof(buf), "%d", s_tel.stress);
 	else                  snprintf(buf, sizeof(buf), "--");
@@ -454,8 +547,119 @@ static void drawConfig() {
 	drawBtn(BTN_BEEP, "BEEP", C_PANEL, C_CYAN, 1);
 	gfxTextCenter(CFG_HINT_Y, "COMMANDS NEED THE ESC DISARMED", C_DIM, 1);
 
-	drawBtn(BTN_AM32, "AM32 ESC CONFIG", C_PANEL, C_CYAN, 2);
+	drawBtn(BTN_AM32, "AM32 CFG", C_PANEL, C_CYAN, 1);
+	drawBtn(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1);
+}
+
+/** @brief One label/value row on the logging screen. */
+static void drawLogRow(int row, const char *label, const char *value,
+                       uint16_t vcol) {
+	int y = LOG_ROW0_Y + row * LOG_ROW_H;
+	gfxText(14, y, label, C_DIM, 1);
+	gfxText(GFX_W - 14 - gfxTextW(value, 1), y, value, vcol, 1);
+}
+
+/**
+ * @brief Logging status screen: card state, counters and manual start/stop.
+ *
+ * The counters are not decoration. `SD_LOG_BUFFER_BYTES` is a guess until it has
+ * been measured, and BUF PEAK and WORST FLUSH are the two numbers to size it
+ * from — a peak that approaches the buffer size, or a flush that takes longer
+ * than the buffer holds, is the warning that it is too small. DROPS reaching
+ * anything but zero says it already was.
+ */
+static void drawLogScreen() {
+	SdLogStatus st;
+	sdLogStatus(&st);
+
+	if (s_shown.config == 2 &&
+	    s_shown.logState == (int)st.state && s_shown.logFile == st.fileNumber &&
+	    s_shown.logBytes == st.bytesWritten && s_shown.logFrames == st.framesLogged &&
+	    s_shown.logDrops == (int)st.dropEvents && s_shown.logPeak == st.peakBuffer &&
+	    s_shown.logWorstMs == st.worstFlushMs)
+		return;
+
+	s_shown.config     = 2;
+	s_shown.logState   = (int)st.state;
+	s_shown.logFile    = st.fileNumber;
+	s_shown.logBytes   = st.bytesWritten;
+	s_shown.logFrames  = st.framesLogged;
+	s_shown.logDrops   = st.dropEvents;
+	s_shown.logPeak    = st.peakBuffer;
+	s_shown.logWorstMs = st.worstFlushMs;
+
+	gfxFill(C_BG);
+	gfxRect(0, 0, GFX_W, 26, C_PANEL);
+	gfxText(8, 9, "SD LOG", C_TEXT, 2);
+
+	char buf[32];
+	const char *stateTxt;
+	uint16_t stateCol;
+	switch (st.state) {
+		case SdLogState::Logging: stateTxt = "RECORDING"; stateCol = C_RED;   break;
+		case SdLogState::Idle:    stateTxt = "READY";     stateCol = C_LIME;  break;
+		case SdLogState::Error:   stateTxt = "CARD ERROR";stateCol = C_AMBER; break;
+		default:                  stateTxt = "NO CARD";   stateCol = C_DIM;   break;
+	}
+	drawLogRow(0, "STATUS", stateTxt, stateCol);
+
+	if (st.fileNumber) snprintf(buf, sizeof(buf), "LOG%05u.BFL", (unsigned)st.fileNumber);
+	else               snprintf(buf, sizeof(buf), "--");
+	drawLogRow(1, "FILE", buf, C_TEXT);
+
+	snprintf(buf, sizeof(buf), "%lu", (unsigned long)st.framesLogged);
+	drawLogRow(2, "FRAMES", buf, C_TEXT);
+
+	// kB rather than bytes: at ~7 kB/s the byte count is unreadable within
+	// seconds, and the useful question is "is it growing".
+	snprintf(buf, sizeof(buf), "%lu kB", (unsigned long)(st.bytesWritten / 1024u));
+	drawLogRow(3, "WRITTEN", buf, C_TEXT);
+
+	snprintf(buf, sizeof(buf), "%lu", (unsigned long)st.dropEvents);
+	drawLogRow(4, "DROPPED FRAMES", buf, st.dropEvents ? C_RED : C_DIM);
+
+	// Against the configured size, so "how close to the edge" needs no mental
+	// arithmetic.
+	snprintf(buf, sizeof(buf), "%lu / %u B", (unsigned long)st.peakBuffer,
+	         (unsigned)SD_LOG_BUFFER_BYTES);
+	uint16_t peakCol = C_TEXT;
+	if (st.peakBuffer > SD_LOG_BUFFER_BYTES / 2) peakCol = C_AMBER;
+	if (st.peakBuffer > (SD_LOG_BUFFER_BYTES * 3) / 4) peakCol = C_RED;
+	drawLogRow(5, "BUF PEAK", buf, peakCol);
+
+	snprintf(buf, sizeof(buf), "%lu ms", (unsigned long)st.worstFlushMs);
+	drawLogRow(6, "WORST FLUSH", buf,
+	           st.worstFlushMs > 50 ? C_AMBER : C_TEXT);
+
+	bool active = (st.state == SdLogState::Logging);
+	bool usable = (st.state != SdLogState::NoCard);
+	drawBtn(BTN_LOG_TOGGLE, active ? "STOP" : "START",
+	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
+	        usable ? (active ? C_WHITE : C_LIME) : C_GRID, 2);
+
+#if SD_LOG_AUTO_ON_ARM
+	gfxTextCenter(LOG_TOGGLE_Y + LOG_TOGGLE_H + 6,
+	              "ALSO STARTS AND STOPS WITH ARM", C_DIM, 1);
+#endif
+
+	drawBtn(BTN_LOG_BACK, "BACK", C_PANEL, C_TEXT, 1);
+}
+
+/** @brief Touch handling for the logging screen. */
+static void handleLogTouch() {
+	if (!s_touch.pressed) return;
+	int x = s_touch.x, y = s_touch.y;
+
+	if (hit(BTN_LOG_TOGGLE, x, y)) {
+		if (sdLogActive()) sdLogStop();
+		else               sdLogStart();
+		s_shown.config = -1;
+	} else if (hit(BTN_LOG_BACK, x, y)) {
+		s_logScreen = false;
+		invalidateAll();
+		gfxFill(C_BG);
+	}
 }
 
 /** @brief Dispatch a press on the settings overlay. */
@@ -485,6 +689,11 @@ static void handleConfigTouch() {
 		s_am32 = true;
 		gfxFill(C_BG);
 		uiAm32Enter();
+	} else if (hit(BTN_LOG, x, y)) {
+		s_logScreen = true;
+		s_config = false;
+		s_shown.config = -1;
+		gfxFill(C_BG);
 	} else if (hit(BTN_BACK, x, y)) {
 		s_config = false;
 		invalidateAll();
@@ -666,7 +875,10 @@ void uiTick() {
 	// (millis() - s_zeroSince) is "how long we have been at idle".
 	if (s_throttle != 0) s_zeroSince = millis();
 
-	if (s_config) {
+	if (s_logScreen) {
+		handleLogTouch();
+		drawLogScreen();
+	} else if (s_config) {
 		handleConfigTouch();
 		drawConfig();
 	} else {
