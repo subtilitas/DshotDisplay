@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml/badge.svg)](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml)
 
-A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2**.
+A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2**
+and **RP2350-Touch-LCD-2.8**.
 
 Drag the on-screen throttle, and the board sends bidirectional DShot to a single ESC
 while decoding the eRPM and Extended DShot Telemetry (EDT) that comes back on the same
 wire — RPM, voltage, current, ESC temperature, stress and status — all rendered on the
-2" touch panel. No flight controller, no laptop, no Betaflight.
+touch panel. No flight controller, no laptop, no Betaflight.
 
 ![UI preview](docs/ui-preview.png)
 
@@ -39,11 +40,27 @@ UI has hung and forces throttle to zero on its own.
 
 ## Hardware
 
-**Board:** [Waveshare RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)
-— RP2350A, 16 MB flash, 240×320 IPS (ST7789T3 over SPI), CST816D capacitive touch,
-QMI8658 IMU, LiPo charger.
+Two boards are supported. Both are an RP2350A with 16 MB of flash driving the same
+240×320 IPS panel (ST7789T3 over SPI), so everything above the driver layer is shared:
 
-### Pin map (from the official schematic)
+| | [RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2) | [RP2350-Touch-LCD-2.8](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8) |
+|---|---|---|
+| Panel | 2.0", 240×320 | 2.8", 240×320 |
+| Panel SPI | **SPI0** | **SPI1** |
+| Touch | **CST816D**, 0x15, 8-bit regs | **CST328**, 0x1A, 16-bit regs |
+| Touch bus | **I2C0** (`Wire`) | **I2C1** (`Wire1`) |
+| Touch reset | shared net with `LCD_RST` | its own pin |
+| Other peripherals | QMI8658 IMU, microSD, camera header | QMI8658 IMU, PCF85063 RTC, PCM5101A audio, microSD |
+| Free GPIO | GP0–GP11, GP21–GP23 (camera bus) | **GP28 and GP29, and that's all** |
+| ESC signal pin | **GP4** | **GP28** |
+
+The 2.8" board spends on peripherals what the 2.0" board leaves on a camera header, which
+is why it has exactly two spare pins. Everything else about the firmware is identical.
+
+Which board a build targets is `BOARD` in `src/board.h`; see **Choosing a board**
+under Building.
+
+### Pin map — RP2350-Touch-LCD-2 (from the official schematic)
 
 | Function | GPIO | Notes |
 |---|---|---|
@@ -56,19 +73,55 @@ QMI8658 IMU, LiPo charger.
 | microSD | 24–27 | SPI1, unused here |
 | Camera bus | 0–11, 21–23 | **free if no camera is fitted** |
 
+### Pin map — RP2350-Touch-LCD-2.8 (from the official schematic)
+
+| Function | GPIO | Notes |
+|---|---|---|
+| LCD SCK / MOSI / MISO | 10 / 11 / 12 | **SPI1**; MISO is wired but never read |
+| LCD CS / DC / RST | 13 / 14 / 15 | RST drives the panel only |
+| LCD backlight | 16 | NPN low-side, PWM at 20 kHz |
+| Touch + IMU + RTC I2C SDA / SCL | 6 / 7 | **I2C1**, shared (touch 0x1A, IMU 0x6B, RTC 0x51) |
+| Touch RESET / INT | 17 / 18 | separate nets, both active low |
+| Battery sense | 27 | ADC1, 200k/100k divider → `VBAT = Vadc × 3` |
+| Battery latch / power button | 26 / 25 | GP26 **must be driven high** to survive on battery |
+| microSD | 19–24 | unused here |
+| Audio (PCM5101A → APA2068) | 2–4 | I2S, unused here |
+| UART | 0 / 1 | on J5 and J4 |
+| **Free** | **28, 29** | J4 pins 11 and 12 |
+
+> **The battery latch is not optional.** The power button only holds the P-channel gate
+> down while it is pressed; GP26 takes over the latch. `setup()` drives it high as its
+> very first act, before serial or anything else, because a board that dies when you let
+> go of the button looks like a hardware fault rather than a missing line of firmware.
+
 ### Wiring the ESC
 
 Two wires. That's it.
 
-| ESC | Board |
-|---|---|
-| Signal | **GP4** — P2 header, pin 11 |
-| Ground | **GND** — P2 header, pin 13 |
+| Board | Signal | Ground |
+|---|---|---|
+| RP2350-Touch-LCD-2 | **GP4** — P2 header, pin 11 | **GND** — P2 header, pin 13 |
+| RP2350-Touch-LCD-2.8 | **GP28** — J4, pin 11 | **GND** — J4, pin 1 or 5 |
 
-Change `DSHOT_PIN` in `config.h` to use a different GPIO. Any camera-bus pin (GP0–GP11,
-GP21–GP23) is free.
+`DSHOT_PIN` in `config.h` defaults per board and can be overridden with `-DDSHOT_PIN=n`
+or by editing it. On the 2.0" board any camera-bus pin (GP0–GP11, GP21–GP23) is free; on
+the 2.8" board the only other choice is GP29.
 
-Header pinout for reference:
+#### On the 2.8" board there are no 2.54 mm headers
+
+Everything comes out on JST-SH 1.0 mm connectors, so an ESC lead needs a pigtail whatever
+pin you pick — there is no plug-and-go option to optimise for, which is why GP28 was
+chosen simply for being unallocated:
+
+```
+J4 (12P): 1=GND  2=VBUS 3=USB_N 4=USB_P 5=GND   6=3V3
+          7=GP7* 8=GP6* 9=GP0   10=GP1  11=GP28 12=GP29
+J3  (4P): 1=GP7* 2=GP6* 3=3V3   4=GND
+J5  (4P): 1=GP1  2=GP0  3=3V3   4=GND
+                                (* = shared I2C bus, do not reuse)
+```
+
+#### On the 2.0" board, header pinout for reference:
 
 ```
 P1: 1=GP7  2=GP9  3=GP8  4=GP22 5=GP21 6=GP18* 7=GP23
@@ -78,7 +131,7 @@ P2: 1=3V3  2=GND  3=GP28* 4=GP29* 5=GP13* 6=GP12*
                                         (* = used by an on-board peripheral)
 ```
 
-### Plugging an ESC in directly
+### Plugging an ESC in directly (2.0" board)
 
 Solder a 3-pin male header onto **P2 pins 11–13** and a standard servo plug drops straight
 on: signal on GP4, middle position on GP10, ground on pin 13.
@@ -107,6 +160,39 @@ If telemetry is flaky, drop `DSHOT_SPEED_KBAUD` to 300 before blaming the firmwa
 ---
 
 ## Building
+
+### Choosing a board
+
+The two boards need different SPI instances, a different I2C instance and a different
+touch driver, so the choice is a compile-time constant, not something probed at boot.
+It lives in `src/board.h`:
+
+```c
+#define BOARD BOARD_RP2350_TOUCH_LCD_2      // or BOARD_RP2350_TOUCH_LCD_2_8
+```
+
+Three ways to set it, depending on what is doing the building:
+
+| Building with | How |
+|---|---|
+| Arduino IDE | Edit that line. The IDE cannot pass `-D` flags. |
+| `arduino-cli` | `test/select_board.sh BOARD_RP2350_TOUCH_LCD_2_8`, then compile. Profiles cannot pass `-D` flags either. |
+| `test/Makefile`, PlatformIO | `-DBOARD=...`, which the `#ifndef` in `board.h` gets out of the way for. |
+
+`select_board.sh` rewrites the line and then **reads it back**, because a `sed` that
+quietly matches nothing is exactly how a CI matrix builds the same board twice and
+reports green.
+
+Two compile-time guards back this up: an unrecognised `BOARD` is an `#error` rather than
+a fall-through to whichever pin map is listed last, and a board header that selects zero
+or two touch drivers is also an `#error`. Both are exercised in CI, so neither is
+decorative.
+
+The splash screen prints `BOARD_LABEL`, so a flashed image says which board it is for.
+(Not `BOARD_NAME` — arduino-pico puts `-DBOARD_NAME="RPIPICO2"` on every compile line,
+so that one is already taken by the core.)
+
+### With the IDE
 
 Arduino IDE with the [arduino-pico](https://github.com/earlephilhower/arduino-pico) core.
 
@@ -138,7 +224,8 @@ Arduino IDE with the [arduino-pico](https://github.com/earlephilhower/arduino-pi
 
 Prebuilt `.uf2` images are attached to every
 [release](https://github.com/subtilitas/DshotDisplay/releases). Hold BOOT, tap RESET,
-release BOOT, and copy the file onto the drive that appears. Take the **arm** build unless
+release BOOT, and copy the file onto the drive that appears. Pick by board first
+(`touch-lcd-2` or `touch-lcd-2.8` in the filename), then take the **arm** build unless
 you specifically want the RP2350's RISC-V cores — both are functionally identical.
 
 Every green CI run also uploads a `.uf2` artifact, so an untagged change can be tried on
@@ -151,13 +238,20 @@ file. It pins the core, its bundled toolchain, the library and the board options
 so you don't depend on whatever happens to be installed:
 
 ```sh
-arduino-cli compile --profile rp2350
+test/select_board.sh BOARD_RP2350_TOUCH_LCD_2      # or ..._2_8
+arduino-cli compile --profile rp2350               # or rp2350_28
 arduino-cli upload  --profile rp2350 -p <port>
 ```
 
 A profile is self-contained: arduino-cli installs the pinned platform and libraries into a
 profile-local directory rather than the global sketchbook, so nothing system-wide affects
 the result. Steps 1–3 above are only needed if you'd rather use the IDE.
+
+Both boards share an FQBN — same MCU, same flash — so the two profiles differ only in
+their notes. They exist so the intent is recorded in the build command instead of only in
+an edited header; the profile does **not** select the board, `select_board.sh` does.
+Compiling `rp2350_28` without having run it produces a perfectly good image for the wrong
+board, which is why CI always runs the two together.
 
 Currently pinned: arduino-pico **4.5.2**, Pico_Bidir_DShot **1.0.2**, FQBN
 `rp2040:rp2040:rpipico2:flash=4194304_0,freq=150,arch=arm`. Switch `arch` to `riscv` to
@@ -367,10 +461,13 @@ a backstop for your habits, not a replacement for them.
 
 ```
 DshotDisplay.ino        core0 setup/loop, core1 setup1/loop1, @mainpage
-sketch.yaml             pinned core + library versions (arduino-cli profile)
+sketch.yaml             pinned core + library versions (arduino-cli profiles)
 src/
   config.h              everything you'd want to tune
-  board_pins.h          RP2350-Touch-LCD-2 pin map, annotated from the schematic
+  board.h               which board this build targets
+  board_pins.h          dispatcher + the contract a board header must satisfy
+  board_rp2350_touch_lcd_2.h     2.0" pin map, annotated from the schematic
+  board_rp2350_touch_lcd_2_8.h   2.8" pin map, ditto
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
@@ -378,12 +475,21 @@ src/
   am32_eeprom.{h,cpp}   AM32 settings layout, decoding and presentation
   gfx.{h,cpp}           RGB565 framebuffer, dirty bands, 5x7 font, 7-seg digits
   st7789.{h,cpp}        panel init + DMA blitter
-  cst816.{h,cpp}        capacitive touch
+  touch.h               touch interface + the shared rotation mapping
+  cst816.cpp            CST816D driver  (2.0" board)
+  cst328.cpp            CST328 driver   (2.8" board)
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + UI preview image
 test/                   host test suites + Arduino/Pico SDK stubs
+test/select_board.sh    rewrites BOARD in src/board.h, then reads it back
 .github/workflows/      CI
 ```
+
+Both touch drivers are compiled on every build — the Arduino builder walks `src/`
+recursively and does not know about boards — so each is wrapped in a whole-file `#ifdef`
+and the unselected one becomes an empty translation unit. The rotation mapping lives in
+`touch.h` rather than being copied into both, because a rotation that is right on one
+board and stale on the other is a bug nobody finds without owning both.
 
 The `.ino` has to stay at the sketch root — Arduino identifies the sketch by a `.ino` whose
 name matches its folder. Everything else lives in `src/`, which the Arduino builder compiles
@@ -397,8 +503,12 @@ The firmware's own logic runs on a PC against stubs in `test/stubs/` that mirror
 Arduino and Pico SDK signatures:
 
 ```sh
-cd test && make
+cd test && make          # default board
+cd test && make both     # every supported board
 ```
+
+`make BOARD=BOARD_RP2350_TOUCH_LCD_2_8` builds against the other pin map; `make both`
+does each in turn, which is what CI runs.
 
 Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only when a test
 says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
@@ -416,13 +526,16 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 
 | Job | What it catches |
 |---|---|
-| **Firmware** | Real `arduino-cli` build for RP2350, ARM and RISC-V, pinned by `sketch.yaml` |
-| **Host tests** | Protocol, codec and UI regressions a compile cannot see |
-| **Config permutations** | All 8 combinations of `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP` and `LCD_ROTATION`, warnings fatal |
+| **Firmware** | Real `arduino-cli` build, both boards × ARM and RISC-V, pinned by `sketch.yaml` |
+| **Host tests** | Protocol, codec and UI regressions a compile cannot see, run per board |
+| **Config permutations** | All 8 combinations of `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP` and `LCD_ROTATION`, on both boards, warnings fatal |
 | **Doxygen** | Undocumented additions |
 
 The permutation job exists because those options are exactly the ones nobody compiles by
-hand. `check_docs.py` enforces documentation precisely — public API documented, `@param`
+hand — and because it is the **only** job that compiles the touch drivers at all. The host
+tests link fakes in their place, so a syntax error in `cst328.cpp` would otherwise reach a
+release. It also asserts that the landscape guard and the unknown-board guard actually
+fire, since an `#error` nobody ever triggers is an `#error` that can quietly stop working. `check_docs.py` enforces documentation precisely — public API documented, `@param`
 names matching signatures, no dangling `@ref` — where Doxygen's `WARN_IF_UNDOCUMENTED`
 would also demand a comment on every file-static `s_scroll`.
 
@@ -433,14 +546,17 @@ git tag -a v1.0.0 -m "First release"
 git push origin v1.0.0
 ```
 
-`release.yml` runs the host and documentation checks, builds `.uf2` images for both RP2350
-cores, checksums them, and publishes a GitHub Release with the images attached.
+`release.yml` runs the host and documentation checks, builds `.uf2` images for both boards
+on both RP2350 cores, checksums them, and publishes a GitHub Release with the images
+attached.
 
 Assets per release:
 
 ```
-DshotDisplay-v1.0.0-rp2350-arm.uf2
-DshotDisplay-v1.0.0-rp2350-riscv.uf2
+DshotDisplay-v1.0.0-touch-lcd-2-arm.uf2
+DshotDisplay-v1.0.0-touch-lcd-2-riscv.uf2
+DshotDisplay-v1.0.0-touch-lcd-2.8-arm.uf2
+DshotDisplay-v1.0.0-touch-lcd-2.8-riscv.uf2
 SHA256SUMS.txt
 ```
 
@@ -454,7 +570,8 @@ Four things it refuses to do, each because the failure is otherwise silent:
 - **Invent a tag** — `--verify-tag` aborts if the tag was never pushed.
 - **Leave a half-populated release** — creating a release and attaching assets are separate
   API calls, so the workflow reads the release back and confirms every expected asset is
-  actually there.
+  actually there. Each board/arch pair is named explicitly: checking only for "arm" and
+  "riscv" would pass with one board's images missing entirely.
 
 ### API documentation
 
@@ -496,6 +613,10 @@ words go out MSB-first with no software byte swapping. Commands go out in 8-bit 
 - [Extended DShot Telemetry](https://github.com/bird-sanctuary/extended-dshot-telemetry)
 - [Waveshare RP2350-Touch-LCD-2 wiki](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)
   and [schematic](https://files.waveshare.com/wiki/RP2350-Touch-LCD-2/RP2350-Touch-LCD-2.pdf)
+- [Waveshare RP2350-Touch-LCD-2.8 wiki](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8)
+  and [schematic](https://files.waveshare.com/wiki/RP2350-Touch-LCD-2.8/RP2350-Touch-LCD-2.8-Schematic.pdf)
+- [CSE_CST328](https://github.com/CIRCUITSTATE/CSE_CST328) by CIRCUITSTATE — the reference
+  the CST328 init and coordinate packing were checked against.
 
 ## License
 
