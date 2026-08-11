@@ -1,0 +1,22 @@
+# Normalize line endings. Without this, editors on Windows silently rewrite
+# whole files to CRLF and every commit turns into a 100%-changed diff.
+* text=auto eol=lf
+
+# Explicit for the file types in this repo, so intent survives a stray
+# core.autocrlf=true in someone's global config.
+*.c      text eol=lf
+*.cpp    text eol=lf
+*.h      text eol=lf
+*.ino    text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.sh     text eol=lf
+Makefile text eol=lf
+Doxyfile text eol=lf
+
+# Binary — never touch these.
+*.png    binary
+*.uf2    binary
+*.bin    binary
+*.elf    binary
