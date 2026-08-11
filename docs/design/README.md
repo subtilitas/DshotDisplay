@@ -10,7 +10,7 @@ what was actually built and why it diverged.
 
 | Document | Status |
 |---|---|
-| [kiss-telemetry.md](kiss-telemetry.md) | Design |
+| [kiss-telemetry.md](kiss-telemetry.md) | In progress |
 | [blackbox-logging.md](blackbox-logging.md) | Design |
 
 ## Shared context
