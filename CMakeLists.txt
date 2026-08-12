@@ -109,6 +109,25 @@ target_compile_options(DshotDisplay PRIVATE
     -Wall -Wextra -Wshadow -Wno-unused-parameter
 )
 
+# Standalone SD bring-up test: nothing but the card, sweeping the SPI clock.
+# Built alongside the firmware because the whole value of it is being able to
+# flash one, then the other, without changing anything else.
+add_executable(sdtest
+    tools/sdtest/main.c
+    src/sd_hw_config.c
+)
+target_include_directories(sdtest PRIVATE src)
+target_link_libraries(sdtest
+    pico_stdlib
+    hardware_spi
+    hardware_clocks
+    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+)
+target_compile_definitions(sdtest PRIVATE USE_PRINTF=1 USE_DBG_PRINTF=1)
+pico_enable_stdio_usb(sdtest 1)
+pico_enable_stdio_uart(sdtest 0)
+pico_add_extra_outputs(sdtest)
+
 if(SD_DEBUG)
     # USE_PRINTF routes the driver's messages to stdio; USE_DBG_PRINTF adds the
     # per-command tracing that shows exactly which step of card init failed.
