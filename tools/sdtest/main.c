@@ -35,27 +35,65 @@ static const uint32_t kBauds[] = {
 };
 
 /**
- * @brief Report the idle level of every SD pin with SPI detached.
+ * @brief Pin integrity test: pull each SD line both ways, then drive it.
  *
- * A floating MISO reads high through the internal pull-up when a card is
- * present but silent, and stays low if the line is shorted or the pin is not
- * what we think it is. This is the cheapest way to tell a dead bus from a
- * dead card without a meter.
+ * A single pulled-up reading cannot tell a stuck pin from a card holding a line
+ * down. Pulling both ways can:
+ *
+ *   up=1 down=0   floating. Normal for an empty slot, and for a powered card
+ *                 that is not driving the line.
+ *   up=0 down=0   held low. A short to ground, a dead pin, or an unpowered card
+ *                 clamping through its ESD diode.
+ *   up=1 down=1   held high. A short to 3V3.
+ *
+ * Then it drives each pin high as an output and reads back. A pin that cannot
+ * be driven high is shorted to ground, and no amount of SPI configuration will
+ * make the card hear a command on it.
+ *
+ * @return true if every pin looks sane.
  */
-static void reportIdleLevels(void) {
+static bool testPinIntegrity(void) {
     const uint pins[] = {PIN_SD_MISO, PIN_SD_CS, PIN_SD_SCK, PIN_SD_MOSI};
     const char *names[] = {"MISO(24)", "CS(25)", "SCK(26)", "MOSI(27)"};
+    bool allOk = true;
 
-    printf("\nPin idle levels, SPI detached, internal pull-up on:\n");
+    printf("\nPin integrity, SPI detached:\n");
+    printf("  %-9s %-4s %-6s %-6s %s\n", "PIN", "UP", "DOWN", "DRIVE", "VERDICT");
+
     for (unsigned i = 0; i < count_of(pins); i++) {
         gpio_init(pins[i]);
         gpio_set_dir(pins[i], GPIO_IN);
+
         gpio_pull_up(pins[i]);
         sleep_ms(2);
-        printf("  %-9s = %d\n", names[i], gpio_get(pins[i]) ? 1 : 0);
+        int up = gpio_get(pins[i]) ? 1 : 0;
+
+        gpio_disable_pulls(pins[i]);
+        gpio_pull_down(pins[i]);
+        sleep_ms(2);
+        int down = gpio_get(pins[i]) ? 1 : 0;
+
+        // Drive it high and read back. This is the test that matters: it is the
+        // difference between "nothing is pulling it up" and "something is
+        // actively holding it down".
+        gpio_disable_pulls(pins[i]);
+        gpio_set_dir(pins[i], GPIO_OUT);
+        gpio_put(pins[i], 1);
+        sleep_ms(2);
+        int driven = gpio_get(pins[i]) ? 1 : 0;
+        gpio_set_dir(pins[i], GPIO_IN);
+        gpio_disable_pulls(pins[i]);
+
+        const char *verdict;
+        if (!driven)            { verdict = "SHORTED TO GND"; allOk = false; }
+        else if (up && !down)   verdict = "floating, ok";
+        else if (!up && !down)  { verdict = "held low"; allOk = false; }
+        else if (up && down)    { verdict = "held high"; allOk = false; }
+        else                    verdict = "?";
+
+        printf("  %-9s %-4d %-6d %-6d %s\n", names[i], up, down, driven, verdict);
     }
-    printf("  MISO 0 with a card fitted means the card is holding it low,\n"
-           "  or the pin is not the one the schematic says.\n");
+    return allOk;
 }
 
 int main(void) {
@@ -66,7 +104,14 @@ int main(void) {
     printf("MISO=%d CS=%d SCK=%d MOSI=%d, SPI1\n",
            PIN_SD_MISO, PIN_SD_CS, PIN_SD_SCK, PIN_SD_MOSI);
 
-    reportIdleLevels();
+    bool pinsOk = testPinIntegrity();
+    if (!pinsOk) {
+        printf("\n*** A pin failed the integrity test. ***\n"
+               "Run this again with the slot EMPTY. If the same pin still fails,\n"
+               "the fault is on the board -- a short or a damaged pin -- and no\n"
+               "firmware change can help. If it passes with the slot empty, the\n"
+               "card or the socket contacts are holding the line.\n");
+    }
 
     sd_card_t *card = sd_get_by_num(0);
     if (!card) { printf("no card object -- hw_config is not linked\n"); for (;;); }
