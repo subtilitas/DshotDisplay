@@ -44,7 +44,7 @@
  * - @ref ui.h — screens, touch handling, arm and throttle state machines
  * - @ref gfx.h — RGB565 framebuffer, dirty bands, fonts
  * - @ref st7789.h — panel init and DMA blitter
- * - @ref cst816.h — capacitive touch
+ * - @ref touch.h — capacitive touch, CST816D or CST328 by board
  * - @ref sd_log.h — blackbox logging to the microSD slot (core0)
  *
  * @warning This drives a real motor. Read the safety section of README.md
@@ -60,7 +60,7 @@
 #include "board_pins.h"
 #include "gfx.h"
 #include "st7789.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
 #include "ui.h"
 #include "sd_log.h"

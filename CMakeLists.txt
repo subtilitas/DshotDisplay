@@ -22,6 +22,19 @@ cmake_minimum_required(VERSION 3.13)
 # happened and guessing.
 option(SD_DEBUG "Enable verbose SD driver logging over USB serial" OFF)
 
+# Which board to build for. Unlike the Arduino build -- which had no way to pass
+# a -D and so needed select_board.sh to rewrite board.h in place -- CMake can
+# just define it, and board.h's #ifndef gets out of the way.
+#
+#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 ...
+#
+# The two boards differ in more than pins: different SPI instance for the panel,
+# different I2C, a different touch controller, and a different SD interface
+# entirely -- SPI on the 2.0", PIO SDIO on the 2.8".
+set(BOARD "BOARD_RP2350_TOUCH_LCD_2" CACHE STRING "Target board")
+set_property(CACHE BOARD PROPERTY STRINGS
+    BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8)
+
 
 set(PICO_SDK_FETCH_FROM_GIT_TAG 2.1.1)
 include(pico_sdk_import.cmake)
@@ -67,6 +80,7 @@ add_executable(DshotDisplay
     src/gfx.cpp
     src/st7789.cpp
     src/cst816.cpp
+    src/cst328.cpp
     src/esc_task.cpp
     src/am32_bl.cpp
     src/am32_eeprom.cpp
@@ -79,6 +93,8 @@ add_executable(DshotDisplay
 )
 
 target_include_directories(DshotDisplay PRIVATE src)
+target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})
+message(STATUS "Board: ${BOARD}")
 
 target_link_libraries(DshotDisplay
     pico_stdlib
@@ -117,6 +133,7 @@ add_executable(sdtest
     src/sd_hw_config.c
 )
 target_include_directories(sdtest PRIVATE src)
+target_compile_definitions(sdtest PRIVATE BOARD=${BOARD})
 target_link_libraries(sdtest
     pico_stdlib
     hardware_spi

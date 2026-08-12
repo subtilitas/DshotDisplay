@@ -1,13 +1,15 @@
 # Host tests for DshotDisplay.
 #
-#   make          syntax-check, build and run
+#   make          syntax-check, build and run for the default board
+#   make BOARD=BOARD_RP2350_TOUCH_LCD_2_8
+#   make both     build and run for every supported board
 #   make build    build only
-#   make syntax   typecheck the device-only sources
+#   make syntax   typecheck the device-only sources, both boards
 #   make bbcheck  round-trip a log through the upstream blackbox_decode
 #   make clean
 #
 # Needs nothing but a C++17 compiler: the firmware is compiled against the
-# stubs in test/stubs/, which mirror the Arduino and Pico SDK signatures.
+# stubs in test/stubs/, which mirror the Pico SDK signatures.
 #
 # ui_am32.cpp is deliberately absent from SRCS -- test_ui.cpp #includes it so
 # the tests can reach its file-static state. Compiling it here as well would
@@ -18,40 +20,66 @@ CXXFLAGS ?= -std=gnu++17 -O1 -g
 WARN     := -Wall -Wextra -Wshadow -Wno-unused-parameter
 INCLUDES := -Istubs -I../src -I.
 
-SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp test_blackbox.cpp test_log_ring.cpp \
-        fakes.cpp \
+# BOARD reaches src/board.h as a -D, which its #ifndef honours ahead of its own
+# default. Only the pin map and the splash board name differ on the host, but
+# the splash is length-checked and the 2.8" name is the longer one.
+BOARD  ?= BOARD_RP2350_TOUCH_LCD_2
+BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8
+DEFINES := -DBOARD=$(BOARD)
+
+SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
+        test_blackbox.cpp test_log_ring.cpp fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp \
-        ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp ../src/log_ring.cpp
+        ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp \
+        ../src/log_ring.cpp
 
 # Sources the tests cannot link -- they drive real hardware -- but which still
 # have to compile. CI's "Config permutations" job already builds all of src/
 # with -Werror, so this is not new coverage; it moves the feedback from a CI
 # round-trip to the same `make` you were going to run anyway.
+#
+# The touch drivers matter most here: each compiles to nothing on the board it
+# is not for, so building only one board would leave the other untouched.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
-               ../src/am32_bl.cpp ../src/sd_log.cpp ../src/main.cpp
+               ../src/cst328.cpp ../src/am32_bl.cpp ../src/sd_log.cpp \
+               ../src/main.cpp
 
 BIN := dshot_tests
 
-.PHONY: all build run syntax bbcheck clean
+.PHONY: all build run both syntax bbcheck clean
 
 all: syntax run bbcheck
 
 build: $(BIN)
 
+# The binary depends on BOARD, which make cannot see in a timestamp. Rebuilding
+# unconditionally costs a couple of seconds and removes a whole class of "the
+# tests passed for the other board" confusion.
+.PHONY: $(BIN)
 $(BIN): $(SRCS) $(wildcard ../src/*.h) $(wildcard *.h)
-	$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -o $@ $(SRCS)
+	$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) $(DEFINES) -o $@ $(SRCS)
 
 run: $(BIN)
 	./$(BIN)
 
-# Both settings of KISS_TELEM_ENABLE, so the disabled path cannot rot unnoticed.
-syntax:
-	@for f in $(DEVICE_SRCS); do \
-		$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -fsyntax-only $$f || exit 1; \
+both:
+	@for b in $(BOARDS); do \
+		echo "=== $$b ==="; \
+		$(MAKE) --no-print-directory BOARD=$$b run || exit 1; \
 	done
-	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DKISS_TELEM_ENABLE=0 \
+
+# Every device source, on every board, plus both settings of the two feature
+# switches so the disabled paths cannot rot unnoticed.
+syntax:
+	@for b in $(BOARDS); do \
+		for f in $(DEVICE_SRCS); do \
+			$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DBOARD=$$b \
+				-fsyntax-only $$f || exit 1; \
+		done; \
+	done
+	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) $(DEFINES) -DKISS_TELEM_ENABLE=0 \
 		-fsyntax-only ../src/esc_task.cpp || exit 1
-	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DSD_LOG_ENABLE=0 \
+	@$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) $(DEFINES) -DSD_LOG_ENABLE=0 \
 		-fsyntax-only ../src/sd_log.cpp || exit 1
 	@echo "device sources typecheck"
 
@@ -74,7 +102,7 @@ bbcheck:
 		echo "  make -C blackbox-tools obj/blackbox_decode   # not plain 'make':"; \
 		echo "  the default target also builds blackbox_render, which needs cairo"; \
 	else \
-		$(CXX) $(CXXFLAGS) $(INCLUDES) -o gen_blackbox_log \
+		$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -o gen_blackbox_log \
 			gen_blackbox_log.cpp ../src/blackbox_encode.cpp -lm && \
 		python3 check_blackbox.py "$(BBDECODE)" ./gen_blackbox_log; \
 	fi
