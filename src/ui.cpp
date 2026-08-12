@@ -920,6 +920,11 @@ void uiTick() {
 	// (millis() - s_zeroSince) is "how long we have been at idle".
 	if (s_throttle != 0) s_zeroSince = millis();
 
+	// Told here rather than from loop(): the UI owns the arm state, and putting
+	// the coupling in main.cpp put it in the one file the host tests never run,
+	// so a test covering it could pass against a broken rule.
+	sdLogSetArmed(s_armed);
+
 	if (s_logScreen) {
 		handleLogTouch();
 		drawLogScreen();

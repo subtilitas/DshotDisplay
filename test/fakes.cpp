@@ -222,9 +222,12 @@ bool sdLogBegin() {
 	return true;
 }
 
+static bool g_autoStarted = false;
+
 bool sdLogStart() {
 	if (g_log.state == SdLogState::NoCard) return false;
 	g_log.state = SdLogState::Logging;
+	g_autoStarted = false;
 	if (!g_log.fileNumber) g_log.fileNumber = 1;
 	return true;
 }
@@ -232,6 +235,7 @@ bool sdLogStart() {
 void sdLogStop() {
 	if (g_log.state == SdLogState::Logging) g_log.state = SdLogState::Idle;
 	g_log.fileNumber = 0;
+	g_autoStarted = false;
 }
 
 bool sdLogRemount() {
@@ -250,5 +254,17 @@ bool sdLogRemount() {
 bool sdLogActive() { return g_log.state == SdLogState::Logging; }
 void sdLogTick(uint32_t, uint16_t) {}
 void sdLogFlush() {}
-void sdLogSetArmed(bool armed) { if (armed) sdLogStart(); else sdLogStop(); }
+// Uses the shipped decision function, not a copy of it, so the UI tests
+// actually exercise the policy the firmware runs.
+static bool g_sdArmed = false;
+void sdLogSetArmed(bool armed) {
+	SdLogArmAction act = sdLogArmAction(armed, g_sdArmed, sdLogActive(),
+	                                    g_autoStarted);
+	g_sdArmed = armed;
+	switch (act) {
+		case SdLogArmAction::Start: g_autoStarted = sdLogStart(); break;
+		case SdLogArmAction::Stop:  sdLogStop();                  break;
+		case SdLogArmAction::None:                                break;
+	}
+}
 void sdLogStatus(SdLogStatus *out) { *out = g_log; }

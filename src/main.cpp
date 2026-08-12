@@ -137,8 +137,7 @@ void loop() {
 
 #if SD_LOG_ENABLE
 	// Encoding is cheap and only fills a RAM ring, so it runs every pass to
-	// keep the log cadence even.
-	sdLogSetArmed(uiArmed());
+	// keep the log cadence even. uiTick() reports arm changes itself.
 	sdLogTick(micros(), uiThrottle());
 
 	// Writing is the expensive half -- a card can pause tens of milliseconds

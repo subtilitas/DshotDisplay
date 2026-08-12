@@ -44,6 +44,14 @@ static uint32_t s_worstFlushMs = 0;
 static uint32_t s_framesLogged = 0;
 static uint32_t s_cardBytes = 0;
 static bool     s_armed = false;
+/**
+ * @brief True when the log in progress was begun by arming, not by the button.
+ *
+ * Auto-stop must only undo what auto-start did. Entering the settings screen
+ * force-disarms -- and the logging screen is reached through it -- so without
+ * this, walking back to check on a log you started by hand is what stops it.
+ */
+static bool     s_autoStarted = false;
 
 /** @brief Microseconds between logged frames. */
 static const uint32_t kFramePeriodUs = 1000000u / SD_LOG_RATE_HZ;
@@ -160,6 +168,7 @@ bool sdLogStart() {
 	BlackboxSink sink = { ringSink, &s_ring };
 	bbBegin(&s_enc, &sink, SD_LOG_I_INTERVAL);
 
+	s_autoStarted = false;   // callers that want auto set it after this returns
 	s_fileNo = n;
 	s_framesLogged = 0;
 	s_cardBytes = 0;
@@ -184,6 +193,7 @@ void sdLogStop() {
 	f_close(&s_file);
 
 	s_fileNo = 0;
+	s_autoStarted = false;
 	s_state = SdLogState::Idle;
 }
 
@@ -272,13 +282,15 @@ void sdLogStatus(SdLogStatus *out) {
 }
 
 void sdLogSetArmed(bool armed) {
-	if (armed == s_armed) return;
+	SdLogArmAction act = sdLogArmAction(armed, s_armed, sdLogActive(),
+	                                    s_autoStarted);
 	s_armed = armed;
 
-#if SD_LOG_AUTO_ON_ARM
-	if (armed) sdLogStart();
-	else       sdLogStop();
-#endif
+	switch (act) {
+		case SdLogArmAction::Start: s_autoStarted = sdLogStart(); break;
+		case SdLogArmAction::Stop:  sdLogStop();                  break;
+		case SdLogArmAction::None:                                break;
+	}
 }
 
 #else  // !SD_LOG_ENABLE

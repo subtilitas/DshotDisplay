@@ -80,6 +80,13 @@ static void swipe(int x0, int x1, int y, int step) {
 #define LOG_RETRY_Y  270
 #define LOG_BACK_Y   296
 
+/** @brief Hold the ARM button long enough to actually arm. */
+static void holdToArm() {
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	for (int i = 0; i < 60; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	fakeRelease(); frames(2);
+}
+
 /**
  * @brief Navigate main -> SETTINGS -> SD LOG.
  *
@@ -159,6 +166,50 @@ static void testLogScreen() {
 	checkTrue("and its size", st.cardSizeMB > 100000);
 	fakeDumpFrame("shot_log_mounted.ppm");
 
+	tap(120, LOG_BACK_Y + 9);
+	frames(2);
+}
+
+/**
+ * @brief A hand-started log must survive arming and the disarm that follows.
+ *
+ * Reported from hardware, and a good bug: entering the settings screen
+ * force-disarms, and the logging screen is reached *through* settings. So
+ * auto-stop-on-disarm cancelled exactly the log you walked over to check on,
+ * and there was no way to observe a manual log without ending it.
+ */
+static void testManualLogSurvivesArming() {
+	section("Manual logging vs auto-on-arm");
+
+	SdLogStatus st;
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Idle;
+	st.cardSizeMB = 61000;
+	fakeSdLogSet(&st);
+
+	enterLogScreen();
+	tap(120, LOG_TOGGLE_Y + 17);
+	checkTrue("manual START begins a log", sdLogActive());
+
+	// Back to the main screen and arm.
+	tap(120, LOG_BACK_Y + 9);
+	frames(2);
+	// A tap will not arm: it takes a one-second hold, and using tap() here is
+	// how an earlier version of this test passed against the broken rule.
+	holdToArm();
+	checkTrue("actually armed", uiArmed());
+	checkTrue("still logging while armed", sdLogActive());
+
+	// Walking back to the logging screen goes through settings, which
+	// force-disarms. That must not end a log the operator started.
+	enterLogScreen();
+	frames(2);
+	checkTrue("armed state cleared by entering settings", !uiArmed());
+	checkTrue("manual log survives the force-disarm", sdLogActive());
+
+	// STOP is still the operator's to press.
+	tap(120, LOG_TOGGLE_Y + 17);
+	checkTrue("manual STOP ends it", !sdLogActive());
 	tap(120, LOG_BACK_Y + 9);
 	frames(2);
 }
@@ -373,5 +424,6 @@ void runUiTests() {
 	}
 
 	testLogScreen();
+	testManualLogSurvivesArming();
 	testKissDisplay();
 }
