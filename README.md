@@ -137,6 +137,18 @@ cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
 ninja -C build
 ```
 
+Two build options worth knowing:
+
+```sh
+-DBOARD=BOARD_RP2350_TOUCH_LCD_2_8   # the 2.8" board; default is the 2.0"
+-DDSHOT_PIN=29                        # ESC on a different GPIO than the default
+```
+
+`DSHOT_PIN` defaults to **GP4** on the 2.0" and **GP28** on the 2.8". The 2.8"
+brings out only GP28 (J4 pin 11) and GP29 (J4 pin 12), so those are the two
+choices there — and an ESC on the wrong one is simply silent, with no error
+anywhere, because nothing is listening on the pin you wired.
+
 That produces `build/DshotDisplay.uf2`. Hold **BOOT**, tap **RESET**, release **BOOT**,
 and copy it onto the drive that appears.
 

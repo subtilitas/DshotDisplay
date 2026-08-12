@@ -35,6 +35,16 @@ set(BOARD "BOARD_RP2350_TOUCH_LCD_2" CACHE STRING "Target board")
 set_property(CACHE BOARD PROPERTY STRINGS
     BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8)
 
+# Which GPIO the ESC signal wire lands on. Empty means "whatever board_pins.h
+# defaults to" -- GP4 on the 2.0", GP28 on the 2.8". Set it when the wire is
+# somewhere else:
+#
+#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 -DDSHOT_PIN=29 ...
+#
+# The 2.8" brings out GP28 (J4 pin 11) and GP29 (J4 pin 12) and nothing else, so
+# those are the only two choices there.
+set(DSHOT_PIN "" CACHE STRING "GPIO for the ESC signal wire; blank = board default")
+
 
 set(PICO_SDK_FETCH_FROM_GIT_TAG 2.1.1)
 include(pico_sdk_import.cmake)
@@ -94,7 +104,12 @@ add_executable(DshotDisplay
 
 target_include_directories(DshotDisplay PRIVATE src)
 target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})
-message(STATUS "Board: ${BOARD}")
+if(DSHOT_PIN)
+    target_compile_definitions(DshotDisplay PRIVATE DSHOT_PIN=${DSHOT_PIN})
+    message(STATUS "Board: ${BOARD}, DShot on GP${DSHOT_PIN}")
+else()
+    message(STATUS "Board: ${BOARD}, DShot on the board default")
+endif()
 
 target_link_libraries(DshotDisplay
     pico_stdlib
