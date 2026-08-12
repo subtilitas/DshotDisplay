@@ -29,6 +29,7 @@ static FIL   s_file;
 static bool  s_mounted = false;
 static uint8_t  s_mountResult = 0;
 static uint8_t  s_cardType = 0;
+static uint32_t s_cardSectors = 0;
 static uint32_t s_cardSizeMB = 0;
 
 static SdLogState s_state = SdLogState::NoCard;
@@ -84,9 +85,15 @@ bool sdLogBegin() {
 	sd_card_t *card = sd_get_by_num(0);
 	if (card) {
 		s_cardType = (uint8_t)card->state.card_type;
-		s_cardSizeMB = card->get_num_sectors
-		                   ? (uint32_t)(card->get_num_sectors(card) / 2048u)
-		                   : 0;
+		// The SDIO driver never fills card_type in -- it is an SPI-mode concept,
+		// set from the CMD58 response. Sector count is the interface-independent
+		// signal that something answered, so presence is judged on that.
+		// Reading card_type alone showed "NONE" for a card that had just
+		// mounted and written a file.
+		s_cardSectors = card->state.sectors;
+		if (!s_cardSectors && card->get_num_sectors)
+			s_cardSectors = card->get_num_sectors(card);
+		s_cardSizeMB = s_cardSectors / 2048u;
 	}
 
 	if (fr != FR_OK) {
