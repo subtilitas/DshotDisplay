@@ -163,12 +163,18 @@ void escSnapshot(EscTelemetry *out) {
 	critical_section_exit(&s_cs);
 }
 
-void escTaskBegin() {
+void escTaskInit() {
+	// Core0 owns this, and must do it before core1 is launched. See the note in
+	// esc_task.h: core0's first uiTick() calls escSnapshot(), which enters this
+	// critical section, and it will get there long before core1 has booted.
 	critical_section_init(&s_cs);
 	memset((void *)&s_tel, 0, sizeof(s_tel));
+}
 
-	s_esc = new BidirDShotX1(DSHOT_PIN, DSHOT_SPEED_KBAUD);
+void escTaskBegin() {
+	critical_section_enter_blocking(&s_cs);
 	s_tel.initError = s_esc->initError();
+	critical_section_exit(&s_cs);
 
 #if KISS_TELEM_ENABLE
 	memset(&s_kiss, 0, sizeof(s_kiss));

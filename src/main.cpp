@@ -84,6 +84,9 @@ void setup() {
 	stdio_init_all();
 #endif
 
+	// Before anything can call escSnapshot(), and before core1 is launched.
+	escTaskInit();
+
 	gfxInit();
 	st7789Init();       // also pulses the shared LCD/touch reset line
 	touchInit();
@@ -95,6 +98,12 @@ void setup() {
 	delay(SPLASH_MS);
 	gfxFill(C_BG);
 	st7789FlushDirty();
+
+	// Paint one real frame before touching the card. Mounting talks to hardware
+	// that may not be there, and however well it behaves it is the last thing
+	// that runs before the screen would otherwise sit blank. If it ever does
+	// stall, a frozen UI says far more than a black panel does.
+	uiTick();
 
 #if SD_LOG_ENABLE
 	// A missing card is the normal bench case, not a fault: logging is
@@ -177,10 +186,18 @@ static void core1Main() {
 /**
  * @brief Core0 entry point.
  *
- * Order matters. Core1 is launched only after core0 has finished bringing up
- * the display and the UI, because escTaskBegin() claims a PIO state machine and
- * st7789Init() claims a DMA channel — starting them concurrently makes which
- * one wins a matter of timing.
+ * Order matters, in two directions.
+ *
+ * Core1 is launched only after core0 has brought up the display, because
+ * escTaskBegin() claims a PIO state machine and st7789Init() claims a DMA
+ * channel; starting them concurrently makes which one wins a matter of timing.
+ *
+ * But core0 must not *use* anything core1 initialises before core1 has run, and
+ * it very nearly does: the first loop() calls uiTick(), which calls
+ * escSnapshot(), which takes a critical section. So that critical section is
+ * initialised by escTaskInit() on core0 inside setup(), not by escTaskBegin()
+ * on core1. Getting this wrong does not race intermittently — core0 wins every
+ * time, and the board shows the splash and then a black screen forever.
  *
  * @return Never returns.
  */
