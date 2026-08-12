@@ -643,14 +643,21 @@ static void drawLogScreen() {
 	// card is on the bus and talking -- the fault is the filesystem, not the
 	// wiring -- and that is the single most useful thing to know when a card
 	// "is not detected".
-	static const char *TYPE_TXT[5] = {"NONE", "SDSC v1", "SDSC v2", "SDHC/XC", "?"};
+	// Size, not type: card_type is an SPI-mode concept and the SDIO driver
+	// leaves it at zero, so keying presence off it would report "NONE" for a
+	// card that has just mounted.
+	static const char *TYPE_TXT[5] = {"", "SDSC v1 ", "SDSC v2 ", "SDHC/XC ", ""};
 	uint8_t ct = st.cardType < 4 ? st.cardType : 4;
-	if (st.cardSizeMB)
-		snprintf(buf, sizeof(buf), "%s %luMB", TYPE_TXT[ct],
+	if (st.cardSizeMB >= 1024)
+		snprintf(buf, sizeof(buf), "%s%lu.%luGB", TYPE_TXT[ct],
+		         (unsigned long)(st.cardSizeMB / 1024),
+		         (unsigned long)((st.cardSizeMB % 1024) * 10 / 1024));
+	else if (st.cardSizeMB)
+		snprintf(buf, sizeof(buf), "%s%luMB", TYPE_TXT[ct],
 		         (unsigned long)st.cardSizeMB);
 	else
-		snprintf(buf, sizeof(buf), "%s", TYPE_TXT[ct]);
-	drawLogRow(7, "CARD", buf, st.cardType ? C_TEXT : C_DIM);
+		snprintf(buf, sizeof(buf), "NONE");
+	drawLogRow(7, "CARD", buf, st.cardSizeMB ? C_TEXT : C_DIM);
 
 	// FatFs FRESULT. 0 is FR_OK, 3 FR_NOT_READY (nothing answered), 13
 	// FR_NO_FILESYSTEM (card fine, no filesystem FatFs can read).
