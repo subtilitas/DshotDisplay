@@ -29,6 +29,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "config.h"
+
 /** @brief What the logger is currently doing. */
 enum class SdLogState : uint8_t {
 	NoCard = 0,  /**< No card, or mount failed. Not an error; just unavailable. */
@@ -123,6 +125,44 @@ void sdLogFlush();
  * @param[out] out Filled in.
  */
 void sdLogStatus(SdLogStatus *out);
+
+/** @brief What a change in arm state should do to the log. */
+enum class SdLogArmAction : uint8_t {
+	None,   /**< Leave the log alone. */
+	Start,  /**< Begin an auto log. */
+	Stop,   /**< End the auto log this arming began. */
+};
+
+/**
+ * @brief Decide what an arm-state change should do. Pure; host-testable.
+ *
+ * Split out from sdLogSetArmed() so the host tests exercise the shipped rule
+ * rather than a copy of it — sd_log.cpp pulls in FatFs and cannot be linked
+ * into the test binary, and a fake that reimplements the policy proves only
+ * that the fake agrees with itself.
+ *
+ * The rule that matters: auto-stop undoes only what auto-start did. Entering
+ * the settings screen force-disarms, and the logging screen is reached through
+ * it, so without that distinction walking over to check on a hand-started log
+ * is what ends it.
+ *
+ * @param nowArmed    The new arm state.
+ * @param wasArmed    The previous arm state.
+ * @param logging     Whether a log is currently open.
+ * @param autoStarted Whether the open log was begun by arming.
+ * @return            What to do.
+ */
+static inline SdLogArmAction sdLogArmAction(bool nowArmed, bool wasArmed,
+                                            bool logging, bool autoStarted) {
+	if (nowArmed == wasArmed) return SdLogArmAction::None;
+#if SD_LOG_AUTO_ON_ARM
+	if (nowArmed) return logging ? SdLogArmAction::None : SdLogArmAction::Start;
+	return autoStarted ? SdLogArmAction::Stop : SdLogArmAction::None;
+#else
+	(void)logging; (void)autoStarted;
+	return SdLogArmAction::None;
+#endif
+}
 
 /**
  * @brief Tell the logger the tester armed or disarmed.
