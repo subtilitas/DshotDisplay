@@ -28,11 +28,23 @@
 
 #include "board_pins.h"
 
-/** @brief Speeds to try, fastest first. */
+#if defined(SD_IFACE_SPI)
+/** @brief SPI speeds to try, fastest first. */
 static const uint32_t kBauds[] = {
     12u * 1000 * 1000, 4u * 1000 * 1000, 1u * 1000 * 1000,
     400u * 1000, 200u * 1000,
 };
+static const uint kSdPins[] = {PIN_SD_MISO, PIN_SD_CS, PIN_SD_SCK, PIN_SD_MOSI};
+static const char *kSdNames[] = {"MISO", "CS", "SCK", "MOSI"};
+#else
+/** @brief SDIO speeds to try, fastest first. */
+static const uint32_t kBauds[] = {
+    25u * 1000 * 1000, 10u * 1000 * 1000, 4u * 1000 * 1000, 1u * 1000 * 1000,
+};
+static const uint kSdPins[] = {PIN_SD_SCK, PIN_SD_CMD, PIN_SD_D0,
+                               PIN_SD_D1, PIN_SD_D2, PIN_SD_D3};
+static const char *kSdNames[] = {"CLK", "CMD", "D0", "D1", "D2", "D3"};
+#endif
 
 /**
  * @brief Pin integrity test: pull each SD line both ways, then drive it.
@@ -53,14 +65,15 @@ static const uint32_t kBauds[] = {
  * @return true if every pin looks sane.
  */
 static bool testPinIntegrity(void) {
-    const uint pins[] = {PIN_SD_MISO, PIN_SD_CS, PIN_SD_SCK, PIN_SD_MOSI};
-    const char *names[] = {"MISO(24)", "CS(25)", "SCK(26)", "MOSI(27)"};
+    const uint *pins = kSdPins;
+    const char **names = kSdNames;
+    const unsigned nPins = count_of(kSdPins);
     bool allOk = true;
 
     printf("\nPin integrity, SPI detached:\n");
     printf("  %-9s %-4s %-6s %-6s %s\n", "PIN", "UP", "DOWN", "DRIVE", "VERDICT");
 
-    for (unsigned i = 0; i < count_of(pins); i++) {
+    for (unsigned i = 0; i < nPins; i++) {
         gpio_init(pins[i]);
         gpio_set_dir(pins[i], GPIO_IN);
 
@@ -91,7 +104,7 @@ static bool testPinIntegrity(void) {
         else if (up && down)    { verdict = "held high"; allOk = false; }
         else                    verdict = "?";
 
-        printf("  %-9s %-4d %-6d %-6d %s\n", names[i], up, down, driven, verdict);
+        printf("  %-5s(%2u) %-4d %-6d %-6d %s\n", names[i], pins[i], up, down, driven, verdict);
     }
     return allOk;
 }
@@ -101,8 +114,11 @@ int main(void) {
     sleep_ms(3000);            // time to open a terminal
 
     printf("\n\n=== DshotDisplay standalone SD test ===\n");
-    printf("MISO=%d CS=%d SCK=%d MOSI=%d, SPI1\n",
-           PIN_SD_MISO, PIN_SD_CS, PIN_SD_SCK, PIN_SD_MOSI);
+#if defined(SD_IFACE_SPI)
+    printf("interface: hardware SPI1\n");
+#else
+    printf("interface: PIO SDIO, 4-bit\n");
+#endif
 
     bool pinsOk = testPinIntegrity();
     if (!pinsOk) {
@@ -119,9 +135,13 @@ int main(void) {
     for (unsigned i = 0; i < count_of(kBauds); i++) {
         // Force a full re-init at the new speed: the driver caches both the SPI
         // setup and the card state, and neither is revisited on a retry.
+#if defined(SD_IFACE_SPI)
         spi_t *spi = spi_get_by_num(0);
         spi->initialized = false;
         spi->baud_rate = kBauds[i];
+#else
+        card->sdio_if_p->baud_rate = kBauds[i];
+#endif
         card->state.m_Status = 0xFF;
 
         printf("\n--- trying %lu Hz ---\n", (unsigned long)kBauds[i]);

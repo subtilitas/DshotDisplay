@@ -11,7 +11,7 @@
 #include "ui.h"
 #include "ui_am32.h"
 #include "gfx.h"
-#include "cst816.h"
+#include "touch.h"
 #include "st7789.h"
 #include "esc_task.h"
 #include "esc_merge.h"
@@ -859,6 +859,9 @@ void uiDrawSplash() {
 	gfxTextCenter(144, "DISPLAY", C_TEXT, 4);
 	gfxTextCenter(188, "BIDIRECTIONAL ESC TESTER", C_DIM, 1);
 	gfxTextCenter(216, "JuWi made", C_CYAN, 2);
+	// Which board this image was built for. Cheap here, and the alternative is
+	// working it out by flashing a UF2 and seeing whether the screen lights up.
+	gfxTextCenter(248, BOARD_LABEL, C_GRID, 1);
 }
 
 uint16_t uiThrottle() { return s_throttle; }

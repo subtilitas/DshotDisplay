@@ -12,7 +12,7 @@
 #include "fakes.h"
 #include "gfx.h"
 #include "ui.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
 #include "esc_merge.h"
 #include "sd_log.h"

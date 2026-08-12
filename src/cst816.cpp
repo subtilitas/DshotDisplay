@@ -3,7 +3,11 @@
  * @brief CST816D register access, coordinate rotation and edge detection.
  */
 
-#include "cst816.h"
+#include "board_pins.h"
+
+#if BOARD_TOUCH_CST816D
+
+#include "touch.h"
 #include "board_pins.h"
 #include "config.h"
 #include "gfx.h"
@@ -13,7 +17,7 @@
 #include <hardware/gpio.h>
 
 /** @brief I2C instance the touch controller sits on. @see board_pins.h */
-#define TOUCH_I2C i2c0
+#define TOUCH_I2C BOARD_I2C
 
 /** @brief Per-transfer I2C timeout. Long enough for a 400 kHz byte, short
  *         enough that a wedged bus does not stall the UI. */
@@ -147,3 +151,5 @@ void touchPoll(TouchState *t) {
 
 	s_prevDown = down;
 }
+
+#endif  // BOARD_TOUCH_CST816D
