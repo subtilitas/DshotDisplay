@@ -105,8 +105,24 @@
  * @brief Unused by this firmware; listed so the pins are not reused.
  * @{
  */
-#define PIN_SD_MISO   24 /**< SPI1 RX. */
-#define PIN_SD_CS     25 /**< Card select. */
-#define PIN_SD_SCK    26 /**< SPI1 SCK. */
-#define PIN_SD_MOSI   27 /**< SPI1 TX. */
+/*
+ * Confirmed against the schematic netlist, not inferred:
+ *
+ *     TF1 pin 7  (D0)     -> GPIO24   SD_MISO
+ *     TF1 pin 2  (CD/D3)  -> GPIO25   SD_CS
+ *     TF1 pin 5  (CLK)    -> GPIO26   SD_SCLK
+ *     TF1 pin 3  (CMD)    -> GPIO27   SD_MOSI
+ *     TF1 pin 4  (VDD)    -> 3V3      TF1 pin 6/11 -> GND
+ *     TF1 pins 1, 8, 9, 10 (D2, D1, CD1, CD2) are not connected
+ *
+ * All four land on their SPI1 function, so hardware SPI works with no PIO.
+ *
+ * @note The schematic shows **no external pull-ups** on any SD line. The driver
+ *       enables the RP2350 internal pull-up on MISO, which is the one SPI mode
+ *       requires; CS, CLK and MOSI are driven, so they need none.
+ */
+#define PIN_SD_MISO   24 /**< SPI1 RX. TF1 pin 7 (D0). */
+#define PIN_SD_CS     25 /**< Card select. TF1 pin 2 (CD/D3). */
+#define PIN_SD_SCK    26 /**< SPI1 SCK. TF1 pin 5 (CLK). */
+#define PIN_SD_MOSI   27 /**< SPI1 TX. TF1 pin 3 (CMD). */
 /** @} */
