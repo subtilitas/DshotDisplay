@@ -47,22 +47,28 @@ static const char *kSdNames[] = {"CLK", "CMD", "D0", "D1", "D2", "D3"};
 #endif
 
 /**
- * @brief Pin integrity test: pull each SD line both ways, then drive it.
+ * @brief Pin integrity test, without ever engaging an internal pull-down.
  *
- * A single pulled-up reading cannot tell a stuck pin from a card holding a line
- * down. Pulling both ways can:
+ * The obvious test -- pull each way and see if the pin follows -- is wrong on
+ * RP2350. Erratum **E9** says a pad configured as an input with the internal
+ * pull-down engaged can latch at roughly 2.1 V instead of being pulled to
+ * ground, and once latched it reads high no matter what is done to it
+ * afterwards. An earlier version of this function did exactly that and reported
+ * all six SDIO lines as "held high", which is not a fault any board has; it was
+ * the erratum, triggered by the test itself.
  *
- *   up=1 down=0   floating. Normal for an empty slot, and for a powered card
- *                 that is not driving the line.
- *   up=0 down=0   held low. A short to ground, a dead pin, or an unpowered card
- *                 clamping through its ESD diode.
- *   up=1 down=1   held high. A short to 3V3.
+ * So this drives the pad instead, which is unambiguous and unaffected:
  *
- * Then it drives each pin high as an output and reads back. A pin that cannot
- * be driven high is shorted to ground, and no amount of SPI configuration will
- * make the card hear a command on it.
+ *   drive high, read back 0  ->  shorted to ground
+ *   drive low,  read back 1  ->  shorted to 3V3
+ *   both agree               ->  the pin can be driven, which is all SD needs
  *
- * @return true if every pin looks sane.
+ * The pull-up read is kept because it is safe -- E9 concerns the pull-down --
+ * and because it distinguishes a floating line from one a card is holding.
+ * Every pin is left driven low afterwards rather than floating, so nothing is
+ * parked at an intermediate voltage where E9 could bite later.
+ *
+ * @return true if every pin can be driven both ways.
  */
 static bool testPinIntegrity(void) {
     const uint *pins = kSdPins;
@@ -70,41 +76,50 @@ static bool testPinIntegrity(void) {
     const unsigned nPins = count_of(kSdPins);
     bool allOk = true;
 
-    printf("\nPin integrity, SPI detached:\n");
-    printf("  %-9s %-4s %-6s %-6s %s\n", "PIN", "UP", "DOWN", "DRIVE", "VERDICT");
+    printf("\nPin integrity (drive test; no internal pull-downs -- see RP2350-E9):\n");
+    printf("  %-9s %-6s %-6s %-6s %s\n", "PIN", "HIGH", "LOW", "PULLUP", "VERDICT");
 
     for (unsigned i = 0; i < nPins; i++) {
         gpio_init(pins[i]);
-        gpio_set_dir(pins[i], GPIO_IN);
-
-        gpio_pull_up(pins[i]);
-        sleep_ms(2);
-        int up = gpio_get(pins[i]) ? 1 : 0;
-
         gpio_disable_pulls(pins[i]);
-        gpio_pull_down(pins[i]);
-        sleep_ms(2);
-        int down = gpio_get(pins[i]) ? 1 : 0;
 
-        // Drive it high and read back. This is the test that matters: it is the
-        // difference between "nothing is pulling it up" and "something is
-        // actively holding it down".
-        gpio_disable_pulls(pins[i]);
         gpio_set_dir(pins[i], GPIO_OUT);
         gpio_put(pins[i], 1);
-        sleep_ms(2);
-        int driven = gpio_get(pins[i]) ? 1 : 0;
+        sleep_us(200);
+        int hi = gpio_get(pins[i]) ? 1 : 0;
+
+        gpio_put(pins[i], 0);
+        sleep_us(200);
+        int lo = gpio_get(pins[i]) ? 1 : 0;
+
+        // Release and let the internal pull-up decide. A card holding the line
+        // reads 0 here while still driving cleanly above.
         gpio_set_dir(pins[i], GPIO_IN);
-        gpio_disable_pulls(pins[i]);
+        gpio_pull_up(pins[i]);
+        sleep_ms(2);
+        int pu = gpio_get(pins[i]) ? 1 : 0;
 
         const char *verdict;
-        if (!driven)            { verdict = "SHORTED TO GND"; allOk = false; }
-        else if (up && !down)   verdict = "floating, ok";
-        else if (!up && !down)  { verdict = "held low"; allOk = false; }
-        else if (up && down)    { verdict = "held high"; allOk = false; }
-        else                    verdict = "?";
+        if (!hi)      { verdict = "SHORTED TO GND"; allOk = false; }
+        else if (lo)  { verdict = "SHORTED TO 3V3"; allOk = false; }
+        else if (!pu) verdict = "ok, held low (card?)";
+        else          verdict = "ok";
 
-        printf("  %-5s(%2u) %-4d %-6d %-6d %s\n", names[i], pins[i], up, down, driven, verdict);
+        printf("  %-5s(%2u) %-6d %-6d %-6d %s\n",
+               names[i], pins[i], hi, lo, pu, verdict);
+
+        // Leave it driven low rather than floating at an undefined level.
+        gpio_disable_pulls(pins[i]);
+        gpio_set_dir(pins[i], GPIO_OUT);
+        gpio_put(pins[i], 0);
+    }
+
+    // Hand every pin back as a plain input so the SD driver starts from a known
+    // state rather than fighting whatever this function left behind.
+    for (unsigned i = 0; i < nPins; i++) {
+        gpio_init(pins[i]);
+        gpio_set_dir(pins[i], GPIO_IN);
+        gpio_disable_pulls(pins[i]);
     }
     return allOk;
 }
@@ -134,11 +149,11 @@ int main(void) {
 
     bool pinsOk = testPinIntegrity();
     if (!pinsOk) {
-        printf("\n*** A pin failed the integrity test. ***\n"
-               "Run this again with the slot EMPTY. If the same pin still fails,\n"
-               "the fault is on the board -- a short or a damaged pin -- and no\n"
-               "firmware change can help. If it passes with the slot empty, the\n"
-               "card or the socket contacts are holding the line.\n");
+        printf("\n*** A pin could not be driven. ***\n"
+               "Run again with the slot EMPTY. If the same pin still fails, the\n"
+               "fault is on the board and no firmware change can help. The mount\n"
+               "is attempted below regardless -- a pin that drives both ways is\n"
+               "all the card actually needs.\n");
     }
 
     sd_card_t *card = sd_get_by_num(0);

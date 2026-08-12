@@ -23,6 +23,15 @@
 #pragma once
 
 /**
+ * @warning **RP2350-E9.** A pad configured as an input with the internal
+ *          pull-down engaged can latch at roughly 2.1 V instead of being pulled
+ *          to ground, and reads high from then on. Do not use internal
+ *          pull-downs for level detection anywhere in this firmware — drive the
+ *          pad and read it back instead. A diagnostic in tools/sdtest did use
+ *          one, and duly reported six perfectly good SDIO lines as "held high".
+ */
+
+/**
  * @defgroup board_ids Board identifiers
  * @brief Legal values for @ref BOARD.
  * @{
