@@ -120,6 +120,20 @@
  * @note The schematic shows **no external pull-ups** on any SD line. The driver
  *       enables the RP2350 internal pull-up on MISO, which is the one SPI mode
  *       requires; CS, CLK and MOSI are driven, so they need none.
+ *
+ * @warning On at least one board, GPIO27 was found **shorted to ground**: it
+ *          could not be driven high push-pull, with the slot empty, so the CMD
+ *          line could never carry a command and CMD0 never got a reply. The
+ *          symptom is `NO CARD` and FatFs `FR_NOT_READY` for every card at
+ *          every clock rate. `tools/sdtest` diagnoses it in one run.
+ *
+ *          If reflowing the socket does not clear it, the SD slot can be
+ *          recovered with one wire: lift TF1 pin 3 (CMD) off GPIO27 and run it
+ *          to **GPIO11**, which is the only other SPI1 TX pin free on this
+ *          board — SPI1 TX exists solely on GP11, GP15 and GP27, and GP15 is
+ *          the backlight. GPIO11 is CAM_XCLK, free with no camera fitted, and
+ *          brought out on P1 pin 8. MISO, SCK and CS stay where they are and
+ *          hardware SPI still works; only PIN_SD_MOSI changes.
  */
 #define PIN_SD_MISO   24 /**< SPI1 RX. TF1 pin 7 (D0). */
 #define PIN_SD_CS     25 /**< Card select. TF1 pin 2 (CD/D3). */

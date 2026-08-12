@@ -1,6 +1,8 @@
 # SD logging in Betaflight blackbox format
 
-Status: implemented including UI; not yet run against a card.
+Status: implemented including UI. Not yet proven against a card: the board it
+was developed on has GPIO27 shorted to ground, so its SD slot cannot work at
+all. See "Bring-up" below.
 Branch: `dev/telemetry-logging`, ported to the native Pico SDK on
 `dev/pico-sdk-native`.
 
@@ -232,6 +234,26 @@ the workflow or vendoring a binary. Building from source is slower but honest.
 9. Hardware bring-up: measure real throughput and worst-case stall; size the
    buffer from that rather than the guess above.
 10. README section.
+
+## Bring-up
+
+The first hardware attempt never reached the code. Every card reported FatFs
+`FR_NOT_READY` at every clock rate from 12 MHz down to 200 kHz, and
+`tools/sdtest` found why: **GPIO27, the CMD line, is shorted to ground.** It
+cannot be driven high push-pull with the slot empty, so the card can never
+receive a command, and the driver's trace shows CMD0 retried and unanswered
+while MISO idles correctly at 0xff.
+
+Ruled out along the way, none of it worth repeating: the pin map (confirmed
+against the schematic netlist), the SPI clock (all five rates fail identically),
+exFAT support (enabled), SDXC support (HCS/CCS handled), the driver init
+sequence (correct 74-clock preamble), and the integration itself (`tools/sdtest`
+shares only sd_hw_config.c with the firmware and fails the same way). It is not
+RP2350-E9 either -- that erratum latches pins high, this one is stuck low.
+
+So the encoder, ring buffer, writer and UI remain unproven against real media.
+The numbers that still need measuring are BUF PEAK and WORST FLUSH, which size
+`SD_LOG_BUFFER_BYTES`; 8 kB is still a guess.
 
 ## Open questions
 
