@@ -25,13 +25,23 @@ typedef struct sd_spi_if_t {
 
 typedef enum { SD_IF_NONE, SD_IF_SPI, SD_IF_SDIO } sd_if_t;
 
-typedef struct sd_card_t {
+typedef struct sd_card_t sd_card_t;
+
+/** Dynamically-assigned state the driver fills in during a mount attempt. */
+typedef struct sd_card_state_t {
+	int      card_type;
+	uint32_t sectors;
+} sd_card_state_t;
+
+struct sd_card_t {
 	sd_if_t      type;
 	sd_spi_if_t *spi_if_p;
 	bool         use_card_detect;
 	unsigned     card_detect_gpio;
 	unsigned     card_detected_true;
-} sd_card_t;
+	sd_card_state_t state;
+	uint32_t (*get_num_sectors)(sd_card_t *sd_card_p);
+};
 
 size_t      spi_get_num(void);
 spi_t      *spi_get_by_num(size_t num);

@@ -15,6 +15,7 @@
 #include "ff.h"
 #include "f_util.h"
 #include "hw_config.h"
+#include "sd_card.h"
 
 #include <stdio.h>
 
@@ -26,6 +27,9 @@
 static FATFS s_fs;
 static FIL   s_file;
 static bool  s_mounted = false;
+static uint8_t  s_mountResult = 0;
+static uint8_t  s_cardType = 0;
+static uint32_t s_cardSizeMB = 0;
 
 static SdLogState s_state = SdLogState::NoCard;
 static uint16_t   s_fileNo = 0;
@@ -53,11 +57,38 @@ static void ringSink(void *ctx, const uint8_t *data, size_t len) {
 	logRingWrite((LogRing *)ctx, data, (uint32_t)len);
 }
 
+/**
+ * @brief The FatFs drive prefix for our one card.
+ *
+ * Asked of the library rather than hardcoded as "0:". The prefix depends on how
+ * FatFs was configured -- numeric or string volume IDs, how many volumes -- and
+ * guessing it wrong fails as FR_INVALID_DRIVE, which looks identical to a
+ * missing card from the outside.
+ */
+static const char *drivePrefix() {
+	sd_card_t *card = sd_get_by_num(0);
+	return card ? sd_get_drive_prefix(card) : "";
+}
+
 bool sdLogBegin() {
 	// Pins come from sd_hw_config.c, which the driver reads at link time.
 	// Mounting is the only way to find out whether a card is fitted: this board
 	// brings no card-detect line out.
-	FRESULT fr = f_mount(&s_fs, "0:", 1);
+	FRESULT fr = f_mount(&s_fs, drivePrefix(), 1);
+	s_mountResult = (uint8_t)fr;
+
+	// Whatever the mount did, the driver has by now tried to talk to the card,
+	// so its type and size say whether anything answered at all. That separates
+	// "nothing on the bus" from "card works, filesystem unreadable" -- the two
+	// look the same from the outside and want completely different fixes.
+	sd_card_t *card = sd_get_by_num(0);
+	if (card) {
+		s_cardType = (uint8_t)card->state.card_type;
+		s_cardSizeMB = card->get_num_sectors
+		                   ? (uint32_t)(card->get_num_sectors(card) / 2048u)
+		                   : 0;
+	}
+
 	if (fr != FR_OK) {
 		// No card is the normal case on a bench, not a fault. Logging is simply
 		// unavailable and the UI says so.
@@ -70,6 +101,13 @@ bool sdLogBegin() {
 	logRingInit(&s_ring, s_ringBuf, sizeof(s_ringBuf));
 	s_state = SdLogState::Idle;
 	return true;
+}
+
+bool sdLogRemount() {
+	if (s_state == SdLogState::Logging) return true;
+	if (s_mounted) f_unmount(drivePrefix());
+	s_mounted = false;
+	return sdLogBegin();
 }
 
 /**
@@ -214,6 +252,9 @@ void sdLogFlush() {
 
 void sdLogStatus(SdLogStatus *out) {
 	out->state        = s_state;
+	out->mountResult  = s_mountResult;
+	out->cardType     = s_cardType;
+	out->cardSizeMB   = s_cardSizeMB;
 	out->bytesWritten = s_cardBytes;
 	out->framesLogged = s_framesLogged;
 	out->bytesDropped = s_ring.dropped;
@@ -239,6 +280,7 @@ void sdLogSetArmed(bool armed) {
 bool sdLogBegin() { return false; }
 bool sdLogStart() { return false; }
 void sdLogStop() {}
+bool sdLogRemount() { return false; }
 bool sdLogActive() { return false; }
 void sdLogTick(uint32_t, uint16_t) {}
 void sdLogFlush() {}

@@ -101,22 +101,29 @@ static const Btn BTN_BACK    = { 14, CFG_BACK_Y, 212, 18 };
  * @defgroup ui_log_layout Logging screen layout
  * @{
  */
-#define LOG_ROW0_Y     44   /**< First status row. */
-#define LOG_ROW_H      25
-#define LOG_ROWS        7
+#define LOG_ROW0_Y     40   /**< First status row. */
+#define LOG_ROW_H      21
+#define LOG_ROWS        9   /**< Through MOUNT; CARD and MOUNT are diagnostics. */
 #define LOG_TOGGLE_Y  232   /**< START / STOP button. */
-#define LOG_TOGGLE_H   44
-#define LOG_BACK_Y    292
+#define LOG_TOGGLE_H   34
+#define LOG_RETRY_Y   270   /**< RETRY MOUNT. */
+#define LOG_RETRY_H    22
+#define LOG_BACK_Y    296
+#define LOG_BACK_H     18
 /** @} */
 
 static const Btn BTN_LOG_TOGGLE = { 14, LOG_TOGGLE_Y, 212, LOG_TOGGLE_H };
-static const Btn BTN_LOG_BACK   = { 14, LOG_BACK_Y, 212, 18 };
+static const Btn BTN_LOG_RETRY  = { 14, LOG_RETRY_Y, 212, LOG_RETRY_H };
+static const Btn BTN_LOG_BACK   = { 14, LOG_BACK_Y, 212, LOG_BACK_H };
 
 static_assert(LOG_ROW0_Y + LOG_ROWS * LOG_ROW_H <= LOG_TOGGLE_Y,
               "logging rows overlap the START/STOP button");
-static_assert(LOG_TOGGLE_Y + LOG_TOGGLE_H <= LOG_BACK_Y,
-              "START/STOP button overlaps BACK");
-static_assert(LOG_BACK_Y + 18 <= GFX_H, "logging BACK runs off the panel");
+static_assert(LOG_TOGGLE_Y + LOG_TOGGLE_H <= LOG_RETRY_Y,
+              "START/STOP button overlaps RETRY");
+static_assert(LOG_RETRY_Y + LOG_RETRY_H <= LOG_BACK_Y,
+              "RETRY overlaps BACK");
+static_assert(LOG_BACK_Y + LOG_BACK_H <= GFX_H,
+              "logging BACK runs off the panel");
 
 // Caught by a screenshot rather than by reading the code: the caption used to
 // sit at y=240, inside the 208..248 band the EDT and BEEP buttons occupy, and
@@ -632,17 +639,42 @@ static void drawLogScreen() {
 	drawLogRow(6, "WORST FLUSH", buf,
 	           st.worstFlushMs > 50 ? C_AMBER : C_TEXT);
 
+	// What the card itself reported. Non-zero here with a failed mount means the
+	// card is on the bus and talking -- the fault is the filesystem, not the
+	// wiring -- and that is the single most useful thing to know when a card
+	// "is not detected".
+	static const char *TYPE_TXT[5] = {"NONE", "SDSC v1", "SDSC v2", "SDHC/XC", "?"};
+	uint8_t ct = st.cardType < 4 ? st.cardType : 4;
+	if (st.cardSizeMB)
+		snprintf(buf, sizeof(buf), "%s %luMB", TYPE_TXT[ct],
+		         (unsigned long)st.cardSizeMB);
+	else
+		snprintf(buf, sizeof(buf), "%s", TYPE_TXT[ct]);
+	drawLogRow(7, "CARD", buf, st.cardType ? C_TEXT : C_DIM);
+
+	// FatFs FRESULT. 0 is FR_OK, 3 FR_NOT_READY (nothing answered), 13
+	// FR_NO_FILESYSTEM (card fine, no filesystem FatFs can read).
+	static const char *FR_TXT[] = {
+		"OK", "DISK ERR", "INT ERR", "NOT READY", "NO FILE", "NO PATH",
+		"BAD NAME", "DENIED", "EXIST", "BAD OBJ", "WRITE PROT",
+		"BAD DRIVE", "NOT ENABLED", "NO FILESYSTEM",
+	};
+	if (st.mountResult < sizeof(FR_TXT) / sizeof(FR_TXT[0]))
+		snprintf(buf, sizeof(buf), "%u %s", st.mountResult, FR_TXT[st.mountResult]);
+	else
+		snprintf(buf, sizeof(buf), "%u", st.mountResult);
+	drawLogRow(8, "MOUNT", buf, st.mountResult ? C_AMBER : C_LIME);
+
 	bool active = (st.state == SdLogState::Logging);
 	bool usable = (st.state != SdLogState::NoCard);
 	drawBtn(BTN_LOG_TOGGLE, active ? "STOP" : "START",
 	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
 	        usable ? (active ? C_WHITE : C_LIME) : C_GRID, 2);
 
-#if SD_LOG_AUTO_ON_ARM
-	gfxTextCenter(LOG_TOGGLE_Y + LOG_TOGGLE_H + 6,
-	              "ALSO STARTS AND STOPS WITH ARM", C_DIM, 1);
-#endif
-
+	// The card is only mounted once, at boot, so one inserted afterwards needs
+	// this. Without it, "insert card, nothing happens" is indistinguishable
+	// from a card the firmware cannot read.
+	drawBtn(BTN_LOG_RETRY, "RETRY MOUNT", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_LOG_BACK, "BACK", C_PANEL, C_TEXT, 1);
 }
 
@@ -654,6 +686,9 @@ static void handleLogTouch() {
 	if (hit(BTN_LOG_TOGGLE, x, y)) {
 		if (sdLogActive()) sdLogStop();
 		else               sdLogStart();
+		s_shown.config = -1;
+	} else if (hit(BTN_LOG_RETRY, x, y)) {
+		sdLogRemount();
 		s_shown.config = -1;
 	} else if (hit(BTN_LOG_BACK, x, y)) {
 		s_logScreen = false;
