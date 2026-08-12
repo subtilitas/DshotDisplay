@@ -110,10 +110,22 @@ static bool testPinIntegrity(void) {
 }
 
 int main(void) {
+#ifdef PIN_BAT_EN
+    // Same latch the firmware asserts: without it a 2.8" board running on
+    // battery switches itself off as soon as the power button is released,
+    // which looks exactly like a firmware that crashed on boot.
+    gpio_init(PIN_BAT_EN);
+    gpio_set_dir(PIN_BAT_EN, GPIO_OUT);
+    gpio_put(PIN_BAT_EN, 1);
+#endif
+
     stdio_init_all();
     sleep_ms(3000);            // time to open a terminal
 
+    // Headless by design: no display, no touch, no PIO, no second core. A dark
+    // panel is the expected result -- everything comes out here.
     printf("\n\n=== DshotDisplay standalone SD test ===\n");
+    printf("(the screen stays black: this test never starts the display)\n");
 #if defined(SD_IFACE_SPI)
     printf("interface: hardware SPI1\n");
 #else

@@ -54,6 +54,7 @@
 #include "plat.h"
 #include <pico/multicore.h>
 #include <pico/stdlib.h>
+#include <hardware/gpio.h>
 #include <stdio.h>
 
 #include "config.h"
@@ -80,6 +81,16 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  * shares, so touchInit() has to follow it.
  */
 void setup() {
+#ifdef PIN_BAT_EN
+	// First thing, before anything that could take a millisecond: on the 2.8"
+	// board this is the latch that keeps VBAT connected once the power button
+	// is released. Miss it and the board dies mid-boot on battery. Harmless on
+	// USB, and absent entirely on boards without the latch.
+	gpio_init(PIN_BAT_EN);
+	gpio_set_dir(PIN_BAT_EN, GPIO_OUT);
+	gpio_put(PIN_BAT_EN, 1);
+#endif
+
 #if SERIAL_TELEMETRY
 	stdio_init_all();
 #endif
