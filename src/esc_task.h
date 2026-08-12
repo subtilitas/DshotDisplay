@@ -82,7 +82,25 @@ struct EscTelemetry {
  * @{
  */
 
-/** @brief Claim the PIO state machine and start the frame pump. Call from setup1(). */
+/**
+ * @brief Initialise the cross-core state. Call from **core0**, before launching core1.
+ *
+ * Separate from escTaskBegin() because of an ordering hazard that is invisible
+ * until it bites: escSnapshot() takes a critical section, core0 calls it on its
+ * very first UI frame, and a critical section must be initialised before anyone
+ * enters it. If that initialisation lived on core1, core0 would reach
+ * escSnapshot() first — core1 takes a moment to come up — and block forever on
+ * an uninitialised spin lock.
+ *
+ * The symptom is a board that shows the splash and then nothing at all.
+ */
+void escTaskInit();
+
+/**
+ * @brief Claim the PIO state machine and start the frame pump. Call from core1.
+ *
+ * @pre escTaskInit() has been called on core0.
+ */
 void escTaskBegin();
 
 /** @brief Service one frame slot. Call from loop1() as fast as possible. */
