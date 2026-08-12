@@ -16,6 +16,13 @@
 
 cmake_minimum_required(VERSION 3.13)
 
+# SD_DEBUG=ON turns on the FatFs driver's own tracing, which prints to USB
+# serial. Off by default: it is noisy and costs flash, but when a card is not
+# detected it is the difference between reading the driver's account of what
+# happened and guessing.
+option(SD_DEBUG "Enable verbose SD driver logging over USB serial" OFF)
+
+
 set(PICO_SDK_FETCH_FROM_GIT_TAG 2.1.1)
 include(pico_sdk_import.cmake)
 
@@ -101,3 +108,9 @@ pico_add_extra_outputs(DshotDisplay)
 target_compile_options(DshotDisplay PRIVATE
     -Wall -Wextra -Wshadow -Wno-unused-parameter
 )
+
+if(SD_DEBUG)
+    # USE_PRINTF routes the driver's messages to stdio; USE_DBG_PRINTF adds the
+    # per-command tracing that shows exactly which step of card init failed.
+    target_compile_definitions(DshotDisplay PRIVATE USE_PRINTF=1 USE_DBG_PRINTF=1)
+endif()
