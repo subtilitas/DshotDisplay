@@ -40,6 +40,18 @@ enum class SdLogState : uint8_t {
 /** @brief Counters for the UI. Copied out by sdLogStatus(). */
 struct SdLogStatus {
 	SdLogState state;
+	/**
+	 * @brief Last mount result, as a FatFs `FRESULT`. Zero is FR_OK.
+	 *
+	 * Surfaced because "not detected" covers several very different faults and
+	 * collapsing them all to "no card" makes the problem unsolvable from the
+	 * bench: 3 (FR_NOT_READY) means nothing answered on the bus, 13
+	 * (FR_NO_FILESYSTEM) means the card is talking fine but has no partition
+	 * FatFs recognises, and those want opposite fixes.
+	 */
+	uint8_t    mountResult;
+	uint8_t    cardType;      /**< card_type_t: 0 none, 1 v1, 2 v2, 3 v2 HC/XC. */
+	uint32_t   cardSizeMB;    /**< Capacity, 0 if the card never initialised. */
 	uint32_t   bytesWritten;  /**< Bytes handed to the card this session. */
 	uint32_t   framesLogged;  /**< Frames encoded this session. */
 	uint32_t   bytesDropped;  /**< Bytes the ring refused. */
@@ -65,6 +77,17 @@ bool sdLogStart();
 
 /** @brief Finish the current log: end event, flush, close. No-op when idle. */
 void sdLogStop();
+
+/**
+ * @brief Try to mount the card again.
+ *
+ * sdLogBegin() runs once at boot, so a card inserted afterwards was previously
+ * invisible until a power cycle — which is its own way of looking like a card
+ * that "is not detected".
+ *
+ * @return True if a card mounted.
+ */
+bool sdLogRemount();
 
 /** @brief True while a file is open. @return Logging state. */
 bool sdLogActive();

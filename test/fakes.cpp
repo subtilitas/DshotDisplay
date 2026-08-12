@@ -213,7 +213,7 @@ void fakeDumpFrame(const char *name) {
 // a card: it is a way to put the logger into a given state and check the screen
 // renders it.
 
-static SdLogStatus g_log = { SdLogState::NoCard, 0, 0, 0, 0, 0, 0, 0 };
+static SdLogStatus g_log = {};
 
 void fakeSdLogSet(const SdLogStatus *st) { g_log = *st; }
 
@@ -232,6 +232,19 @@ bool sdLogStart() {
 void sdLogStop() {
 	if (g_log.state == SdLogState::Logging) g_log.state = SdLogState::Idle;
 	g_log.fileNumber = 0;
+}
+
+bool sdLogRemount() {
+	// Models a card that appears on retry: NO CARD becomes READY. That is the
+	// case the button exists for -- a card inserted after boot.
+	if (g_log.state == SdLogState::NoCard) {
+		g_log.state = SdLogState::Idle;
+		g_log.mountResult = 0;
+		g_log.cardType = 3;          // SDHC/XC
+		g_log.cardSizeMB = 122000;   // a 128 GB card, as the card reports itself
+		return true;
+	}
+	return g_log.state != SdLogState::Error;
 }
 
 bool sdLogActive() { return g_log.state == SdLogState::Logging; }

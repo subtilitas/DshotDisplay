@@ -77,7 +77,8 @@ static void swipe(int x0, int x1, int y, int step) {
 #define AM32_WRITE_Y 290
 // --- logging-screen coordinates, mirroring ui.cpp ---
 #define LOG_TOGGLE_Y 232
-#define LOG_BACK_Y   292
+#define LOG_RETRY_Y  270
+#define LOG_BACK_Y   296
 
 /**
  * @brief Navigate main -> SETTINGS -> SD LOG.
@@ -137,12 +138,26 @@ static void testLogScreen() {
 	// With no card, START must not pretend to have started.
 	memset(&st, 0, sizeof(st));
 	st.state = SdLogState::NoCard;
+	st.mountResult = 3;          // FR_NOT_READY: nothing answered on the bus
 	fakeSdLogSet(&st);
 	frames(2);
 	// The first thing anyone sees, since the card slot is empty by default.
 	fakeDumpFrame("shot_log_nocard.ppm");
 	tap(120, LOG_TOGGLE_Y + 20);
 	checkTrue("START does nothing without a card", !sdLogActive());
+
+	// A card inserted after boot. sdLogBegin() only runs once, so without this
+	// button the card would stay invisible until a power cycle -- which looks
+	// exactly like a card the firmware cannot read.
+	tap(120, LOG_RETRY_Y + 11);
+	frames(2);
+	sdLogStatus(&st);
+	checkTrue("RETRY finds a card inserted later",
+	          st.state == SdLogState::Idle);
+	checkInt("and reports it mounted cleanly", st.mountResult, 0);
+	checkInt("with its type", st.cardType, 3);
+	checkTrue("and its size", st.cardSizeMB > 100000);
+	fakeDumpFrame("shot_log_mounted.ppm");
 
 	tap(120, LOG_BACK_Y + 9);
 	frames(2);
