@@ -15,13 +15,14 @@ what was actually built and why it diverged.
 
 ## Shared context
 
-Both features landed on `dev/telemetry-logging`, cut from `main`. They are related:
+Both features landed on `dev/telemetry-logging`, cut from `main`, and continued on
+`dev/multiboard-sdio`. They are related:
 KISS supplies higher-resolution voltage and current, and the log is the main
 reason that resolution is worth having — a 0.25 V/LSB voltage trace is not worth
 plotting.
 
-SD logging works on both boards: the 2.8" over SDIO at 25 MHz, the 2.0" over
-SPI. KISS telemetry is implemented but has not met an ESC yet, and on the 2.8"
+SD logging works on both boards: the 2.8" over four-bit SDIO, the 2.0" over
+one-bit SPI. KISS telemetry is implemented but has not met an ESC yet, and on the 2.8"
 it cannot -- that board has no pin free for the telemetry wire once the DShot
 signal has one.
 
