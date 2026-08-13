@@ -595,12 +595,6 @@ static void drawConfig() {
 	gfxRect(0, 0, GFX_W, 26, C_PANEL);
 	gfxText(8, 9, "SETTINGS", C_TEXT, 2);
 
-	// EDT state lives in the title bar rather than on the button, because the
-	// button is a verb and this is a fact. Conflating the two is what made
-	// "EDT ON" read as a status stuck permanently at ON.
-	const char *edtTxt = edtActive ? "EDT LIVE" : "EDT IDLE";
-	gfxText(GFX_W - 8 - gfxTextW(edtTxt, 1), 12, edtTxt,
-	        edtActive ? C_CYAN : C_DIM, 1);
 
 	char buf[24];
 
@@ -616,13 +610,23 @@ static void drawConfig() {
 	snprintf(buf, sizeof(buf), "%d%%", (int)((uint32_t)s_maxThrottle * 100 / 2000));
 	gfxText(120 - gfxTextW(buf, 3) / 2, 158, buf, C_AMBER, 3);
 
-	// Inverted while the press is being acknowledged: red if the ESC refused
-	// the command because it is armed, accent if it went out.
+	// The EDT button reports state and offers the action at once: green and
+	// "EDT ON" while frames are arriving, red and "EDT OFF" while they are
+	// not, and pressing it re-sends the enable either way. The colour and the
+	// word always agree, and both follow received frames rather than whether
+	// the command was sent -- the ESC never acknowledges it, so arriving
+	// telemetry is the only evidence that it took.
 	bool edtLit  = cmdFlashActive() && s_cmdFlash == CmdFlash::Edt;
 	bool beepLit = cmdFlashActive() && s_cmdFlash == CmdFlash::Beep;
-	uint16_t litFill = s_cmdFlashOk ? C_CYAN : C_RED;
-	drawBtn(BTN_EDT, "ENABLE EDT", edtLit ? litFill : C_PANEL,
-	        edtLit ? C_BG : C_CYAN, 1);
+
+	// White for an accepted press, amber for a refused one. Not red: the
+	// button's own off state is already red, and a refusal that looks like
+	// "EDT is off" says nothing.
+	uint16_t litFill = s_cmdFlashOk ? C_WHITE : C_AMBER;
+
+	drawBtn(BTN_EDT, edtActive ? "EDT ON" : "EDT OFF",
+	        edtLit ? litFill : (edtActive ? C_GREEN : C_RED),
+	        edtLit ? C_BG : C_WHITE, 1);
 	drawBtn(BTN_BEEP, "BEEP", beepLit ? litFill : C_PANEL,
 	        beepLit ? C_BG : C_CYAN, 1);
 	// The hint turns into the reason when a press is refused, so the red flash
