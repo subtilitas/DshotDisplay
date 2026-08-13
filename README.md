@@ -254,9 +254,15 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
   what's spinning.
-- **EDT ON** — resends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` (the firmware already does
-  this automatically 1.5 s after boot). Only works while disarmed.
+- **ENABLE EDT** — resends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` (the firmware already
+  does this automatically 1.5 s after boot). It is a verb, not a status: whether EDT is
+  actually arriving is the **EDT LIVE** / **EDT IDLE** chip in the title bar, which keys
+  off frames received rather than off having asked.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
+
+Both commands flash the button for a moment when pressed. The command itself lasts about
+ten milliseconds against a 40 Hz repaint, so without that the buttons look like they do
+nothing — and the ESC answering with a beep from the next room is not feedback.
 - **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
 - **SD LOG** — blackbox logging status and manual start/stop. See below.
 
@@ -291,6 +297,16 @@ the temperature tile and is KISS-only — EDT does not carry it.
 ---
 
 ## Telemetry and logging
+
+Every reading expires. A value that has not been refreshed for `EDT_STALE_MS` (1 s)
+blanks to `--` rather than holding its last number, and eRPM does the same after 500 ms.
+This matters more than it sounds: unplug the ESC, or swap it for a different one, and a
+display that keeps the old figures is not showing stale data — it is showing a plausible
+reading from hardware that is not there. `RPM` drops to a dark zero and the header says
+`NO TELEMETRY`.
+
+The one exception is a deliberate one: an expired **ESC STATUS** reads `--`, never `OK`.
+A warning indicator may fail towards "unknown" but must never fail towards "fine".
 
 ### KISS telemetry (optional third wire)
 

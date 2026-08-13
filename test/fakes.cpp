@@ -178,13 +178,44 @@ void escSetThrottle(uint16_t t) { g_throttle = t; }
 void escSetArmed(bool a) { g_armed = a; }
 void escSetPoles(uint8_t) {}
 void escHeartbeat() {}
-void escRequestEdtEnable() {}
-void escRequestBeep(uint8_t) {}
+// Mirrors the two-line rule in esc_task.cpp: both commands are refused while
+// armed. esc_task.cpp cannot be linked here (PIO, UART), so this is a copy --
+// but the thing under test is what the UI does with the answer, and that is
+// the shipped code.
+static int g_edtRequests = 0;
+static int g_beepRequests = 0;
+int  fakeEdtRequests()  { return g_edtRequests; }
+int  fakeBeepRequests() { return g_beepRequests; }
+bool escRequestEdtEnable() { g_edtRequests++; return !g_armed; }
+bool escRequestBeep(uint8_t) { g_beepRequests++; return !g_armed; }
 bool escEdtRequested() { return true; }
-void escSnapshot(EscTelemetry *o) { *o = g_tel; o->lastRpmMs = g_ms; }
+// Verbatim, with no helpful stamping of arrival times. That stamping used to
+// be here, and it meant every test saw permanently fresh telemetry -- so the
+// bug where readings never expired could not have been caught by any of them.
+// Tests that want live data now say when it arrived.
+void escSnapshot(EscTelemetry *o) { *o = g_tel; }
 void escTaskSuspend() { g_suspended = true; }
 void escTaskResume() { g_suspended = false; }
 bool escTaskSuspended() { return g_suspended; }
+
+// ---------------------------------------------------------------------------
+// Region fingerprint
+//
+// Lets a test say "this part of the screen changed" -- or, more usefully,
+// "this part of the screen is now pixel-identical to the no-data case" --
+// without hard-coding glyph positions that every layout tweak would break.
+// ---------------------------------------------------------------------------
+uint32_t fakeRegionHash(int x, int y, int w, int h) {
+	const uint16_t *fb = gfxBuffer();
+	uint32_t hash = 2166136261u;            // FNV-1a
+	for (int yy = y; yy < y + h; yy++) {
+		for (int xx = x; xx < x + w; xx++) {
+			if (xx < 0 || yy < 0 || xx >= GFX_W || yy >= GFX_H) continue;
+			hash = (hash ^ fb[yy * GFX_W + xx]) * 16777619u;
+		}
+	}
+	return hash;
+}
 
 // ---------------------------------------------------------------------------
 // PPM dump, so a failing layout test can be looked at

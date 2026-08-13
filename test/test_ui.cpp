@@ -75,10 +75,36 @@ static void swipe(int x0, int x1, int y, int step) {
 #define AM32_EDIT_Y 240
 #define AM32_WRITE_X 50
 #define AM32_WRITE_Y 290
+// --- settings-screen command buttons, mirroring ui.cpp ---
+#define CFG_EDT_X    64   // BTN_EDT  spans x 14..113
+#define CFG_BEEP_X  176   // BTN_BEEP spans x 126..225
+#define CFG_CMD_Y_T 219   // both span y 200..237
 // --- logging-screen coordinates, mirroring ui.cpp ---
 #define LOG_TOGGLE_Y 232
 #define LOG_RETRY_Y  270
 #define LOG_BACK_Y   296
+
+/**
+ * @brief The standard "ESC is talking" fixture, stamped as having just arrived.
+ *
+ * Call it again to keep the data alive. A real ESC sends continuously, but the
+ * fake serves one frozen snapshot, so without re-stamping the readings expire
+ * mid-test exactly as they are meant to -- which is correct behaviour and a
+ * useless screenshot.
+ */
+static void feedLiveTelemetry() {
+	EscTelemetry tel;
+	memset(&tel, 0, sizeof(tel));
+	tel.erpm = 84210; tel.rpm = 12030;
+	tel.volts = 15.8f; tel.edtVoltsMs  = millis();
+	tel.amps = 23.4f;  tel.edtAmpsMs   = millis();
+	tel.tempC = 46;    tel.edtTempMs   = millis();
+	tel.stress = 12;   tel.edtStressMs = millis();
+	tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
+	tel.packetRate = 998;
+	fakeSetTelemetry(&tel);
+}
 
 /** @brief Hold the ARM button long enough to actually arm. */
 static void holdToArm() {
@@ -227,10 +253,12 @@ static void testKissDisplay() {
 	EscTelemetry tel;
 	memset(&tel, 0, sizeof(tel));
 	tel.erpm = 84210; tel.rpm = 12030;
-	tel.volts = 15.75f; tel.haveVolts = true;   // EDT: 0.25 V steps
-	tel.amps = 23.0f;   tel.haveAmps = true;    // EDT: whole amps
-	tel.tempC = 46;     tel.haveTemp = true;
-	tel.stress = 12;    tel.haveStress = true;
+	tel.volts = 15.75f; tel.edtVoltsMs  = millis();  // EDT: 0.25 V steps
+	tel.amps = 23.0f;   tel.edtAmpsMs   = millis();  // EDT: whole amps
+	tel.tempC = 46;     tel.edtTempMs   = millis();
+	tel.stress = 12;    tel.edtStressMs = millis();
+	tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
 	tel.packetRate = 998;
 
 	// Fresh KISS, with values deliberately distinguishable from the EDT ones so
@@ -249,24 +277,138 @@ static void testKissDisplay() {
 	// Merge is per-field and time-based, so let KISS go stale and confirm the
 	// screen falls back rather than freezing the fine values.
 	EscReading r;
-	escMerge(&tel, tel.kissLastMs + KISS_STALE_MS, KISS_STALE_MS, &r);
+	escMerge(&tel, tel.kissLastMs + KISS_STALE_MS, KISS_STALE_MS, EDT_STALE_MS, &r);
 	checkTrue("stale KISS falls back to EDT", r.voltsFrom == EscSource::Edt);
-	escMerge(&tel, tel.kissLastMs + 1, KISS_STALE_MS, &r);
+	escMerge(&tel, tel.kissLastMs + 1, KISS_STALE_MS, EDT_STALE_MS, &r);
 	checkTrue("fresh KISS is preferred", r.voltsFrom == EscSource::Kiss);
 	checkInt("and carries 0.01 V resolution",
 	         (long)(r.volts * 100.0f + 0.5f), 1583);
 }
 
-void runUiTests() {
+/**
+ * @brief Telemetry blanks when the ESC stops answering.
+ *
+ * Reported as: readings stay on screen after the ESC is unplugged or swapped,
+ * looking exactly like live data from hardware that is no longer there.
+ *
+ * The merge policy has its own unit tests. What this covers is the part those
+ * cannot: that the screen actually goes through it, and that an expired
+ * reading renders identically to one that never arrived. Anything less strict
+ * -- "the region changed" -- would pass on a display that merely dimmed the
+ * stale number while still showing it.
+ */
+static void testTelemetryExpires() {
+	section("Telemetry expiry on screen");
+
+	// The LINK tile is excluded from every comparison below. Packet rate is a
+	// rolling count of the last second's frames, so on hardware it falls to
+	// zero by itself -- but the fake serves one fixed snapshot forever, so it
+	// stays pinned at 998 and would mask the tiles that do expire.
+	// Everything else in the band is covered: both top rows, plus the status
+	// tile in the bottom-left.
+	auto tiles = []() {
+		return fakeRegionHash(0, 128, 240, 70) ^ fakeRegionHash(0, 199, 120, 34);
+	};
+
+	// Baseline: an ESC that has never said anything.
+	EscTelemetry none;
+	memset(&none, 0, sizeof(none));
+	fakeSetTelemetry(&none);
+	frames(2);
+	uint32_t blank = tiles();
+
 	EscTelemetry tel;
 	memset(&tel, 0, sizeof(tel));
 	tel.erpm = 84210; tel.rpm = 12030;
-	tel.volts = 15.8f; tel.haveVolts = true;
-	tel.amps = 23.4f;  tel.haveAmps = true;
-	tel.tempC = 46;    tel.haveTemp = true;
-	tel.stress = 12;   tel.haveStress = true;
+	tel.volts = 15.75f; tel.edtVoltsMs  = millis();
+	tel.amps  = 23.0f;  tel.edtAmpsMs   = millis();
+	tel.tempC = 46;     tel.edtTempMs   = millis();
+	tel.stress = 12;    tel.edtStressMs = millis();
+	tel.warning = true; tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
 	tel.packetRate = 998;
 	fakeSetTelemetry(&tel);
+	frames(2);
+	uint32_t live = tiles();
+	checkTrue("live telemetry differs from blank", live != blank);
+	fakeDumpFrame("shot_tester_live.ppm");
+
+	// Still inside the window. frames() advances the clock itself, so the
+	// budget has to cover the ticks as well as the wait -- getting that wrong
+	// is what made this test fail first time round.
+	fakeAdvance(EDT_STALE_MS - 200);
+	frames(2);
+	checkTrue("still shown just inside the window", tiles() == live);
+
+	// Past it: gone, and gone completely. "The region changed" would not be
+	// enough -- that passes on a display that merely dims a stale number while
+	// still showing it.
+	fakeAdvance(250);
+	frames(2);
+	uint32_t stale = tiles();
+	checkTrue("expired telemetry is cleared", stale != live);
+	checkTrue("and is indistinguishable from never-seen", stale == blank);
+	fakeDumpFrame("shot_tester_stale.ppm");
+}
+
+/**
+ * @brief EDT and BEEP acknowledge a press.
+ *
+ * Reported as: both buttons look dead. The command was going out -- telemetry
+ * switched on, the ESC beeped -- but nothing on screen moved, because the
+ * command is over in about 10 ms and the UI repaints at 40 Hz.
+ */
+static void testCommandButtonFeedback() {
+	section("Command button feedback");
+
+	tap(BTN_CFG_X, BTN_ARM_Y);          // into settings (this force-disarms)
+	frames(2);
+	uint32_t idle = fakeRegionHash(0, 195, 240, 55);
+
+	int edtBefore = fakeEdtRequests();
+	fakePress(CFG_EDT_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	checkInt("tapping EDT sends the command", fakeEdtRequests(), edtBefore + 1);
+	uint32_t lit = fakeRegionHash(0, 195, 240, 55);
+	checkTrue("and the button acknowledges it", lit != idle);
+	fakeDumpFrame("shot_config_edt_flash.ppm");
+
+	// The flash has to end on its own, or the button stays lit until something
+	// unrelated happens to repaint the screen.
+	fakeAdvance(400);
+	frames(2);
+	checkTrue("the flash clears itself", fakeRegionHash(0, 195, 240, 55) == idle);
+
+	int beepBefore = fakeBeepRequests();
+	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	checkInt("tapping BEEP sends the command", fakeBeepRequests(), beepBefore + 1);
+	checkTrue("BEEP acknowledges too", fakeRegionHash(0, 195, 240, 55) != idle);
+	fakeAdvance(400); frames(2);
+
+	// Refusal. Not reachable by hand today -- opening settings force-disarms
+	// and there is no ARM control on that screen -- so this drives the arm
+	// state directly. It is tested because the request can refuse, not because
+	// a user can currently make it.
+	escSetArmed(true);
+	fakePress(CFG_EDT_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	uint32_t refused = fakeRegionHash(0, 195, 240, 55);
+	checkTrue("a refused command looks different from an accepted one",
+	          refused != lit && refused != idle);
+	fakeDumpFrame("shot_config_edt_refused.ppm");
+	escSetArmed(false);
+	fakeAdvance(400); frames(2);
+
+	tap(120, 308);                      // BACK, spans y 300..317
+	frames(2);
+}
+
+void runUiTests() {
+	// Off zero before anything is stamped. Virtual time starts at 0, and 0 is
+	// reserved for "this frame type has never arrived" -- so telemetry stamped
+	// at t=0 is correctly treated as absent, and every screenshot below would
+	// render an ESC that had said nothing.
+	fakeAdvance(1000);
+
+	feedLiveTelemetry();
 
 	gfxInit();
 	// Render the real splash, so the documentation screenshot cannot drift
@@ -288,6 +430,7 @@ void runUiTests() {
 		int tx = 8 + (224 * 70 / 100);
 		fakePress(tx, 260); frames(1); fakeHold(tx, 260); frames(2);
 		checkInt("drag to 70% of track", fakeThrottle(), 400 * 70 / 100, 6);
+		feedLiveTelemetry(); frames(2);   // the arm hold outlasted the fixture
 		fakeDumpFrame("shot_tester_armed.ppm");
 		fakeRelease(); frames(2);
 		checkInt("springs back to zero on release", fakeThrottle(), 0);
@@ -426,4 +569,6 @@ void runUiTests() {
 	testLogScreen();
 	testManualLogSurvivesArming();
 	testKissDisplay();
+	testTelemetryExpires();
+	testCommandButtonFeedback();
 }

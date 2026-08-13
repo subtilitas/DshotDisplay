@@ -41,5 +41,18 @@ bool fakePinReturned();
 /** @brief Set the telemetry the fake ESC reports. */
 void fakeSetTelemetry(const EscTelemetry *t);
 
+/**
+ * @brief FNV-1a over a rectangle of the framebuffer.
+ *
+ * For asserting that a region changed, or that two renders match, without
+ * depending on where individual glyphs land.
+ */
+uint32_t fakeRegionHash(int x, int y, int w, int h);
+
+/** @brief How many times the UI has asked for an EDT enable. */
+int fakeEdtRequests();
+/** @brief How many times the UI has asked for a beep. */
+int fakeBeepRequests();
+
 /** @brief Write the current framebuffer to a binary PPM, for eyeballing. */
 void fakeDumpFrame(const char *name);
