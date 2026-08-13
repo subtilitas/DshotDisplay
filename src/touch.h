@@ -2,8 +2,8 @@
  * @file touch.h
  * @brief Capacitive touch interface, independent of which controller is fitted.
  *
- * Two implementations exist and exactly one compiles, chosen by the board
- * header via @ref board_pins.h:
+ * Two implementations exist and exactly one compiles. Which one is settled in
+ * @ref board_pins.h by the board being built for:
  *
  * | Board | Controller | Driver | Address |
  * |---|---|---|---|
