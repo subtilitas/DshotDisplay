@@ -163,8 +163,8 @@ void escHeartbeat();
  * @brief Queue `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE`, repeated 10 times.
  *
  * The DShot spec requires six consecutive receptions for a command to take, and
- * only while the ESC is disarmed. The firmware also issues this automatically
- * 1.5 s after boot.
+ * only while the ESC is disarmed. The firmware also issues this by itself once
+ * per ESC, as soon as one starts answering; see edtAutoAction().
  *
  * @return False if the request was refused because the ESC is armed. The caller
  *         is expected to say so: a command that is silently dropped is
@@ -179,6 +179,39 @@ bool escRequestEdtEnable();
  * @return False if refused because the ESC is armed. @see escRequestEdtEnable
  */
 bool escRequestBeep(uint8_t n);
+
+/** @brief What the automatic EDT enable should do this frame. */
+enum class EdtAutoAction : uint8_t {
+	None,   /**< Nothing to do. */
+	Send,   /**< An ESC is answering and has not been sent an enable yet. */
+	Rearm,  /**< The ESC went away; the next one gets its own enable. */
+};
+
+/**
+ * @brief Decide whether to send the automatic EDT enable. Pure; host-testable.
+ *
+ * The enable used to go out once, on a timer, 1.5 s after boot. That is fine
+ * for an ESC that is already plugged in and powered, and useless for every
+ * other case: connect the ESC afterwards, power-cycle it, or swap it for a
+ * different one, and it never receives the enable at all. eRPM keeps working —
+ * that is plain bidirectional DShot — so the symptom is an ESC that reports
+ * RPM and nothing else, which looks exactly like an ESC without EDT support.
+ *
+ * Waiting for eRPM instead is both later and more reliable: an ESC that has
+ * answered a frame is demonstrably powered, booted and listening, which a
+ * 1.5 s timer only assumed.
+ *
+ * Split out as a pure function so the rule is testable — esc_task.cpp pulls in
+ * the PIO library and the SDK's UART, and cannot be linked into the host suite.
+ *
+ * @param linkUp True if an eRPM frame arrived within @ref ESC_LINK_STALE_MS.
+ * @param sent   True if this ESC has already been sent an enable.
+ * @return       What to do.
+ */
+static inline EdtAutoAction edtAutoAction(bool linkUp, bool sent) {
+	if (!linkUp) return sent ? EdtAutoAction::Rearm : EdtAutoAction::None;
+	return sent ? EdtAutoAction::None : EdtAutoAction::Send;
+}
 
 /**
  * @brief Copy the current telemetry block.

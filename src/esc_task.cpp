@@ -43,7 +43,7 @@ static uint32_t s_nextSendUs = 0;   /**< Deadline for the next frame. */
 static uint32_t s_lastRateMs = 0;   /**< Last time the rate counters rolled up. */
 static uint32_t s_rateGoodMark = 0; /**< goodPackets at the last roll-up. */
 static uint32_t s_rateBadMark = 0;  /**< badPackets at the last roll-up. */
-static bool     s_edtAutoDone = false; /**< Automatic EDT enable has fired. */
+static bool     s_edtAutoDone = false; /**< Enable sent to the ESC now connected. */
 /** @} */
 
 #if KISS_TELEM_ENABLE
@@ -312,12 +312,26 @@ void escTaskPoll() {
 	uint32_t ms = millis();
 	bool uiAlive = (uint32_t)(ms - s_heartbeatMs) < UI_HEARTBEAT_TIMEOUT_MS;
 
-	// Once the ESC has been fed idle frames for a moment, turn EDT on.
-	if (!s_edtAutoDone && ms > 1500) {
-		s_edtAutoDone = true;
-		s_pendingCmd  = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
-		s_pendingReps = 10;
-		s_edtRequested = true;
+	// Turn EDT on once per ESC, as soon as one actually answers. lastRpmMs is
+	// written by applyTelemetry() on this core, so reading it here needs no
+	// lock. See edtAutoAction() for why this waits for eRPM rather than a
+	// timer.
+	bool linkUp = s_tel.lastRpmMs != 0 &&
+	              (uint32_t)(ms - s_tel.lastRpmMs) < ESC_LINK_STALE_MS;
+	switch (edtAutoAction(linkUp, s_edtAutoDone)) {
+		case EdtAutoAction::Send:
+			s_edtAutoDone  = true;
+			s_pendingCmd   = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
+			s_pendingReps  = 10;
+			s_edtRequested = true;
+			break;
+		case EdtAutoAction::Rearm:
+			// The ESC is gone. Whatever replaces it is a different ESC and
+			// needs its own enable, so put the one-shot back.
+			s_edtAutoDone = false;
+			break;
+		case EdtAutoAction::None:
+			break;
 	}
 
 #if KISS_TELEM_ENABLE
