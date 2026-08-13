@@ -1,7 +1,7 @@
 # KISS ESC telemetry
 
 Status: implemented (decoder, core1 integration, merge, UI); not yet run against a real ESC.
-Branch: `dev/telemetry-logging`.
+Branch: `dev/telemetry-logging`, continued on `dev/multiboard-sdio`.
 
 ## Why
 
@@ -207,16 +207,24 @@ KISS frames but leave consumption at zero, or send EDT temperature but no KISS
 wire at all.
 
 ```
-volts  = kissFresh && kissHaveVolts ? kiss.volts : edt.volts
-amps   = kissFresh && kissHaveAmps  ? kiss.amps  : edt.amps
-tempC  = kissFresh                  ? kiss.tempC : edt.tempC
-mAh    = kissFresh                  ? kiss.mAh   : (none)
+volts  = kissFresh ? kiss.volts : (edtFresh ? edt.volts : none)
+amps   = kissFresh ? kiss.amps  : (edtFresh ? edt.amps  : none)
+tempC  = kissFresh ? kiss.tempC : (edtFresh ? edt.tempC : none)
+mAh    = kissFresh ? kiss.mAh   : none
 rpm    = bidirectional DShot eRPM frame; kiss.eRPM kept alongside, not merged
 ```
 
-`kissFresh` = a CRC-valid frame within the last `KISS_STALE_MS` (proposal: 500
-ms). Unplugging the telemetry wire mid-session should fall back to EDT within
-half a second rather than freezing the last reading.
+`kissFresh` is a CRC-valid frame within the last `KISS_STALE_MS` (500 ms).
+Unplugging the telemetry wire mid-session falls back to EDT within half a second
+rather than freezing the last reading.
+
+Both levels expire, and that second `edtFresh` was an afterthought — it is not
+in the original sketch of this table, and its absence was a real bug. EDT sat
+behind `have*` booleans that could only ever go true, so an ESC that was
+unplugged or swapped left its last voltage, current and temperature on screen
+indefinitely, indistinguishable from live data. EDT fields now carry arrival
+timestamps and expire after `EDT_STALE_MS` (1 s), per field. See
+`escFieldFresh()`.
 
 RPM is the one field that is *not* merged. Both sources are kept and logged
 separately — see the eRPM section above for why neither is strictly better.
@@ -227,7 +235,7 @@ from KISS mean different things about what the next reading can be.
 
 ### Extending `EscTelemetry`
 
-`EscTelemetry` in `esc_task.h` already has the `have*` flag convention. Add:
+`EscTelemetry` lives in `esc_task.h`. Add:
 
 ```c
 float    kissVolts;      /**< 0.01 V resolution. */
@@ -241,6 +249,11 @@ uint32_t kissBad;        /**< CRC failures since boot. */
 uint32_t kissTimeouts;   /**< Requests that got no reply. */
 bool     haveKiss;       /**< True once any frame has been decoded. */
 ```
+
+`haveKiss` is a plain flag because KISS freshness is decided by `kissLastMs`
+beside it. The EDT fields have no such companion and originally used `have*`
+flags alone, which is exactly why they never expired; they now carry one
+timestamp each.
 
 Keeping the KISS values distinct from the EDT ones rather than overwriting them
 means the UI can show both during bring-up, which is how we validate the decoder
@@ -287,7 +300,7 @@ Host tests, following the existing `test/` pattern:
 1. `src/kiss_telem.h` / `.cpp` — CRC8, frame decode, byte-feed state machine.
    Pure, no hardware. Testable on the host.
 2. Host tests for the decoder.
-3. `KISS_TELEM_PIN`, `KISS_TELEM_UART`, `KISS_REQUEST_EVERY_N`, `KISS_STALE_MS`
+3. `KISS_TELEM_PIN`, `KISS_UART`, `KISS_REQUEST_EVERY_N`, `KISS_STALE_MS`
    in `config.h`; UART stub in `test/stubs/`.
 4. Wire into `esc_task.cpp`: telemetry-bit request path via `sendRaw12Bit()`,
    UART drain in `escTaskPoll()`, new `EscTelemetry` fields.

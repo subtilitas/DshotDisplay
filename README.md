@@ -7,12 +7,13 @@ A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch
 Drag the on-screen throttle, and the board sends bidirectional DShot to a single ESC
 while decoding the eRPM and Extended DShot Telemetry (EDT) that comes back on the same
 wire — RPM, voltage, current, ESC temperature, stress and status — all rendered on the
-2" touch panel. No flight controller, no laptop, no Betaflight.
+touch panel. No flight controller, no laptop, no Betaflight.
 
 ![UI preview](docs/ui-preview.png)
 
-*Screens are rendered by the host test suite from the real UI code, so they cannot drift
-away from what the board shows.*
+*Every screenshot here is rendered by the host test suite from the real UI code and
+stitched together by `tools/make_previews.py`, so they cannot drift away from what the
+board shows.*
 
 ---
 
@@ -250,6 +251,10 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
 
 **Settings screen**
 
+![Settings screen](docs/settings-preview.png)
+
+*EDT live, EDT silent, and BEEP acknowledging a press.*
+
 - **Motor poles** — eRPM → RPM conversion is `RPM = eRPM / (poles / 2)`. Almost every
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
@@ -260,12 +265,12 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   the command was sent — the enable is fire-and-forget and the ESC never acknowledges
   it, so arriving telemetry is the only evidence it took.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
+- **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
+- **SD LOG** — blackbox logging status and manual start/stop. See below.
 
 BEEP flashes for a moment when pressed. The command itself lasts about six milliseconds
 against a 40 Hz repaint, so without that the button looks like it does nothing — and an
 ESC answering from the next room is not feedback.
-- **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
-- **SD LOG** — blackbox logging status and manual start/stop. See below.
 
 **SD LOG screen**
 
@@ -362,7 +367,7 @@ Files are named `LOGnnnnn.BFL` on a FAT-formatted card.
 ![SD log screen](docs/log-preview.png)
 
 Works on both boards, by different means: the 2.0" drives the card over hardware
-SPI at 12 MHz, the 2.8" over four-bit PIO SDIO at 25 MHz. That is not a
+SPI at 12 MHz, the 2.8" over four-bit PIO SDIO at 10 MHz. That is not a
 preference — the 2.8" cannot use hardware SPI at all, since its SD clock lands
 on a pin that is SPI0 *TX* in the mux.
 
@@ -396,9 +401,12 @@ none of this has been measured against real hardware yet.
 | `KISS_UART` | `uart1` | Must match the pin — the SDK will not catch a mismatch, it simply never receives |
 | `KISS_REQUEST_EVERY_N` | `20` | Request every Nth DShot frame; 20 at 1 kHz is 50 Hz. Must be ≥ 2 or replies overlap, and there is an `#error` that says so |
 | `KISS_STALE_MS` | `500` | How long a KISS frame stays authoritative before the display falls back to EDT |
+| `EDT_STALE_MS` | `1000` | How long an EDT field stays valid after its last frame. Past this the tile blanks to `--` rather than holding a reading from an ESC that may no longer be attached |
+| `ESC_LINK_STALE_MS` | `500` | How long without eRPM before the ESC counts as gone. Re-arms the automatic EDT enable, so a replacement gets its own |
 | `KISS_REPLY_TIMEOUT_MS` | `10` | Abandon a reply that has not completed; only affects the timeout counter |
 | `SD_LOG_ENABLE` | `1` | Compile the logging path in at all |
-| `SD_LOG_SPI_MHZ` | `12` | Card clock. Cards are specified to 25 MHz; a card misbehaving at speed fails in ways that look like corruption |
+| `SD_LOG_SPI_MHZ` | `12` | Card clock on the 2.0". Cards are specified to 25 MHz; a card misbehaving at speed fails in ways that look like corruption |
+| `SD_LOG_SDIO_HZ` | `10 MHz` | Card clock on the 2.8", where `SD_LOG_SPI_MHZ` is ignored. Deliberately below what the card managed in `sdtest` — SDIO is far more sensitive to signal integrity, and a card that enumerates but corrupts is worse than one that refuses |
 | `SD_LOG_RATE_HZ` | `500` | Log frame rate. Not the DShot rate — eRPM is the only genuinely 1 kHz signal |
 | `SD_LOG_I_INTERVAL` | `32` | Frames between keyframes. Lower resynchronises faster after damage, at a size cost |
 | `SD_LOG_BUFFER_BYTES` | `8192` | Ring buffer. **The one to measure** — see BUF PEAK and WORST FLUSH |
@@ -410,15 +418,21 @@ none of this has been measured against real hardware yet.
 
 Files land on the card as `LOGnnnnn.BFL`.
 
-**[logwiju](https://subtilitas.github.io/logwiju/) is the intended viewer.**
-Pronounced the German way — *log-vee-yoo*, since German `w` is an English *v*
-and `j` an English *y* — which comes out as "logview". The tail is **WI**ngert
-**JU**lian.
+<div align="center">
 
-Drop a `.BFL` straight off the card onto the page and it plots it — no install,
-no upload, no account. It runs entirely in the browser, so the log never leaves
-the machine. Wheel to zoom, drag to pan, shift+drag for a box zoom, double-click to
-fit; pick which fields to show from the side panel.
+[![Open your logs in logwiju](https://img.shields.io/badge/open%20your%20logs%20in-logwiju-07b0c8?style=for-the-badge)](https://subtilitas.github.io/logwiju/)
+
+### **[logwiju](https://subtilitas.github.io/logwiju/)** — the intended viewer for these logs
+
+</div>
+
+Drag a `.BFL` straight off the card onto the page and it plots it — no install, no
+upload, no account. It runs entirely in the browser, so the log never leaves your
+machine. Wheel to zoom, drag to pan, shift+drag for a box zoom, double-click to fit;
+pick which fields to show from the side panel.
+
+Say it in German — *log-vee-yoo*, since German `w` is an English *v* and `j` an English
+*y* — and it comes out as "logview". The tail is **WI**ngert **JU**lian.
 
 The logs also open in
 [Blackbox Explorer](https://github.com/betaflight/blackbox-log-viewer), or on the
@@ -587,17 +601,21 @@ src/
   am32_eeprom.{h,cpp}   AM32 settings layout, decoding and presentation
   gfx.{h,cpp}           RGB565 framebuffer, dirty bands, 5x7 font, 7-seg digits
   st7789.{h,cpp}        panel init + DMA blitter
-  cst816.{h,cpp}        capacitive touch
+  touch.h               capacitive touch interface, one driver compiled
+  cst816.cpp            CST816D — the 2.0" board
+  cst328.cpp            CST328 — the 2.8" board
   kiss_telem.{h,cpp}    KISS ESC telemetry decode (pure)
   esc_merge.{h,cpp}     per-field preference between KISS and EDT (pure)
   blackbox_encode.{h,cpp} Betaflight blackbox log writer (pure)
   log_ring.{h,cpp}      ring buffer between encoder and card (pure)
   sd_log.{h,cpp}        FatFs writer, lifecycle, drop accounting
   sd_hw_config.c        SD wiring for the FatFs driver
+tools/
+  sdtest/               standalone SD bring-up test, built alongside the firmware
+  make_previews.py      restitches docs/*.png from the test suite's frames
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + preview images
 docs/design/            design notes, kept in step with the code
-docs/design/            design notes for work in progress
 test/                   host test suites + Pico SDK stubs
 .github/workflows/      CI
 ```
@@ -622,10 +640,15 @@ Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only
 says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
 than dependent on machine speed. The fake ESC serves a real settings blob recovered from
 the reference configurator, so the UI tests operate on values a real ESC would report.
-The suite renders twelve screens to PPM as it runs — splash, main in three states, both
-settings screens, all three SD log states and the four AM32 screens — so a layout change
-is visible rather than something you find on the board later. Failing tests dump their
-frame too.
+The suite renders every screen to PPM as it runs — splash, the main screen live, armed
+and with the ESC gone, the settings screen in each of its states, all three SD log states
+and the four AM32 screens — so a layout change is visible rather than something you find
+on the board later. Failing tests dump their frame too.
+
+`make previews` restitches the images in `docs/` from those frames. It is a separate
+target so a test run does not leave the working tree dirty, but it is one command,
+because the manual version of this step is what let the published screenshots sit several
+UI revisions out of date.
 
 `sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the
 logging UI is tested against a fake logger in `fakes.cpp`. The fake is the observable:
