@@ -136,11 +136,15 @@
  *       enables the RP2350 internal pull-up on MISO, which is the one SPI mode
  *       requires; CS, CLK and MOSI are driven, so they need none.
  *
- * @warning On at least one board, GPIO27 was found **shorted to ground**: it
+ * @warning One board was found with GPIO27 **shorted to ground** — a fault in
+ *          that unit, not in the design: a replacement board logs to SD over
+ *          this same SPI path without trouble. Recorded because the symptom is
+ *          thoroughly misleading. It
  *          could not be driven high push-pull, with the slot empty, so the CMD
  *          line could never carry a command and CMD0 never got a reply. The
  *          symptom is `NO CARD` and FatFs `FR_NOT_READY` for every card at
- *          every clock rate. `tools/sdtest` diagnoses it in one run.
+ *          every clock rate, which looks exactly like a firmware problem and is
+ *          not one. `tools/sdtest` settles it in one run.
  *
  *          If reflowing the socket does not clear it, the slot can be recovered
  *          with one wire: lift TF1 pin 3 (CMD) off GPIO27 and run it to

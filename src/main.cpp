@@ -13,9 +13,14 @@
  * which is itself how this block first went wrong.
  *
  * A self-contained bidirectional DShot ESC tester for the Waveshare
- * RP2350-Touch-LCD-2. Drag the on-screen throttle and the board sends
- * bidirectional DShot to a single ESC while decoding the eRPM and Extended
- * DShot Telemetry that comes back on the same wire.
+ * RP2350-Touch-LCD-2 and RP2350-Touch-LCD-2.8. Drag the on-screen throttle and
+ * the board sends bidirectional DShot to a single ESC while decoding the eRPM
+ * and Extended DShot Telemetry that comes back on the same wire.
+ *
+ * One board per build, chosen with `-DBOARD=`. They are not interchangeable:
+ * different SPI instance for the panel, different I2C, a different touch
+ * controller, and a different SD interface — hardware SPI on the 2.0", PIO
+ * SDIO on the 2.8".
  *
  * @section arch Two cores
  *
@@ -39,7 +44,7 @@
  * All of these live in `src/`:
  *
  * - @ref config.h — every tunable setting
- * - @ref board_pins.h — RP2350-Touch-LCD-2 pin map, from the schematic
+ * - @ref board_pins.h — pin map for the selected board, from the schematic
  * - @ref esc_task.h — core1 DShot pump and EDT decode
  * - @ref ui.h — screens, touch handling, arm and throttle state machines
  * - @ref gfx.h — RGB565 framebuffer, dirty bands, fonts

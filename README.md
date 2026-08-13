@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml/badge.svg)](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml)
 
-A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2**.
+A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2** and **RP2350-Touch-LCD-2.8**.
 
 Drag the on-screen throttle, and the board sends bidirectional DShot to a single ESC
 while decoding the eRPM and Extended DShot Telemetry (EDT) that comes back on the same
@@ -39,7 +39,17 @@ UI has hung and forces throttle to zero on its own.
 
 ## Hardware
 
-**Board:** [Waveshare RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)
+**Boards:** [RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2) (2.0") and
+[RP2350-Touch-LCD-2.8](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8). Both are
+240x320 portrait, and the firmware is built for one or the other with
+`-DBOARD=...`. They are not interchangeable: different SPI instance for the
+panel, different I2C, a different touch controller (CST816D vs CST328), and a
+different SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
+
+The pin map below is the 2.0". The 2.8" equivalent is in
+`src/board_rp2350_touch_lcd_2_8.h`; the short version is that it has no 2.54 mm
+headers, everything comes out on JST-SH connectors, and only GP28 and GP29 are
+free for an ESC.
 — RP2350A, 16 MB flash, 240×320 IPS (ST7789T3 over SPI), CST816D capacitive touch,
 QMI8658 IMU, LiPo charger.
 
@@ -53,7 +63,7 @@ QMI8658 IMU, LiPo charger.
 | Touch INT | 29 | active low |
 | Touch RESET | 20 | **same net as LCD_RST** — resetting one resets both |
 | Battery sense | 28 | ADC2, 200k/100k divider → `VBAT = Vadc × 3` |
-| microSD | 24–27 | SPI1 — blackbox logging, see below |
+| microSD | 24–27 | SPI1 — blackbox logging, see below. (2.8": SDIO on 19–24) |
 | KISS telemetry RX | 5 | UART1 RX, P1 pin 10 — optional third wire |
 | Camera bus | 0–11, 21–23 | **free if no camera is fitted** |
 
@@ -315,6 +325,11 @@ Blackbox Explorer, `blackbox_decode` and PIDtoolbox. Files are named
 
 ![SD log screen](docs/log-preview.png)
 
+Works on both boards, by different means: the 2.0" drives the card over hardware
+SPI at 12 MHz, the 2.8" over four-bit PIO SDIO at 25 MHz. That is not a
+preference — the 2.8" cannot use hardware SPI at all, since its SD clock lands
+on a pin that is SPI0 *TX* in the mux.
+
 Reach it from **CFG → SD LOG**. The screen shows card state, the current file,
 frames and kB written, dropped frames, buffer high-water mark and the worst
 single card write. Logging starts and stops with **ARM** by default
@@ -514,7 +529,9 @@ src/
   main.cpp              core0 main(), core1 launch, @page architecture
   plat.h                millis/micros/delay over the SDK timebase
   config.h              everything you'd want to tune
-  board_pins.h          RP2350-Touch-LCD-2 pin map, annotated from the schematic
+  board.h               which board this build targets
+  board_pins.h          dispatches to the per-board pin map
+  board_rp2350_touch_lcd_2{,_8}.h   the pin maps themselves
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
