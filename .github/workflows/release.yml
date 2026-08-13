@@ -5,8 +5,8 @@ name: Release
 #   git tag -a v1.0.0 -m "First release"
 #   git push origin v1.0.0
 #
-# Builds a flashable .uf2 for the RP2350 (Cortex-M33), checksums it, and
-# publishes a GitHub Release with the image attached.
+# Builds flashable .uf2 images for both supported boards, checksums them, and
+# publishes a GitHub Release with the images attached.
 on:
   push:
     tags: ["v*"]
@@ -46,9 +46,15 @@ jobs:
           echo "building $tag"
 
   build:
-    name: Build
+    name: Build ${{ matrix.board.slug }}
     needs: version
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true   # never publish a half-complete set of assets
+      matrix:
+        board:
+          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
+          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +71,7 @@ jobs:
           path: |
             ~/pico-sdk
             build/_deps
-          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ matrix.board.slug }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Fetch the Pico SDK
         run: |
@@ -79,7 +85,7 @@ jobs:
       # a broken image carrying a version number is worse than no release.
       - name: Host tests
         working-directory: test
-        run: make run
+        run: make both
 
       - name: Documentation checks
         run: python3 test/check_docs.py
@@ -90,7 +96,8 @@ jobs:
           # env values -- CMake would receive the literal string "~/pico-sdk"
           # and report the SDK missing.
           export PICO_SDK_PATH="$HOME/pico-sdk"
-          cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
+          cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
+                -DBOARD=${{ matrix.board.id }} .
           ninja -C build
           arm-none-eabi-size build/DshotDisplay.elf
 
@@ -100,18 +107,26 @@ jobs:
       - name: Self-test the UF2 validator
         run: bash test/check_uf2_selftest.sh
 
-      - name: Name and validate the image
+      - name: Name and validate the images
         env:
           TAG: ${{ needs.version.outputs.tag }}
+          SLUG: ${{ matrix.board.slug }}
         run: |
           mkdir -p dist
-          out="dist/DshotDisplay-${TAG}-rp2350.uf2"
+          out="dist/DshotDisplay-${TAG}-${SLUG}.uf2"
           cp build/DshotDisplay.uf2 "$out"
           bash test/check_uf2.sh "$out"
 
+          # The SD diagnostic ships too. It is what tells a shorted CMD line
+          # apart from a card that will not mount, and it is no use if it has to
+          # be built from source at the moment it is needed.
+          sd="dist/sdtest-${TAG}-${SLUG}.uf2"
+          cp build/sdtest.uf2 "$sd"
+          bash test/check_uf2.sh "$sd"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: uf2
+          name: uf2-${{ matrix.board.slug }}
           path: dist/*.uf2
           if-no-files-found: error
 
@@ -126,8 +141,9 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: uf2
+          pattern: uf2-*
           path: dist
+          merge-multiple: true
           merge-multiple: true
 
       - name: Checksums
@@ -140,6 +156,18 @@ jobs:
       - name: Write release notes
         run: |
           cat > notes.md <<'EOF'
+          ## Which image
+
+          | Board | File |
+          |---|---|
+          | Waveshare RP2350-Touch-LCD-2 (2.0") | `...-touch-lcd-2.uf2` |
+          | Waveshare RP2350-Touch-LCD-2.8 | `...-touch-lcd-2.8.uf2` |
+
+          The two are not interchangeable: different SPI instance for the panel,
+          different I2C, a different touch controller and a different SD
+          interface. `sdtest-*.uf2` is a headless card diagnostic — flash it and
+          read USB serial at 115200 if a card will not mount.
+
           ## Flashing
 
           1. Hold **BOOT**, tap **RESET**, release **BOOT**. The board appears as a
@@ -148,13 +176,23 @@ jobs:
 
           ## Wiring
 
-          | ESC | Board |
-          |---|---|
-          | Signal | **GP4** — P2 header, pin 11 |
-          | Ground | **GND** — P2 header, pin 13 |
+          | ESC | 2.0" board | 2.8" board |
+          |---|---|---|
+          | Signal | **GP4** — P2 header, pin 11 | **GP28** — J4 pin 11 |
+          | Ground | **GND** — P2 header, pin 13 | **GND** — J4 pin 1 or 5 |
+
+          The 2.8" brings out only GP28 and GP29, so build with `-DDSHOT_PIN=29`
+          if the wire is on the other one. An ESC on the wrong pin is silent, with
+          no error anywhere.
 
           Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output,
           and RP2350 GPIO is not 5 V tolerant.
+
+          ## Optional: KISS telemetry
+
+          A third wire from the ESC's telemetry pad gives 0.01 V and 0.01 A
+          instead of Extended DShot Telemetry's 0.25 V and 1 A. On the 2.0" board
+          it lands on **GP5**, P1 header pin 10. The 2.8" has no free pin for it.
 
           ## Verify the download
 
@@ -189,7 +227,7 @@ jobs:
           # a partially-populated release is a real outcome worth catching.
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "$assets"
-          for want in rp2350.uf2 SHA256SUMS; do
+          for want in touch-lcd-2.uf2 touch-lcd-2.8.uf2 SHA256SUMS; do
             echo "$assets" | grep -q "$want" || {
               echo "::error::no asset matching '$want' on $TAG"; exit 1; }
           done
