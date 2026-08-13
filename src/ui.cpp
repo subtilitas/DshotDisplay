@@ -77,7 +77,7 @@ static const Btn BTN_CFG  = { 176, 283, 58, 33 };
  */
 #define CFG_POLES_Y   72   /**< Pole-count -/+ row. */
 #define CFG_MAXT_Y   148   /**< Throttle-ceiling -/+ row. */
-#define CFG_CMD_Y    200   /**< EDT / BEEP row. */
+#define CFG_CMD_Y    200   /**< BEEP row. */
 #define CFG_ROW_H     38
 #define CFG_HINT_Y   244   /**< Caption under the command buttons. */
 #define CFG_AM32_Y   256   /**< AM32 config entry. */
@@ -88,8 +88,11 @@ static const Btn BTN_POLES_M = { 14, CFG_POLES_Y, 46, 40 };
 static const Btn BTN_POLES_P = { 180, CFG_POLES_Y, 46, 40 };
 static const Btn BTN_MAXT_M  = { 14, CFG_MAXT_Y, 46, 40 };
 static const Btn BTN_MAXT_P  = { 180, CFG_MAXT_Y, 46, 40 };
-static const Btn BTN_EDT     = { 14, CFG_CMD_Y, 100, CFG_ROW_H };
-static const Btn BTN_BEEP    = { 126, CFG_CMD_Y, 100, CFG_ROW_H };
+// BEEP has the row to itself. The EDT enable used to sit beside it and is
+// gone: the firmware now sends it whenever an ESC starts answering, so the
+// button was a control for something already handled. What is left of EDT here
+// is the read-only chip in the title bar.
+static const Btn BTN_BEEP    = { 14, CFG_CMD_Y, 212, CFG_ROW_H };
 // The AM32 row is split in two so LOG has somewhere to live. The settings
 // screen was already full to the bottom edge, and the asserts below keep it
 // honest rather than trusting that it still fits.
@@ -126,10 +129,10 @@ static_assert(LOG_BACK_Y + LOG_BACK_H <= GFX_H,
               "logging BACK runs off the panel");
 
 // Caught by a screenshot rather than by reading the code: the caption used to
-// sit at y=240, inside the 208..248 band the EDT and BEEP buttons occupy, and
+// sit at y=240, inside the 208..248 band the command row occupies, and
 // was drawn straight through them. Assert the gaps so it cannot recur.
 static_assert(CFG_HINT_Y >= CFG_CMD_Y + CFG_ROW_H,
-              "settings caption overlaps the EDT/BEEP buttons");
+              "settings caption overlaps the BEEP button");
 static_assert(CFG_AM32_Y >= CFG_HINT_Y + 7,
               "AM32 button overlaps the caption");
 static_assert(CFG_BACK_Y >= CFG_AM32_Y + 38,
@@ -182,7 +185,7 @@ static uint16_t s_padAnchorThrottle = 0;
 #define CMD_FLASH_MS 350
 
 /** @brief Which command button is currently flashing. */
-enum class CmdFlash : uint8_t { None = 0, Edt, Beep };
+enum class CmdFlash : uint8_t { None = 0, Beep };
 
 static CmdFlash s_cmdFlash = CmdFlash::None;
 static bool     s_cmdFlashOk = false;   /**< False when the ESC refused it. */
@@ -595,6 +598,16 @@ static void drawConfig() {
 	gfxRect(0, 0, GFX_W, 26, C_PANEL);
 	gfxText(8, 9, "SETTINGS", C_TEXT, 2);
 
+	// Read-only: EDT needs no button any more, since the firmware enables it
+	// for each ESC as it appears. It is still worth showing, because "green"
+	// and "all four telemetry tiles read --" are the same fact and one of them
+	// is quicker to take in.
+	const char *edtTxt = edtActive ? "EDT ON" : "EDT OFF";
+	int chipW = gfxTextW(edtTxt, 1) + 12;
+	gfxRoundRect(GFX_W - 6 - chipW, 5, chipW, 16, 4,
+	             edtActive ? C_GREEN : C_RED);
+	gfxText(GFX_W - 6 - chipW + 6, 9, edtTxt, C_WHITE, 1);
+
 
 	char buf[24];
 
@@ -610,31 +623,19 @@ static void drawConfig() {
 	snprintf(buf, sizeof(buf), "%d%%", (int)((uint32_t)s_maxThrottle * 100 / 2000));
 	gfxText(120 - gfxTextW(buf, 3) / 2, 158, buf, C_AMBER, 3);
 
-	// The EDT button reports state and offers the action at once: green and
-	// "EDT ON" while frames are arriving, red and "EDT OFF" while they are
-	// not, and pressing it re-sends the enable either way. The colour and the
-	// word always agree, and both follow received frames rather than whether
-	// the command was sent -- the ESC never acknowledges it, so arriving
-	// telemetry is the only evidence that it took.
-	bool edtLit  = cmdFlashActive() && s_cmdFlash == CmdFlash::Edt;
-	bool beepLit = cmdFlashActive() && s_cmdFlash == CmdFlash::Beep;
+	bool beepLit = cmdFlashActive();
 
-	// White for an accepted press, amber for a refused one. Not red: the
-	// button's own off state is already red, and a refusal that looks like
-	// "EDT is off" says nothing.
-	uint16_t litFill = s_cmdFlashOk ? C_WHITE : C_AMBER;
-
-	drawBtn(BTN_EDT, edtActive ? "EDT ON" : "EDT OFF",
-	        edtLit ? litFill : (edtActive ? C_GREEN : C_RED),
-	        edtLit ? C_BG : C_WHITE, 1);
-	drawBtn(BTN_BEEP, "BEEP", beepLit ? litFill : C_PANEL,
+	// White for an accepted press, amber for a refused one.
+	drawBtn(BTN_BEEP, "BEEP", beepLit ? (s_cmdFlashOk ? C_WHITE : C_AMBER)
+	                                  : C_PANEL,
 	        beepLit ? C_BG : C_CYAN, 1);
-	// The hint turns into the reason when a press is refused, so the red flash
-	// is explained rather than just noticed.
-	bool refused = cmdFlashActive() && !s_cmdFlashOk;
+
+	// The hint turns into the reason when a press is refused, so the amber
+	// flash is explained rather than just noticed.
+	bool refused = beepLit && !s_cmdFlashOk;
 	gfxTextCenter(CFG_HINT_Y,
 	              refused ? "REFUSED - DISARM THE ESC FIRST"
-	                      : "COMMANDS NEED THE ESC DISARMED",
+	                      : "BEEP NEEDS THE ESC DISARMED",
 	              refused ? C_RED : C_DIM, 1);
 
 	drawBtn(BTN_AM32, "AM32 CFG", C_PANEL, C_CYAN, 1);
@@ -806,8 +807,6 @@ static void handleConfigTouch() {
 	} else if (hit(BTN_MAXT_P, x, y) && s_maxThrottle < MAX_THROTTLE_CEILING) {
 		s_maxThrottle += MAX_THROTTLE_STEP;
 		s_shown.maxPct = -1;
-	} else if (hit(BTN_EDT, x, y)) {
-		cmdFlashSet(CmdFlash::Edt, escRequestEdtEnable());
 	} else if (hit(BTN_BEEP, x, y)) {
 		cmdFlashSet(CmdFlash::Beep, escRequestBeep(1));
 	} else if (hit(BTN_AM32, x, y)) {

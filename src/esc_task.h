@@ -160,23 +160,13 @@ void escSetPoles(uint8_t poles);
 void escHeartbeat();
 
 /**
- * @brief Queue `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE`, repeated 10 times.
+ * @brief Queue a beacon command so the motor beeps.
  *
- * The DShot spec requires six consecutive receptions for a command to take, and
- * only while the ESC is disarmed. The firmware also issues this by itself once
- * per ESC, as soon as one starts answering; see edtAutoAction().
- *
- * @return False if the request was refused because the ESC is armed. The caller
- *         is expected to say so: a command that is silently dropped is
+ * @param n Beacon 1..5, clamped.
+ * @return False if the request was refused because the ESC is armed. The
+ *         caller is expected to say so: a command that is silently dropped is
  *         indistinguishable from a button that does not work, which is exactly
  *         how it was reported.
- */
-bool escRequestEdtEnable();
-
-/**
- * @brief Queue a beacon command so the motor beeps.
- * @param n Beacon 1..5, clamped.
- * @return False if refused because the ESC is armed. @see escRequestEdtEnable
  */
 bool escRequestBeep(uint8_t n);
 

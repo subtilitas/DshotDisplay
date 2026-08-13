@@ -76,9 +76,8 @@ static void swipe(int x0, int x1, int y, int step) {
 #define AM32_WRITE_X 50
 #define AM32_WRITE_Y 290
 // --- settings-screen command buttons, mirroring ui.cpp ---
-#define CFG_EDT_X    64   // BTN_EDT  spans x 14..113
-#define CFG_BEEP_X  176   // BTN_BEEP spans x 126..225
-#define CFG_CMD_Y_T 219   // both span y 200..237
+#define CFG_BEEP_X  120   // BTN_BEEP spans the full row, x 14..225
+#define CFG_CMD_Y_T 219   // y 200..237
 // --- logging-screen coordinates, mirroring ui.cpp ---
 #define LOG_TOGGLE_Y 232
 #define LOG_RETRY_Y  270
@@ -352,68 +351,73 @@ static void testTelemetryExpires() {
 }
 
 /**
- * @brief EDT and BEEP acknowledge a press.
+ * @brief The EDT chip tracks reception, and BEEP acknowledges a press.
  *
- * Reported as: both buttons look dead. The command was going out -- telemetry
- * switched on, the ESC beeped -- but nothing on screen moved, because the
- * command is over in about 10 ms and the UI repaints at 40 Hz.
+ * BEEP was reported as showing no reaction. The command was going out -- the
+ * ESC beeped -- but nothing on screen moved, because the command is over in
+ * about 6 ms and the UI repaints at 40 Hz.
+ *
+ * The EDT chip beside it is read-only. There is no enable button any more:
+ * the firmware sends one to each ESC as it appears, so the control was for
+ * something already handled. What remains is worth showing, because "green"
+ * and "all four telemetry tiles read --" are the same fact.
  */
-static void testCommandButtonFeedback() {
-	section("Command button feedback");
+static void testSettingsCommandRow() {
+	section("Settings command row");
 
-	// Live telemetry first, so the EDT button starts in its ON state and the
-	// comparisons below are against a known colour rather than whatever the
-	// previous test left behind.
 	feedLiveTelemetry();
 	tap(BTN_CFG_X, BTN_ARM_Y);          // into settings (this force-disarms)
 	frames(2);
-	uint32_t idle = fakeRegionHash(0, 195, 240, 55);
+	uint32_t chipOn = fakeRegionHash(120, 0, 120, 26);
+	uint32_t idle   = fakeRegionHash(0, 195, 240, 55);
 	fakeDumpFrame("shot_config_edt_on.ppm");
 
-	// The button is a state display as well as an action: green "EDT ON" while
-	// frames arrive, red "EDT OFF" when they stop. Letting it expire has to
-	// change it, or the colour is decoration.
+	// Letting telemetry expire has to change the chip, or the colour is
+	// decoration rather than a readout.
 	EscTelemetry none;
 	memset(&none, 0, sizeof(none));
 	fakeSetTelemetry(&none);
 	frames(2);
-	checkTrue("EDT button changes when telemetry stops",
-	          fakeRegionHash(0, 195, 240, 55) != idle);
+	checkTrue("EDT chip changes when telemetry stops",
+	          fakeRegionHash(120, 0, 120, 26) != chipOn);
 	fakeDumpFrame("shot_config_edt_off.ppm");
 	feedLiveTelemetry();
 	frames(2);
 	checkTrue("and changes back when it returns",
-	          fakeRegionHash(0, 195, 240, 55) == idle);
+	          fakeRegionHash(120, 0, 120, 26) == chipOn);
 
-	int edtBefore = fakeEdtRequests();
-	fakePress(CFG_EDT_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
-	checkInt("tapping EDT sends the command", fakeEdtRequests(), edtBefore + 1);
-	uint32_t lit = fakeRegionHash(0, 195, 240, 55);
-	checkTrue("and the button acknowledges it", lit != idle);
-	fakeDumpFrame("shot_config_edt_flash.ppm");
-
-	// The flash has to end on its own, or the button stays lit until something
-	// unrelated happens to repaint the screen.
-	fakeAdvance(400);
-	frames(2);
-	checkTrue("the flash clears itself", fakeRegionHash(0, 195, 240, 55) == idle);
-
+	// The chip is not a button. Tapping it must not be mistaken for one.
 	int beepBefore = fakeBeepRequests();
+	tap(200, 12);
+	checkInt("tapping the chip does nothing", fakeBeepRequests(), beepBefore);
+
+	// BEEP now has the row to itself, so a tap anywhere along it lands.
 	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
 	checkInt("tapping BEEP sends the command", fakeBeepRequests(), beepBefore + 1);
-	checkTrue("BEEP acknowledges too", fakeRegionHash(0, 195, 240, 55) != idle);
+	uint32_t lit = fakeRegionHash(0, 195, 240, 55);
+	checkTrue("and the button acknowledges it", lit != idle);
+	fakeDumpFrame("shot_config_beep_flash.ppm");
+
+	fakeAdvance(400);
+	frames(2);
+	checkTrue("the flash clears itself",
+	          fakeRegionHash(0, 195, 240, 55) == idle);
+
+	// Left-hand end of the row, where the EDT button used to be.
+	fakePress(40, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	checkInt("the old EDT slot is BEEP now", fakeBeepRequests(), beepBefore + 2);
 	fakeAdvance(400); frames(2);
 
-	// Refusal. Not reachable by hand today -- opening settings force-disarms
-	// and there is no ARM control on that screen -- so this drives the arm
-	// state directly. It is tested because the request can refuse, not because
-	// a user can currently make it.
+	// Refusal. Not reachable by hand -- opening settings force-disarms and
+	// there is no ARM control on that screen -- so this drives the arm state
+	// directly. It is tested because the request can refuse, not because a
+	// user can currently make it.
 	escSetArmed(true);
-	fakePress(CFG_EDT_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
 	uint32_t refused = fakeRegionHash(0, 195, 240, 55);
 	checkTrue("a refused command looks different from an accepted one",
 	          refused != lit && refused != idle);
-	fakeDumpFrame("shot_config_edt_refused.ppm");
+	fakeDumpFrame("shot_config_beep_refused.ppm");
 	escSetArmed(false);
 	fakeAdvance(400); frames(2);
 
@@ -590,5 +594,5 @@ void runUiTests() {
 	testManualLogSurvivesArming();
 	testKissDisplay();
 	testTelemetryExpires();
-	testCommandButtonFeedback();
+	testSettingsCommandRow();
 }
