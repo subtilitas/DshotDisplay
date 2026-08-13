@@ -47,11 +47,36 @@ struct EscReading {
 	float    amps;
 	int16_t  tempC;
 	uint16_t mah;         /**< Cumulative since ESC power-on. KISS only. */
+	uint8_t  stress;      /**< EDT stress, 0..255. No KISS equivalent. */
 
 	EscSource voltsFrom;
 	EscSource ampsFrom;
 	EscSource tempFrom;
 	EscSource mahFrom;
+	EscSource stressFrom;
+
+	/**
+	 * @name ESC status flags
+	 * Only meaningful when `statusFrom` is not EscSource::None. A stale
+	 * status block reads as all-clear otherwise, which is the one direction a
+	 * warning indicator must never fail in.
+	 * @{
+	 */
+	bool     alert;
+	bool     warning;
+	bool     error;
+	uint8_t  maxStress;
+	EscSource statusFrom;
+	/** @} */
+
+	/**
+	 * @brief True if any EDT frame arrived within the staleness window.
+	 *
+	 * Answers "is EDT actually working", as opposed to "did we ask for it".
+	 * The request is fire-and-forget — the ESC never acknowledges it — so
+	 * arriving frames are the only evidence there is.
+	 */
+	bool     edtFresh;
 
 	uint32_t rpm;         /**< Mechanical RPM from bidirectional DShot. */
 	uint32_t erpm;        /**< Electrical RPM from bidirectional DShot. */
@@ -68,6 +93,11 @@ struct EscReading {
  * @param nowMs Current millis(). Passed in rather than read here so the policy
  *              stays pure and the staleness edge is testable.
  * @param staleMs How long a KISS frame stays authoritative.
+ * @param edtStaleMs How long an EDT field stays valid after its last frame.
+ *                Past this the field reports EscSource::None rather than its
+ *                last value: an ESC that has been unplugged or swapped should
+ *                leave a blank, not a plausible-looking reading from hardware
+ *                that is no longer connected.
  * @param[out] out Merged reading.
  *
  * @note RPM always comes from the bidirectional DShot eRPM frame, and KISS eRPM
@@ -80,7 +110,22 @@ struct EscReading {
  *       See docs/design/kiss-telemetry.md.
  */
 void escMerge(const EscTelemetry *t, uint32_t nowMs, uint32_t staleMs,
-              EscReading *out);
+              uint32_t edtStaleMs, EscReading *out);
+
+/**
+ * @brief Whether a timestamped field is still current.
+ *
+ * One definition of "fresh", used by the merge and by the logger, so the two
+ * cannot drift apart and disagree about whether a reading exists.
+ *
+ * @param stampMs When the value last arrived, as millis(). 0 means never, and
+ *                is never fresh — including at `nowMs` 0, where a plain
+ *                subtraction would say otherwise.
+ * @param nowMs   Current millis().
+ * @param staleMs Width of the window.
+ * @return        True if the value may still be shown.
+ */
+bool escFieldFresh(uint32_t stampMs, uint32_t nowMs, uint32_t staleMs);
 
 /** @brief Short label for a source, for the UI. @return "KISS", "EDT" or "--". */
 const char *escSourceLabel(EscSource s);

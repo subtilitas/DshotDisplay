@@ -25,9 +25,11 @@
 /**
  * @brief Everything core1 has decoded from the ESC.
  *
- * Fields whose `have*` flag is false were never sent by this ESC — plain eRPM
- * always works on bidirectional DShot, but the rest requires Extended DShot
- * Telemetry support in the ESC firmware.
+ * A field whose arrival time is 0 was never sent by this ESC — plain eRPM always
+ * works on bidirectional DShot, but the rest requires Extended DShot Telemetry
+ * support in the ESC firmware. A field whose arrival time has simply fallen
+ * behind is a different thing: that ESC does send it, and has stopped. Use
+ * escFieldFresh() rather than reading the values bare.
  */
 struct EscTelemetry {
 	uint32_t erpm;          /**< Raw electrical RPM from the ESC. */
@@ -48,11 +50,29 @@ struct EscTelemetry {
 	uint16_t packetRate;    /**< Good packets per second, updated once a second. */
 	uint8_t  errPercent;    /**< Checksum error rate over the last second. */
 
-	uint32_t lastRpmMs;     /**< millis() of the last valid eRPM frame. */
-	bool     haveVolts;     /**< True once a voltage frame has arrived. */
-	bool     haveAmps;      /**< True once a current frame has arrived. */
-	bool     haveTemp;      /**< True once a temperature frame has arrived. */
-	bool     haveStress;    /**< True once a stress frame has arrived. */
+	/**
+	 * @name Arrival times
+	 *
+	 * When each kind of frame last arrived, as millis(); 0 means never. These
+	 * are timestamps rather than `have` flags on purpose. A sticky boolean can
+	 * only ever go true, so unplugging the ESC — or swapping it for another —
+	 * left the last voltage, current and temperature on screen indefinitely,
+	 * looking exactly like live data from hardware that was no longer there.
+	 *
+	 * EDT frame types are interleaved by the ESC and each cycles far quicker
+	 * than @ref EDT_STALE_MS, so per-field expiry costs nothing in practice and
+	 * localises the loss when only one frame type stops.
+	 *
+	 * @{
+	 */
+	uint32_t lastRpmMs;     /**< Last valid eRPM frame. */
+	uint32_t edtVoltsMs;    /**< Last EDT voltage frame. */
+	uint32_t edtAmpsMs;     /**< Last EDT current frame. */
+	uint32_t edtTempMs;     /**< Last EDT temperature frame. */
+	uint32_t edtStressMs;   /**< Last EDT stress frame. */
+	uint32_t edtStatusMs;   /**< Last EDT status frame. */
+	/** @} */
+
 	bool     initError;     /**< PIO state machine setup failed. */
 
 	/**
@@ -143,16 +163,22 @@ void escHeartbeat();
  * @brief Queue `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE`, repeated 10 times.
  *
  * The DShot spec requires six consecutive receptions for a command to take, and
- * only while the ESC is disarmed. No-op if currently armed. The firmware also
- * issues this automatically 1.5 s after boot.
+ * only while the ESC is disarmed. The firmware also issues this automatically
+ * 1.5 s after boot.
+ *
+ * @return False if the request was refused because the ESC is armed. The caller
+ *         is expected to say so: a command that is silently dropped is
+ *         indistinguishable from a button that does not work, which is exactly
+ *         how it was reported.
  */
-void escRequestEdtEnable();
+bool escRequestEdtEnable();
 
 /**
  * @brief Queue a beacon command so the motor beeps.
- * @param n Beacon 1..5, clamped. No-op if currently armed.
+ * @param n Beacon 1..5, clamped.
+ * @return False if refused because the ESC is armed. @see escRequestEdtEnable
  */
-void escRequestBeep(uint8_t n);
+bool escRequestBeep(uint8_t n);
 
 /**
  * @brief Copy the current telemetry block.
