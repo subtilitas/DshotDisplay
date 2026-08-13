@@ -4,10 +4,13 @@
  *
  * Everything in this file is safe to change without touching the rest of the
  * firmware. Anything that describes the board itself rather than a preference
- * lives in @ref board_pins.h instead.
+ * lives in @ref board_pins.h instead, and which board you are building for is
+ * @ref board.h.
  */
 
 #pragma once
+
+#include "board.h"
 
 /**
  * @defgroup cfg_esc ESC connection
@@ -16,19 +19,37 @@
  */
 
 /**
- * @brief GPIO the ESC signal wire goes to.
+ * @brief GPIO the ESC signal wire goes to. Board-dependent default.
  *
- * GP4 is P2 header pin 11, two positions from GND on P2 pin 13, so a 3-pin
- * servo plug lands SIGNAL / (skip) / GND. The skipped middle position is GP10
- * (P2 pin 12), an unused camera pin — that is the whole reason GP4 was chosen
- * over the other candidates. See the "Plugging an ESC in directly" section of
- * README.md for why GP20 and GP29 are not usable.
+ * On the **RP2350-Touch-LCD-2** this is **GP4**: P2 header pin 11, two
+ * positions from GND on P2 pin 13, so a 3-pin servo plug lands
+ * SIGNAL / (skip) / GND. The skipped middle position is GP10 (P2 pin 12), an
+ * unused camera pin — that is the whole reason GP4 was chosen over the other
+ * candidates. See the "Plugging an ESC in directly" section of README.md for
+ * why GP20 and GP29 are not usable there.
+ *
+ * On the **RP2350-Touch-LCD-2.8** this is **GP29**, J4 pin 12 — the last pin on
+ * the connector, which is the easy one to find and the easy one to solder to.
+ * That board has an RTC, a codec and an SD slot where the other one has a
+ * camera header, so GP28 (J4 pin 11) and GP29 are the only two GPIOs left
+ * unclaimed. GP28 works identically; build with `-DDSHOT_PIN=28` for it.
+ *
+ * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
+ * never hears a frame, because the firmware is driving a pin no wire is on.
+ *
+ * Override with `-DDSHOT_PIN=n` or by editing the value here.
  *
  * @warning The middle wire of an ESC lead is the BEC +5 V output, and RP2350
  *          GPIO is **not** 5 V tolerant. Depin or cut that wire before
  *          plugging anything in.
  */
-#define DSHOT_PIN              4
+#ifndef DSHOT_PIN
+  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
+    #define DSHOT_PIN          4
+  #else
+    #define DSHOT_PIN          29
+  #endif
+#endif
 
 /**
  * @brief DShot bitrate in kBaud. 300 / 600 / 1200 are the common ones.
@@ -145,6 +166,35 @@
 #define KISS_STALE_MS          500
 
 /**
+ * @brief How long an EDT field stays valid after its last frame, in ms.
+ *
+ * Past this the field blanks to `--` instead of holding its last value. The
+ * same argument as @ref KISS_STALE_MS, one level down: unplug the ESC, or swap
+ * it for a different one, and the old voltage, current, temperature and stress
+ * would otherwise sit there indefinitely, indistinguishable from live readings.
+ *
+ * A second is many EDT frames. The ESC interleaves the frame types and the full
+ * cycle completes in a handful of milliseconds at 1 kHz, so this only expires
+ * when telemetry has genuinely stopped, not between two frames of the same
+ * kind. It is deliberately longer than @ref KISS_STALE_MS — EDT is the fallback,
+ * and a fallback that expires first is no fallback.
+ */
+#define EDT_STALE_MS          1000
+
+/**
+ * @brief How long without an eRPM frame before the ESC counts as gone, in ms.
+ *
+ * eRPM is plain bidirectional DShot — every ESC that works at all answers with
+ * it, whether or not it supports EDT — so its presence is the definition of
+ * "an ESC is connected". Losing it is what re-arms the automatic EDT enable, so
+ * that a replacement ESC gets its own.
+ *
+ * Shorter than @ref EDT_STALE_MS deliberately. eRPM arrives every frame at
+ * 1 kHz, where EDT frame types are interleaved and any one of them is rarer.
+ */
+#define ESC_LINK_STALE_MS      500
+
+/**
  * @brief Abandon a reply that has not completed this long after the request.
  *
  * Only matters for the timeout counter and for discarding a partial frame; the
@@ -170,7 +220,18 @@
 #endif
 
 /**
- * @brief SPI clock for the card, in MHz.
+ * @brief SDIO clock for the card, in Hz. Used only on boards wired for SDIO.
+ *
+ * The 2.8" board runs the card four bits wide over PIO rather than one bit over
+ * SPI, so this is the rate that matters there and @ref SD_LOG_SPI_MHZ is
+ * ignored. Conservative to start: SDIO is far more sensitive to signal
+ * integrity than 12 MHz SPI, and a card that enumerates but corrupts is worse
+ * than one that refuses.
+ */
+#define SD_LOG_SDIO_HZ         (10 * 1000 * 1000)
+
+/**
+ * @brief SPI clock for the card, in MHz. Used only on boards wired for SPI.
  *
  * Cards are specified to 25 MHz in SPI mode. Starting conservatively: a card
  * that misbehaves at speed fails in ways that look like corruption rather than

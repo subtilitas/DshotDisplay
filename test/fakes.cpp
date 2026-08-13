@@ -19,10 +19,11 @@
 #include "hardware/uart.h"
 #include "gfx.h"
 #include "st7789.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
 #include "am32_bl.h"
 #include "am32_eeprom.h"
+#include "sd_log.h"
 #include "fakes.h"
 
 #include <stdio.h>
@@ -177,13 +178,41 @@ void escSetThrottle(uint16_t t) { g_throttle = t; }
 void escSetArmed(bool a) { g_armed = a; }
 void escSetPoles(uint8_t) {}
 void escHeartbeat() {}
-void escRequestEdtEnable() {}
-void escRequestBeep(uint8_t) {}
+// Mirrors the two-line rule in esc_task.cpp: the command is refused while
+// armed. esc_task.cpp cannot be linked here (PIO, UART), so this is a copy --
+// but the thing under test is what the UI does with the answer, and that is
+// the shipped code.
+static int g_beepRequests = 0;
+int  fakeBeepRequests() { return g_beepRequests; }
+bool escRequestBeep(uint8_t) { g_beepRequests++; return !g_armed; }
 bool escEdtRequested() { return true; }
-void escSnapshot(EscTelemetry *o) { *o = g_tel; o->lastRpmMs = g_ms; }
+// Verbatim, with no helpful stamping of arrival times. That stamping used to
+// be here, and it meant every test saw permanently fresh telemetry -- so the
+// bug where readings never expired could not have been caught by any of them.
+// Tests that want live data now say when it arrived.
+void escSnapshot(EscTelemetry *o) { *o = g_tel; }
 void escTaskSuspend() { g_suspended = true; }
 void escTaskResume() { g_suspended = false; }
 bool escTaskSuspended() { return g_suspended; }
+
+// ---------------------------------------------------------------------------
+// Region fingerprint
+//
+// Lets a test say "this part of the screen changed" -- or, more usefully,
+// "this part of the screen is now pixel-identical to the no-data case" --
+// without hard-coding glyph positions that every layout tweak would break.
+// ---------------------------------------------------------------------------
+uint32_t fakeRegionHash(int x, int y, int w, int h) {
+	const uint16_t *fb = gfxBuffer();
+	uint32_t hash = 2166136261u;            // FNV-1a
+	for (int yy = y; yy < y + h; yy++) {
+		for (int xx = x; xx < x + w; xx++) {
+			if (xx < 0 || yy < 0 || xx >= GFX_W || yy >= GFX_H) continue;
+			hash = (hash ^ fb[yy * GFX_W + xx]) * 16777619u;
+		}
+	}
+	return hash;
+}
 
 // ---------------------------------------------------------------------------
 // PPM dump, so a failing layout test can be looked at
@@ -202,3 +231,68 @@ void fakeDumpFrame(const char *name) {
 	}
 	fclose(f);
 }
+
+// ---------------------------------------------------------------------------
+// SD logging: a fake card the tests drive directly
+// ---------------------------------------------------------------------------
+//
+// sd_log.cpp itself cannot be linked here -- it pulls in FatFs and the SPI
+// driver -- so the UI is tested against this instead. It is not a simulation of
+// a card: it is a way to put the logger into a given state and check the screen
+// renders it.
+
+static SdLogStatus g_log = {};
+
+void fakeSdLogSet(const SdLogStatus *st) { g_log = *st; }
+
+bool sdLogBegin() {
+	g_log.state = SdLogState::Idle;
+	return true;
+}
+
+static bool g_autoStarted = false;
+
+bool sdLogStart() {
+	if (g_log.state == SdLogState::NoCard) return false;
+	g_log.state = SdLogState::Logging;
+	g_autoStarted = false;
+	if (!g_log.fileNumber) g_log.fileNumber = 1;
+	return true;
+}
+
+void sdLogStop() {
+	if (g_log.state == SdLogState::Logging) g_log.state = SdLogState::Idle;
+	g_log.fileNumber = 0;
+	g_autoStarted = false;
+}
+
+bool sdLogRemount() {
+	// Models a card that appears on retry: NO CARD becomes READY. That is the
+	// case the button exists for -- a card inserted after boot.
+	if (g_log.state == SdLogState::NoCard) {
+		g_log.state = SdLogState::Idle;
+		g_log.mountResult = 0;
+		g_log.cardType = 3;          // SDHC/XC
+		g_log.cardSizeMB = 122000;   // a 128 GB card, as the card reports itself
+		return true;
+	}
+	return g_log.state != SdLogState::Error;
+}
+
+bool sdLogActive() { return g_log.state == SdLogState::Logging; }
+void sdLogTick(uint32_t, uint16_t) {}
+void sdLogFlush() {}
+// Uses the shipped decision function, not a copy of it, so the UI tests
+// actually exercise the policy the firmware runs.
+static bool g_sdArmed = false;
+void sdLogSetArmed(bool armed) {
+	SdLogArmAction act = sdLogArmAction(armed, g_sdArmed, sdLogActive(),
+	                                    g_autoStarted);
+	g_sdArmed = armed;
+	switch (act) {
+		case SdLogArmAction::Start: g_autoStarted = sdLogStart(); break;
+		case SdLogArmAction::Stop:  sdLogStop();                  break;
+		case SdLogArmAction::None:                                break;
+	}
+}
+void sdLogStatus(SdLogStatus *out) { *out = g_log; }

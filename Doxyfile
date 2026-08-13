@@ -5,7 +5,7 @@
 #   doxygen 2>&1 | grep -i warn   -> anything that needs attention
 
 PROJECT_NAME           = "DshotDisplay"
-PROJECT_BRIEF          = "Bidirectional DShot ESC tester for the Waveshare RP2350-Touch-LCD-2"
+PROJECT_BRIEF          = "Bidirectional DShot ESC tester for the Waveshare RP2350-Touch-LCD-2 and -2.8"
 OUTPUT_DIRECTORY       = docs
 HTML_OUTPUT            = html
 GENERATE_LATEX         = NO
@@ -23,6 +23,16 @@ RECURSIVE              = YES
 # a @page, not a second @mainpage -- two mainpages is an error, not a merge.
 USE_MDFILE_AS_MAINPAGE = README.md
 MARKDOWN_SUPPORT       = YES
+
+# Give markdown headings the same anchors GitHub does, so a link written as
+# (#am32-esc-configuration) resolves in both places. Doxygen's own scheme is
+# autotoc_md<N>, which no README can link to by hand and which renumbers
+# whenever a heading is added above it.
+#
+# Needs doxygen >= 1.9.8. An older one does not merely ignore this -- it warns
+# about the unknown tag, and the docs job fails on any warning at all, so the
+# version is printed there to make that obvious rather than puzzling.
+MARKDOWN_ID_STYLE      = GITHUB
 
 # README references docs/ui-preview.png; without this the image is reported
 # missing even though the file is right there.
@@ -68,6 +78,14 @@ SORT_MEMBER_DOCS       = NO      # keep declaration order; it is meaningful here
 # Document the portrait branch of the LCD_ROTATION conditionals rather than
 # leaving GFX_W / GFX_H undefined.
 #
+# BOARD_TOUCH_CST816D is predefined for the same reason: each touch driver is
+# wrapped in a whole-file #ifdef, so with neither macro set both would document
+# as empty files. Only one is set because defining both would produce two
+# definitions of touchInit() and touchPoll() for Doxygen to reconcile. The
+# CST328 driver's @file block is outside its guard and still renders; to read
+# its internals, swap the macro here and regenerate. Both board pin maps are
+# unconditional and always document.
+#
 # EXPAND_ONLY_PREDEF stays YES: the settings table in am32_eeprom.cpp is built
 # from F_BOOL/F_RAW/F_SCALED/F_ENUM macros, and expanding those inline turns a
 # readable table into forty lines of brace soup.
@@ -78,4 +96,5 @@ PREDEFINED             = LCD_ROTATION=0 \
                          AM32_PUSH_PULL_TX=1 \
                          AM32_FORCE_LOW_JUMP=0 \
                          SERIAL_TELEMETRY=1 \
+                         BOARD_TOUCH_CST816D=1 \
                          __DOXYGEN__

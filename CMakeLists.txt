@@ -16,6 +16,36 @@
 
 cmake_minimum_required(VERSION 3.13)
 
+# SD_DEBUG=ON turns on the FatFs driver's own tracing, which prints to USB
+# serial. Off by default: it is noisy and costs flash, but when a card is not
+# detected it is the difference between reading the driver's account of what
+# happened and guessing.
+option(SD_DEBUG "Enable verbose SD driver logging over USB serial" OFF)
+
+# Which board to build for. Unlike the Arduino build -- which had no way to pass
+# a -D and so needed select_board.sh to rewrite board.h in place -- CMake can
+# just define it, and board.h's #ifndef gets out of the way.
+#
+#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 ...
+#
+# The two boards differ in more than pins: different SPI instance for the panel,
+# different I2C, a different touch controller, and a different SD interface
+# entirely -- SPI on the 2.0", PIO SDIO on the 2.8".
+set(BOARD "BOARD_RP2350_TOUCH_LCD_2" CACHE STRING "Target board")
+set_property(CACHE BOARD PROPERTY STRINGS
+    BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8)
+
+# Which GPIO the ESC signal wire lands on. Empty means "whatever board_pins.h
+# defaults to" -- GP4 on the 2.0", GP29 on the 2.8". Set it when the wire is
+# somewhere else:
+#
+#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 -DDSHOT_PIN=28 ...
+#
+# The 2.8" brings out GP28 (J4 pin 11) and GP29 (J4 pin 12) and nothing else, so
+# those are the only two choices there.
+set(DSHOT_PIN "" CACHE STRING "GPIO for the ESC signal wire; blank = board default")
+
+
 set(PICO_SDK_FETCH_FROM_GIT_TAG 2.1.1)
 include(pico_sdk_import.cmake)
 
@@ -60,6 +90,7 @@ add_executable(DshotDisplay
     src/gfx.cpp
     src/st7789.cpp
     src/cst816.cpp
+    src/cst328.cpp
     src/esc_task.cpp
     src/am32_bl.cpp
     src/am32_eeprom.cpp
@@ -72,6 +103,13 @@ add_executable(DshotDisplay
 )
 
 target_include_directories(DshotDisplay PRIVATE src)
+target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})
+if(DSHOT_PIN)
+    target_compile_definitions(DshotDisplay PRIVATE DSHOT_PIN=${DSHOT_PIN})
+    message(STATUS "Board: ${BOARD}, DShot on GP${DSHOT_PIN}")
+else()
+    message(STATUS "Board: ${BOARD}, DShot on the board default")
+endif()
 
 target_link_libraries(DshotDisplay
     pico_stdlib
@@ -101,3 +139,29 @@ pico_add_extra_outputs(DshotDisplay)
 target_compile_options(DshotDisplay PRIVATE
     -Wall -Wextra -Wshadow -Wno-unused-parameter
 )
+
+# Standalone SD bring-up test: nothing but the card, sweeping the SPI clock.
+# Built alongside the firmware because the whole value of it is being able to
+# flash one, then the other, without changing anything else.
+add_executable(sdtest
+    tools/sdtest/main.c
+    src/sd_hw_config.c
+)
+target_include_directories(sdtest PRIVATE src)
+target_compile_definitions(sdtest PRIVATE BOARD=${BOARD})
+target_link_libraries(sdtest
+    pico_stdlib
+    hardware_spi
+    hardware_clocks
+    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+)
+target_compile_definitions(sdtest PRIVATE USE_PRINTF=1 USE_DBG_PRINTF=1)
+pico_enable_stdio_usb(sdtest 1)
+pico_enable_stdio_uart(sdtest 0)
+pico_add_extra_outputs(sdtest)
+
+if(SD_DEBUG)
+    # USE_PRINTF routes the driver's messages to stdio; USE_DBG_PRINTF adds the
+    # per-command tracing that shows exactly which step of card init failed.
+    target_compile_definitions(DshotDisplay PRIVATE USE_PRINTF=1 USE_DBG_PRINTF=1)
+endif()

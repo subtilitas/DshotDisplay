@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml/badge.svg)](https://github.com/subtilitas/DshotDisplay/actions/workflows/ci.yml)
 
-A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2**.
+A self-contained bidirectional DShot ESC tester for the **Waveshare RP2350-Touch-LCD-2** and **RP2350-Touch-LCD-2.8**.
 
 Drag the on-screen throttle, and the board sends bidirectional DShot to a single ESC
 while decoding the eRPM and Extended DShot Telemetry (EDT) that comes back on the same
@@ -39,11 +39,18 @@ UI has hung and forces throttle to zero on its own.
 
 ## Hardware
 
-**Board:** [Waveshare RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)
-— RP2350A, 16 MB flash, 240×320 IPS (ST7789T3 over SPI), CST816D capacitive touch,
-QMI8658 IMU, LiPo charger.
+**Boards:** [RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2) (2.0") and
+[RP2350-Touch-LCD-2.8](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8). Both are
+240x320 portrait, and the firmware is built for one or the other with
+`-DBOARD=...`. They are not interchangeable: different SPI instance for the
+panel, different I2C, a different touch controller (CST816D vs CST328), and a
+different SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
 
-### Pin map (from the official schematic)
+The 2.0" is an RP2350A with 16 MB flash, a 240×320 IPS panel (ST7789T3 over
+SPI), CST816D capacitive touch, a QMI8658 IMU and a LiPo charger. The 2.8" is
+the same silicon behind a larger panel, with a CST328 controller.
+
+### Pin map (2.0", from the official schematic)
 
 | Function | GPIO | Notes |
 |---|---|---|
@@ -53,7 +60,8 @@ QMI8658 IMU, LiPo charger.
 | Touch INT | 29 | active low |
 | Touch RESET | 20 | **same net as LCD_RST** — resetting one resets both |
 | Battery sense | 28 | ADC2, 200k/100k divider → `VBAT = Vadc × 3` |
-| microSD | 24–27 | SPI1, unused here |
+| microSD | 24–27 | SPI1 — blackbox logging, see below. (2.8": SDIO on 19–24) |
+| KISS telemetry RX | 5 | UART1 RX, P1 pin 10 — optional third wire |
 | Camera bus | 0–11, 21–23 | **free if no camera is fitted** |
 
 ### Wiring the ESC
@@ -104,6 +112,20 @@ Keep the ESC ground and the board ground tied together, and keep the signal wire
 bidirectional DShot at 600 kBaud does not enjoy 30 cm of unshielded flapping servo lead.
 If telemetry is flaky, drop `DSHOT_SPEED_KBAUD` to 300 before blaming the firmware.
 
+### The 2.8" board
+
+Its pin map is `src/board_rp2350_touch_lcd_2_8.h`. The short version: no 2.54 mm
+headers at all — everything comes out on JST-SH connectors — and of those, only
+**GP28** (J4 pin 11) and **GP29** (J4 pin 12) are free for an ESC. **GP29 is the
+default** — last pin on the connector, easiest to find and to solder. Build with
+`-DDSHOT_PIN=28` for the other one. An ESC on the wrong one of the two is simply
+silent, with nothing reported anywhere, because nothing is listening on the pin
+you wired.
+
+It also carries a power-button latch on GP26 that the firmware asserts as the
+very first thing at boot. Without it the board drops dead mid-boot whenever it
+is running on battery rather than USB.
+
 ---
 
 ## Building
@@ -135,6 +157,18 @@ Build:
 cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
 ninja -C build
 ```
+
+Two build options worth knowing:
+
+```sh
+-DBOARD=BOARD_RP2350_TOUCH_LCD_2_8   # the 2.8" board; default is the 2.0"
+-DDSHOT_PIN=28                        # ESC on a different GPIO than the default
+```
+
+`DSHOT_PIN` defaults to **GP4** on the 2.0" and **GP29** on the 2.8". The 2.8"
+brings out only GP28 (J4 pin 11) and GP29 (J4 pin 12), so those are the two
+choices there — and an ESC on the wrong one is simply silent, with no error
+anywhere, because nothing is listening on the pin you wired.
 
 That produces `build/DshotDisplay.uf2`. Hold **BOOT**, tap **RESET**, release **BOOT**,
 and copy it onto the drive that appears.
@@ -220,19 +254,188 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
   what's spinning.
-- **EDT ON** — resends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` (the firmware already does
-  this automatically 1.5 s after boot). Only works while disarmed.
+- **EDT ON / EDT OFF** — the chip in the title bar. Green while EDT frames are arriving,
+  red while they are not. Read-only: there is no enable button, because the firmware
+  sends one to each ESC as it appears. It follows *received frames* rather than whether
+  the command was sent — the enable is fire-and-forget and the ESC never acknowledges
+  it, so arriving telemetry is the only evidence it took.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
+
+BEEP flashes for a moment when pressed. The command itself lasts about six milliseconds
+against a 40 Hz repaint, so without that the button looks like it does nothing — and an
+ESC answering from the next room is not feedback.
+- **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
+- **SD LOG** — blackbox logging status and manual start/stop. See below.
+
+**SD LOG screen**
+
+- **STATUS** — `NO CARD`, `READY`, `RECORDING` or `CARD ERROR`. No card is not a fault;
+  the board has no card-detect pin, so the only way to know is to try to mount one.
+- **START / STOP** — begins or ends a log immediately. Greyed out with no card.
+- **FILE**, **FRAMES**, **WRITTEN** — what is being recorded and how much of it.
+- **DROPPED FRAMES** — frames the ring buffer refused because the card could not keep
+  up. Anything but zero means the buffer is too small for your card.
+- **BUF PEAK** — high-water mark against the configured buffer size. Amber past half,
+  red past three quarters.
+- **WORST FLUSH** — the longest single write to the card, in milliseconds. This is the
+  stall the buffer has to absorb.
 
 **Reading the telemetry**
 
-`--` means the ESC never sent that frame type. Plain eRPM always works on bidirectional
-DShot; voltage, current, temperature, stress and status need EDT support in the ESC
-firmware (BLHeli_32, Bluejay, AM32). The **LINK** tile shows good packets per second and
-the checksum error rate — at 1 kHz you should see close to 1000/s and 0 % err. A rising
-error rate points at signal integrity, not at the ESC.
+`--` means neither source has ever supplied that field. Plain eRPM always works on
+bidirectional DShot; voltage, current, temperature, stress and status need EDT support in
+the ESC firmware (BLHeli_32, Bluejay, AM32). The **LINK** tile shows good packets per
+second and the checksum error rate — at 1 kHz you should see close to 1000/s and 0 % err.
+A rising error rate points at signal integrity, not at the ESC.
+
+The voltage, current and temperature tiles carry a small **KISS** (cyan) or **EDT**
+(dimmed) tag saying where the number came from. It matters: `12.25 V` from EDT means
+"somewhere in a 0.25 V bucket", the same reading from KISS means "within 0.01 V". If the
+tag drops from KISS back to EDT the telemetry wire has gone quiet, and the readout is
+suddenly 25x coarser without the digits obviously changing. Consumption in mAh appears on
+the temperature tile and is KISS-only — EDT does not carry it.
 
 ---
+
+## Telemetry and logging
+
+EDT is enabled automatically — you should not normally need that button. The enable
+goes out once per ESC, triggered by the first eRPM frame rather than by a timer: an ESC
+that has answered a frame is demonstrably powered, booted and listening. Lose eRPM for
+`ESC_LINK_STALE_MS` and the one-shot re-arms, so an ESC connected later, power-cycled,
+or swapped for a different one gets its own enable instead of silently running without
+EDT for the rest of the session.
+
+Every reading expires. A value that has not been refreshed for `EDT_STALE_MS` (1 s)
+blanks to `--` rather than holding its last number, and eRPM does the same after 500 ms.
+This matters more than it sounds: unplug the ESC, or swap it for a different one, and a
+display that keeps the old figures is not showing stale data — it is showing a plausible
+reading from hardware that is not there. `RPM` drops to a dark zero and the header says
+`NO TELEMETRY`.
+
+The one exception is a deliberate one: an expired **ESC STATUS** reads `--`, never `OK`.
+A warning indicator may fail towards "unknown" but must never fail towards "fine".
+
+### KISS telemetry (optional third wire)
+
+Extended DShot Telemetry rides inside the eRPM frame and costs no extra wiring,
+but it is coarse: voltage in 0.25 V steps, current in whole amps. On a 6S pack
+that means a 200 mV sag is invisible and idle current is unmeasurable.
+
+A KISS-compatible ESC — most BLHeli_32 and AM32 firmware — will send **0.01 V
+and 0.01 A** over a dedicated wire when the DShot frame asks for it, plus a mAh
+consumption figure EDT has no room for at all.
+
+| ESC | Board |
+|---|---|
+| Telemetry pad | **GP5** — P1 header, pin 10 |
+
+That is the only extra connection; the line is transmit-only from the ESC.
+Requests go out at 50 Hz by default (`KISS_REQUEST_EVERY_N`).
+
+The voltage, current and temperature tiles show which source they are using —
+**KISS** in cyan, **EDT** dimmed. That tag is not decoration: 12.25 V from EDT
+means "somewhere in a 0.25 V bucket" and the same reading from KISS means
+"within 0.01 V", so a readout quietly dropping back to coarse values is worth
+seeing. Unplug the wire and the tiles fall back within `KISS_STALE_MS`.
+
+> **Voltage.** The KISS spec puts this line at 3.6 V, which is exactly the
+> RP2350's absolute-maximum GPIO voltage — no margin at all. Most ESCs actually
+> drive 3.3 V and are fine, but measure yours before connecting it, and consider
+> a 1 k series resistor.
+
+RPM is deliberately **not** taken from KISS. Not because it is coarser — above
+about 5,000 RPM on a 12–16 pole motor it is actually finer, since bidirectional
+DShot encodes a period with a 9-bit mantissa and degrades in absolute terms as
+RPM rises — but because it arrives at 50 Hz against DShot's 1 kHz, and spin-up,
+oscillation and desync all live in the fast stream. Both are written to the log
+so the question can be settled with data. The arithmetic is in
+`docs/design/erpm_resolution.py`.
+
+### Blackbox logging to microSD
+
+Logs are written in Betaflight's blackbox format, so they open directly in
+[**logwiju**](https://subtilitas.github.io/logwiju/) — the intended viewer for
+these logs — as well as Blackbox Explorer, `blackbox_decode` and PIDtoolbox.
+Files are named `LOGnnnnn.BFL` on a FAT-formatted card.
+
+![SD log screen](docs/log-preview.png)
+
+Works on both boards, by different means: the 2.0" drives the card over hardware
+SPI at 12 MHz, the 2.8" over four-bit PIO SDIO at 25 MHz. That is not a
+preference — the 2.8" cannot use hardware SPI at all, since its SD clock lands
+on a pin that is SPI0 *TX* in the mux.
+
+Reach it from **CFG → SD LOG**. The screen shows card state, the current file,
+frames and kB written, dropped frames, buffer high-water mark and the worst
+single card write. Logging starts and stops with **ARM** by default
+(`SD_LOG_AUTO_ON_ARM`), and the START/STOP button is always available.
+
+At the default 500 Hz the log runs about **14.5 bytes per frame — 7.3 kB/s, or
+26 MB/hour**, which no card will struggle with.
+
+The two numbers worth watching on first use are **BUF PEAK** and **WORST
+FLUSH**. `SD_LOG_BUFFER_BYTES` defaults to 8 kB, which is roughly a second of
+data, but the right size depends on how long your card stalls for an internal
+erase — and that is a property of the card, not something to guess. A peak
+approaching the buffer size, or a flush longer than the buffer holds, means
+raise it. **DROPPED FRAMES** above zero means it was already too small.
+
+Frames are dropped rather than blocking, always. A gap in the log is
+recoverable; a stalled UI with a live motor is not.
+
+### Tuning
+
+All in `config.h`. The defaults are chosen to be safe rather than optimal, since
+none of this has been measured against real hardware yet.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `KISS_TELEM_ENABLE` | `1` | Compile the KISS path in at all |
+| `KISS_TELEM_PIN` | `5` | GPIO the telemetry wire lands on, receive only |
+| `KISS_UART` | `uart1` | Must match the pin — the SDK will not catch a mismatch, it simply never receives |
+| `KISS_REQUEST_EVERY_N` | `20` | Request every Nth DShot frame; 20 at 1 kHz is 50 Hz. Must be ≥ 2 or replies overlap, and there is an `#error` that says so |
+| `KISS_STALE_MS` | `500` | How long a KISS frame stays authoritative before the display falls back to EDT |
+| `KISS_REPLY_TIMEOUT_MS` | `10` | Abandon a reply that has not completed; only affects the timeout counter |
+| `SD_LOG_ENABLE` | `1` | Compile the logging path in at all |
+| `SD_LOG_SPI_MHZ` | `12` | Card clock. Cards are specified to 25 MHz; a card misbehaving at speed fails in ways that look like corruption |
+| `SD_LOG_RATE_HZ` | `500` | Log frame rate. Not the DShot rate — eRPM is the only genuinely 1 kHz signal |
+| `SD_LOG_I_INTERVAL` | `32` | Frames between keyframes. Lower resynchronises faster after damage, at a size cost |
+| `SD_LOG_BUFFER_BYTES` | `8192` | Ring buffer. **The one to measure** — see BUF PEAK and WORST FLUSH |
+| `SD_LOG_CHUNK_BYTES` | `512` | Flush granularity. Keep it a multiple of 512 or the card does read-modify-write |
+| `SD_LOG_PREALLOC_BYTES` | `16 MB` | Contiguous space reserved per file, so the FAT is not rewritten mid-log. About ten minutes at the default rate |
+| `SD_LOG_AUTO_ON_ARM` | `1` | Start and stop logging with ARM, alongside the manual button |
+
+### Reading the logs
+
+Files land on the card as `LOGnnnnn.BFL`.
+
+**[logwiju](https://subtilitas.github.io/logwiju/) is the intended viewer.**
+Pronounced the German way — *log-vee-yoo*, since German `w` is an English *v*
+and `j` an English *y* — which comes out as "logview". The tail is **WI**ngert
+**JU**lian.
+
+Drop a `.BFL` straight off the card onto the page and it plots it — no install,
+no upload, no account. It runs entirely in the browser, so the log never leaves
+the machine. Wheel to zoom, drag to pan, shift+drag for a box zoom, double-click to
+fit; pick which fields to show from the side panel.
+
+The logs also open in
+[Blackbox Explorer](https://github.com/betaflight/blackbox-log-viewer), or on the
+command line:
+
+```sh
+blackbox_decode LOG00001.BFL      # -> LOG00001.01.csv and .01.event
+```
+
+The `.event` file holds the end-of-log marker and is usually empty otherwise; the CSV is
+what you want.
+
+Both eRPM sources are logged separately, as `eRPM[0]` (bidirectional DShot, 1 kHz) and
+`eRPMkiss[0]` (KISS, 50 Hz), and so are both voltage and current sources — `vbatLatest` /
+`amperageLatest` carry KISS where it was live, `vbatEdt` / `amperageEdt` always carry EDT.
+That redundancy is deliberate: it lets the KISS decoder be checked against a source
+already trusted, from the log itself, rather than taken on faith.
 
 ## AM32 ESC configuration
 
@@ -374,7 +577,9 @@ src/
   main.cpp              core0 main(), core1 launch, @page architecture
   plat.h                millis/micros/delay over the SDK timebase
   config.h              everything you'd want to tune
-  board_pins.h          RP2350-Touch-LCD-2 pin map, annotated from the schematic
+  board.h               which board this build targets
+  board_pins.h          dispatches to the per-board pin map
+  board_rp2350_touch_lcd_2{,_8}.h   the pin maps themselves
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
@@ -390,7 +595,8 @@ src/
   sd_log.{h,cpp}        FatFs writer, lifecycle, drop accounting
   sd_hw_config.c        SD wiring for the FatFs driver
 Doxyfile                API doc config -> docs/html/
-docs/                   generated docs + UI preview image
+docs/                   generated docs + preview images
+docs/design/            design notes, kept in step with the code
 docs/design/            design notes for work in progress
 test/                   host test suites + Pico SDK stubs
 .github/workflows/      CI
@@ -416,7 +622,16 @@ Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only
 says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
 than dependent on machine speed. The fake ESC serves a real settings blob recovered from
 the reference configurator, so the UI tests operate on values a real ESC would report.
-Failing tests dump the rendered frame as a PPM, so layout bugs can be looked at.
+The suite renders twelve screens to PPM as it runs — splash, main in three states, both
+settings screens, all three SD log states and the four AM32 screens — so a layout change
+is visible rather than something you find on the board later. Failing tests dump their
+frame too.
+
+`sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the
+logging UI is tested against a fake logger in `fakes.cpp`. The fake is the observable:
+tapping START has to actually reach `sdLogStart()` for its state to change, which covers
+navigation, hit-testing and dispatch without production code carrying test-only
+accessors.
 
 `test_ui.cpp` `#include`s `ui_am32.cpp` rather than linking it, so tests can read its
 file-static state without production code carrying test-only accessors. That's why the
@@ -424,7 +639,7 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs four jobs:
+`.github/workflows/ci.yml` runs five jobs:
 
 | Job | What it catches |
 |---|---|
@@ -504,6 +719,8 @@ words go out MSB-first with no software byte swapping. Commands go out in 8-bit 
 
 - [pico-bidir-dshot](https://github.com/bastian2001/pico-bidir-dshot) by bastian2001 — the
   PIO DShot implementation doing the actual protocol work.
+- [logwiju](https://subtilitas.github.io/logwiju/) — the browser-based blackbox viewer
+  these logs are meant to be read in. Said in German it is simply "logview".
 - [DShot — the missing handbook](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/)
 - [Extended DShot Telemetry](https://github.com/bird-sanctuary/extended-dshot-telemetry)
 - [Waveshare RP2350-Touch-LCD-2 wiki](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)

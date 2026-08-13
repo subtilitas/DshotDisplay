@@ -12,6 +12,11 @@ struct EscTelemetry;
 /** @brief Advance the virtual clock. Time only moves when a test says so. */
 void fakeAdvance(uint32_t ms);
 
+struct SdLogStatus;
+
+/** @brief Force the fake logger into a given state. @param st What to report. */
+void fakeSdLogSet(const SdLogStatus *st);
+
 /** @brief Begin a touch at (@p x, @p y); sets the one-poll `pressed` edge. */
 void fakePress(int x, int y);
 
@@ -35,6 +40,17 @@ bool fakePinReturned();
 
 /** @brief Set the telemetry the fake ESC reports. */
 void fakeSetTelemetry(const EscTelemetry *t);
+
+/**
+ * @brief FNV-1a over a rectangle of the framebuffer.
+ *
+ * For asserting that a region changed, or that two renders match, without
+ * depending on where individual glyphs land.
+ */
+uint32_t fakeRegionHash(int x, int y, int w, int h);
+
+/** @brief How many times the UI has asked for a beep. */
+int fakeBeepRequests();
 
 /** @brief Write the current framebuffer to a binary PPM, for eyeballing. */
 void fakeDumpFrame(const char *name);

@@ -26,6 +26,7 @@ typedef struct { int dummy; } FIL;
 typedef struct { FSIZE_t fsize; } FILINFO;
 
 FRESULT f_mount(FATFS *fs, const char *path, uint8_t opt);
+FRESULT f_unmount(const char *path);
 FRESULT f_open(FIL *fp, const char *path, uint8_t mode);
 FRESULT f_close(FIL *fp);
 FRESULT f_write(FIL *fp, const void *buf, UINT btw, UINT *bw);

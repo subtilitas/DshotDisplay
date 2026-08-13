@@ -15,6 +15,7 @@
 #include "ff.h"
 #include "f_util.h"
 #include "hw_config.h"
+#include "sd_card.h"
 
 #include <stdio.h>
 
@@ -26,6 +27,10 @@
 static FATFS s_fs;
 static FIL   s_file;
 static bool  s_mounted = false;
+static uint8_t  s_mountResult = 0;
+static uint8_t  s_cardType = 0;
+static uint32_t s_cardSectors = 0;
+static uint32_t s_cardSizeMB = 0;
 
 static SdLogState s_state = SdLogState::NoCard;
 static uint16_t   s_fileNo = 0;
@@ -39,6 +44,14 @@ static uint32_t s_worstFlushMs = 0;
 static uint32_t s_framesLogged = 0;
 static uint32_t s_cardBytes = 0;
 static bool     s_armed = false;
+/**
+ * @brief True when the log in progress was begun by arming, not by the button.
+ *
+ * Auto-stop must only undo what auto-start did. Entering the settings screen
+ * force-disarms -- and the logging screen is reached through it -- so without
+ * this, walking back to check on a log you started by hand is what stops it.
+ */
+static bool     s_autoStarted = false;
 
 /** @brief Microseconds between logged frames. */
 static const uint32_t kFramePeriodUs = 1000000u / SD_LOG_RATE_HZ;
@@ -53,11 +66,44 @@ static void ringSink(void *ctx, const uint8_t *data, size_t len) {
 	logRingWrite((LogRing *)ctx, data, (uint32_t)len);
 }
 
+/**
+ * @brief The FatFs drive prefix for our one card.
+ *
+ * Asked of the library rather than hardcoded as "0:". The prefix depends on how
+ * FatFs was configured -- numeric or string volume IDs, how many volumes -- and
+ * guessing it wrong fails as FR_INVALID_DRIVE, which looks identical to a
+ * missing card from the outside.
+ */
+static const char *drivePrefix() {
+	sd_card_t *card = sd_get_by_num(0);
+	return card ? sd_get_drive_prefix(card) : "";
+}
+
 bool sdLogBegin() {
 	// Pins come from sd_hw_config.c, which the driver reads at link time.
 	// Mounting is the only way to find out whether a card is fitted: this board
 	// brings no card-detect line out.
-	FRESULT fr = f_mount(&s_fs, "0:", 1);
+	FRESULT fr = f_mount(&s_fs, drivePrefix(), 1);
+	s_mountResult = (uint8_t)fr;
+
+	// Whatever the mount did, the driver has by now tried to talk to the card,
+	// so its type and size say whether anything answered at all. That separates
+	// "nothing on the bus" from "card works, filesystem unreadable" -- the two
+	// look the same from the outside and want completely different fixes.
+	sd_card_t *card = sd_get_by_num(0);
+	if (card) {
+		s_cardType = (uint8_t)card->state.card_type;
+		// The SDIO driver never fills card_type in -- it is an SPI-mode concept,
+		// set from the CMD58 response. Sector count is the interface-independent
+		// signal that something answered, so presence is judged on that.
+		// Reading card_type alone showed "NONE" for a card that had just
+		// mounted and written a file.
+		s_cardSectors = card->state.sectors;
+		if (!s_cardSectors && card->get_num_sectors)
+			s_cardSectors = card->get_num_sectors(card);
+		s_cardSizeMB = s_cardSectors / 2048u;
+	}
+
 	if (fr != FR_OK) {
 		// No card is the normal case on a bench, not a fault. Logging is simply
 		// unavailable and the UI says so.
@@ -70,6 +116,13 @@ bool sdLogBegin() {
 	logRingInit(&s_ring, s_ringBuf, sizeof(s_ringBuf));
 	s_state = SdLogState::Idle;
 	return true;
+}
+
+bool sdLogRemount() {
+	if (s_state == SdLogState::Logging) return true;
+	if (s_mounted) f_unmount(drivePrefix());
+	s_mounted = false;
+	return sdLogBegin();
 }
 
 /**
@@ -115,6 +168,7 @@ bool sdLogStart() {
 	BlackboxSink sink = { ringSink, &s_ring };
 	bbBegin(&s_enc, &sink, SD_LOG_I_INTERVAL);
 
+	s_autoStarted = false;   // callers that want auto set it after this returns
 	s_fileNo = n;
 	s_framesLogged = 0;
 	s_cardBytes = 0;
@@ -139,6 +193,7 @@ void sdLogStop() {
 	f_close(&s_file);
 
 	s_fileNo = 0;
+	s_autoStarted = false;
 	s_state = SdLogState::Idle;
 }
 
@@ -159,7 +214,8 @@ void sdLogTick(uint32_t nowUs, uint16_t throttle) {
 	escSnapshot(&t);
 
 	EscReading r;
-	escMerge(&t, millis(), KISS_STALE_MS, &r);
+	uint32_t nowMs = millis();
+	escMerge(&t, nowMs, KISS_STALE_MS, EDT_STALE_MS, &r);
 
 	int32_t v[BB_FIELD_COUNT] = {0};
 	// Every field but temperature is declared unsigned in the log header, and a
@@ -170,11 +226,17 @@ void sdLogTick(uint32_t nowUs, uint16_t throttle) {
 	v[BB_F_ERPM_KISS]    = (int32_t)r.kissErpm;
 	v[BB_F_VBAT]         = (int32_t)(r.voltsFrom == EscSource::Kiss ? t.kissVolts * 100.0f + 0.5f : 0.0f);
 	v[BB_F_AMPERAGE]     = (int32_t)(r.ampsFrom == EscSource::Kiss ? t.kissAmps * 100.0f + 0.5f : 0.0f);
-	v[BB_F_VBAT_EDT]     = (int32_t)(t.haveVolts ? t.volts * 100.0f + 0.5f : 0.0f);
-	v[BB_F_AMPERAGE_EDT] = (int32_t)(t.haveAmps ? t.amps * 100.0f + 0.5f : 0.0f);
+	// The EDT columns are logged raw rather than merged, so they need the same
+	// expiry applied by hand -- otherwise a disconnected ESC writes its last
+	// voltage into every subsequent frame and the trace shows a rock-steady
+	// pack instead of the moment the data stopped.
+	v[BB_F_VBAT_EDT]     = (int32_t)(escFieldFresh(t.edtVoltsMs, nowMs, EDT_STALE_MS)
+	                                 ? t.volts * 100.0f + 0.5f : 0.0f);
+	v[BB_F_AMPERAGE_EDT] = (int32_t)(escFieldFresh(t.edtAmpsMs, nowMs, EDT_STALE_MS)
+	                                 ? t.amps * 100.0f + 0.5f : 0.0f);
 	v[BB_F_TEMP]         = r.tempC;                    // the one signed field
 	v[BB_F_MAH]          = r.mah;
-	v[BB_F_STRESS]       = t.stress;
+	v[BB_F_STRESS]       = r.stress;
 
 	for (int i = 0; i < BB_FIELD_COUNT; i++) {
 		if (i != BB_F_TEMP && v[i] < 0) v[i] = 0;
@@ -214,6 +276,9 @@ void sdLogFlush() {
 
 void sdLogStatus(SdLogStatus *out) {
 	out->state        = s_state;
+	out->mountResult  = s_mountResult;
+	out->cardType     = s_cardType;
+	out->cardSizeMB   = s_cardSizeMB;
 	out->bytesWritten = s_cardBytes;
 	out->framesLogged = s_framesLogged;
 	out->bytesDropped = s_ring.dropped;
@@ -224,13 +289,15 @@ void sdLogStatus(SdLogStatus *out) {
 }
 
 void sdLogSetArmed(bool armed) {
-	if (armed == s_armed) return;
+	SdLogArmAction act = sdLogArmAction(armed, s_armed, sdLogActive(),
+	                                    s_autoStarted);
 	s_armed = armed;
 
-#if SD_LOG_AUTO_ON_ARM
-	if (armed) sdLogStart();
-	else       sdLogStop();
-#endif
+	switch (act) {
+		case SdLogArmAction::Start: s_autoStarted = sdLogStart(); break;
+		case SdLogArmAction::Stop:  sdLogStop();                  break;
+		case SdLogArmAction::None:                                break;
+	}
 }
 
 #else  // !SD_LOG_ENABLE
@@ -239,6 +306,7 @@ void sdLogSetArmed(bool armed) {
 bool sdLogBegin() { return false; }
 bool sdLogStart() { return false; }
 void sdLogStop() {}
+bool sdLogRemount() { return false; }
 bool sdLogActive() { return false; }
 void sdLogTick(uint32_t, uint16_t) {}
 void sdLogFlush() {}

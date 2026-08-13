@@ -12,8 +12,11 @@
 #include "fakes.h"
 #include "gfx.h"
 #include "ui.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
+#include "esc_merge.h"
+#include "sd_log.h"
+#include "plat.h"
 
 #include "../src/ui_am32.cpp"   // NOLINT -- see the note above
 
@@ -58,7 +61,12 @@ static void swipe(int x0, int x1, int y, int step) {
 #define BTN_ARM_Y   299
 #define BTN_HOLD_X  143
 #define BTN_CFG_X   205
-#define BTN_AM32_Y  275   // BTN_AM32 spans 256..293
+// The AM32 row is split: AM32 on the left, SD LOG on the right, with a gap
+// between them. Tapping the row centre lands in that gap and hits neither,
+// which is how this constant first went wrong.
+#define BTN_AM32_X   66   // BTN_AM32 spans x 14..117
+#define BTN_LOG_X   174   // BTN_LOG  spans x 122..225
+#define BTN_AM32_Y  275   // both span y 256..293
 // --- config-screen coordinates ---
 #define AM32_BACK_X 216
 #define AM32_BACK_Y  23
@@ -67,17 +75,364 @@ static void swipe(int x0, int x1, int y, int step) {
 #define AM32_EDIT_Y 240
 #define AM32_WRITE_X 50
 #define AM32_WRITE_Y 290
+// --- settings-screen command buttons, mirroring ui.cpp ---
+#define CFG_BEEP_X  120   // BTN_BEEP spans the full row, x 14..225
+#define CFG_CMD_Y_T 219   // y 200..237
+// --- logging-screen coordinates, mirroring ui.cpp ---
+#define LOG_TOGGLE_Y 232
+#define LOG_RETRY_Y  270
+#define LOG_BACK_Y   296
 
-void runUiTests() {
+/**
+ * @brief The standard "ESC is talking" fixture, stamped as having just arrived.
+ *
+ * Call it again to keep the data alive. A real ESC sends continuously, but the
+ * fake serves one frozen snapshot, so without re-stamping the readings expire
+ * mid-test exactly as they are meant to -- which is correct behaviour and a
+ * useless screenshot.
+ */
+static void feedLiveTelemetry() {
 	EscTelemetry tel;
 	memset(&tel, 0, sizeof(tel));
 	tel.erpm = 84210; tel.rpm = 12030;
-	tel.volts = 15.8f; tel.haveVolts = true;
-	tel.amps = 23.4f;  tel.haveAmps = true;
-	tel.tempC = 46;    tel.haveTemp = true;
-	tel.stress = 12;   tel.haveStress = true;
+	tel.volts = 15.8f; tel.edtVoltsMs  = millis();
+	tel.amps = 23.4f;  tel.edtAmpsMs   = millis();
+	tel.tempC = 46;    tel.edtTempMs   = millis();
+	tel.stress = 12;   tel.edtStressMs = millis();
+	tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
 	tel.packetRate = 998;
 	fakeSetTelemetry(&tel);
+}
+
+/** @brief Hold the ARM button long enough to actually arm. */
+static void holdToArm() {
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	for (int i = 0; i < 60; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	fakeRelease(); frames(2);
+}
+
+/**
+ * @brief Navigate main -> SETTINGS -> SD LOG.
+ *
+ * Assumes the main screen is showing and the ESC is disarmed.
+ */
+static void enterLogScreen() {
+	tap(BTN_CFG_X, BTN_ARM_Y);
+	tap(BTN_LOG_X, BTN_AM32_Y);
+}
+
+/**
+ * @brief The logging screen's buttons, checked through the fake logger.
+ *
+ * No probe into ui.cpp is needed: the fake *is* the observable. Tapping START
+ * has to reach sdLogStart() for the fake's state to change, so this exercises
+ * the real navigation, hit-testing and dispatch rather than asserting on
+ * pixels.
+ */
+static void testLogScreen() {
+	section("SD logging screen");
+
+	// A card that mounted but is not recording.
+	SdLogStatus st;
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Idle;
+	fakeSdLogSet(&st);
+
+	enterLogScreen();
+	frames(2);
+	checkTrue("not recording on arrival", !sdLogActive());
+	fakeDumpFrame("shot_log_ready.ppm");
+
+	tap(120, LOG_TOGGLE_Y + 20);
+	checkTrue("START begins a log", sdLogActive());
+
+	sdLogStatus(&st);
+	checkTrue("a file number is assigned", st.fileNumber != 0);
+
+	tap(120, LOG_TOGGLE_Y + 20);
+	checkTrue("STOP ends it", !sdLogActive());
+
+	// Counters worth showing: a full buffer and lost frames are the two things
+	// the screen exists to make visible.
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Logging;
+	st.fileNumber = 42;
+	st.framesLogged = 12345;
+	st.bytesWritten = 178000;
+	st.dropEvents = 3;
+	st.peakBuffer = 7000;
+	st.worstFlushMs = 64;
+	fakeSdLogSet(&st);
+	frames(2);
+	fakeDumpFrame("shot_log_screen.ppm");
+
+	// With no card, START must not pretend to have started.
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::NoCard;
+	st.mountResult = 3;          // FR_NOT_READY: nothing answered on the bus
+	fakeSdLogSet(&st);
+	frames(2);
+	// The first thing anyone sees, since the card slot is empty by default.
+	fakeDumpFrame("shot_log_nocard.ppm");
+	tap(120, LOG_TOGGLE_Y + 20);
+	checkTrue("START does nothing without a card", !sdLogActive());
+
+	// A card inserted after boot. sdLogBegin() only runs once, so without this
+	// button the card would stay invisible until a power cycle -- which looks
+	// exactly like a card the firmware cannot read.
+	tap(120, LOG_RETRY_Y + 11);
+	frames(2);
+	sdLogStatus(&st);
+	checkTrue("RETRY finds a card inserted later",
+	          st.state == SdLogState::Idle);
+	checkInt("and reports it mounted cleanly", st.mountResult, 0);
+	checkInt("with its type", st.cardType, 3);
+	checkTrue("and its size", st.cardSizeMB > 100000);
+	fakeDumpFrame("shot_log_mounted.ppm");
+
+	tap(120, LOG_BACK_Y + 9);
+	frames(2);
+}
+
+/**
+ * @brief A hand-started log must survive arming and the disarm that follows.
+ *
+ * Reported from hardware, and a good bug: entering the settings screen
+ * force-disarms, and the logging screen is reached *through* settings. So
+ * auto-stop-on-disarm cancelled exactly the log you walked over to check on,
+ * and there was no way to observe a manual log without ending it.
+ */
+static void testManualLogSurvivesArming() {
+	section("Manual logging vs auto-on-arm");
+
+	SdLogStatus st;
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Idle;
+	st.cardSizeMB = 61000;
+	fakeSdLogSet(&st);
+
+	enterLogScreen();
+	tap(120, LOG_TOGGLE_Y + 17);
+	checkTrue("manual START begins a log", sdLogActive());
+
+	// Back to the main screen and arm.
+	tap(120, LOG_BACK_Y + 9);
+	frames(2);
+	// A tap will not arm: it takes a one-second hold, and using tap() here is
+	// how an earlier version of this test passed against the broken rule.
+	holdToArm();
+	checkTrue("actually armed", uiArmed());
+	checkTrue("still logging while armed", sdLogActive());
+
+	// Walking back to the logging screen goes through settings, which
+	// force-disarms. That must not end a log the operator started.
+	enterLogScreen();
+	frames(2);
+	checkTrue("armed state cleared by entering settings", !uiArmed());
+	checkTrue("manual log survives the force-disarm", sdLogActive());
+
+	// STOP is still the operator's to press.
+	tap(120, LOG_TOGGLE_Y + 17);
+	checkTrue("manual STOP ends it", !sdLogActive());
+	tap(120, LOG_BACK_Y + 9);
+	frames(2);
+}
+
+/**
+ * @brief The main screen with KISS telemetry live.
+ *
+ * The merge policy itself is unit-tested in test_kiss.cpp; what this covers is
+ * that the UI actually goes through escMerge() rather than reading the EDT
+ * fields directly, which is what it did before.
+ */
+static void testKissDisplay() {
+	section("KISS on the main screen");
+
+	EscTelemetry tel;
+	memset(&tel, 0, sizeof(tel));
+	tel.erpm = 84210; tel.rpm = 12030;
+	tel.volts = 15.75f; tel.edtVoltsMs  = millis();  // EDT: 0.25 V steps
+	tel.amps = 23.0f;   tel.edtAmpsMs   = millis();  // EDT: whole amps
+	tel.tempC = 46;     tel.edtTempMs   = millis();
+	tel.stress = 12;    tel.edtStressMs = millis();
+	tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
+	tel.packetRate = 998;
+
+	// Fresh KISS, with values deliberately distinguishable from the EDT ones so
+	// a screenshot shows which source won.
+	tel.haveKiss   = true;
+	tel.kissLastMs = millis();
+	tel.kissVolts  = 15.83f;
+	tel.kissAmps   = 23.47f;
+	tel.kissTempC  = 47;
+	tel.kissMah    = 812;
+	tel.kissErpm   = 84200;
+	fakeSetTelemetry(&tel);
+	frames(2);
+	fakeDumpFrame("shot_tester_kiss.ppm");
+
+	// Merge is per-field and time-based, so let KISS go stale and confirm the
+	// screen falls back rather than freezing the fine values.
+	EscReading r;
+	escMerge(&tel, tel.kissLastMs + KISS_STALE_MS, KISS_STALE_MS, EDT_STALE_MS, &r);
+	checkTrue("stale KISS falls back to EDT", r.voltsFrom == EscSource::Edt);
+	escMerge(&tel, tel.kissLastMs + 1, KISS_STALE_MS, EDT_STALE_MS, &r);
+	checkTrue("fresh KISS is preferred", r.voltsFrom == EscSource::Kiss);
+	checkInt("and carries 0.01 V resolution",
+	         (long)(r.volts * 100.0f + 0.5f), 1583);
+}
+
+/**
+ * @brief Telemetry blanks when the ESC stops answering.
+ *
+ * Reported as: readings stay on screen after the ESC is unplugged or swapped,
+ * looking exactly like live data from hardware that is no longer there.
+ *
+ * The merge policy has its own unit tests. What this covers is the part those
+ * cannot: that the screen actually goes through it, and that an expired
+ * reading renders identically to one that never arrived. Anything less strict
+ * -- "the region changed" -- would pass on a display that merely dimmed the
+ * stale number while still showing it.
+ */
+static void testTelemetryExpires() {
+	section("Telemetry expiry on screen");
+
+	// The LINK tile is excluded from every comparison below. Packet rate is a
+	// rolling count of the last second's frames, so on hardware it falls to
+	// zero by itself -- but the fake serves one fixed snapshot forever, so it
+	// stays pinned at 998 and would mask the tiles that do expire.
+	// Everything else in the band is covered: both top rows, plus the status
+	// tile in the bottom-left.
+	auto tiles = []() {
+		return fakeRegionHash(0, 128, 240, 70) ^ fakeRegionHash(0, 199, 120, 34);
+	};
+
+	// Baseline: an ESC that has never said anything.
+	EscTelemetry none;
+	memset(&none, 0, sizeof(none));
+	fakeSetTelemetry(&none);
+	frames(2);
+	uint32_t blank = tiles();
+
+	EscTelemetry tel;
+	memset(&tel, 0, sizeof(tel));
+	tel.erpm = 84210; tel.rpm = 12030;
+	tel.volts = 15.75f; tel.edtVoltsMs  = millis();
+	tel.amps  = 23.0f;  tel.edtAmpsMs   = millis();
+	tel.tempC = 46;     tel.edtTempMs   = millis();
+	tel.stress = 12;    tel.edtStressMs = millis();
+	tel.warning = true; tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
+	tel.packetRate = 998;
+	fakeSetTelemetry(&tel);
+	frames(2);
+	uint32_t live = tiles();
+	checkTrue("live telemetry differs from blank", live != blank);
+	fakeDumpFrame("shot_tester_live.ppm");
+
+	// Still inside the window. frames() advances the clock itself, so the
+	// budget has to cover the ticks as well as the wait -- getting that wrong
+	// is what made this test fail first time round.
+	fakeAdvance(EDT_STALE_MS - 200);
+	frames(2);
+	checkTrue("still shown just inside the window", tiles() == live);
+
+	// Past it: gone, and gone completely. "The region changed" would not be
+	// enough -- that passes on a display that merely dims a stale number while
+	// still showing it.
+	fakeAdvance(250);
+	frames(2);
+	uint32_t stale = tiles();
+	checkTrue("expired telemetry is cleared", stale != live);
+	checkTrue("and is indistinguishable from never-seen", stale == blank);
+	fakeDumpFrame("shot_tester_stale.ppm");
+}
+
+/**
+ * @brief The EDT chip tracks reception, and BEEP acknowledges a press.
+ *
+ * BEEP was reported as showing no reaction. The command was going out -- the
+ * ESC beeped -- but nothing on screen moved, because the command is over in
+ * about 6 ms and the UI repaints at 40 Hz.
+ *
+ * The EDT chip beside it is read-only. There is no enable button any more:
+ * the firmware sends one to each ESC as it appears, so the control was for
+ * something already handled. What remains is worth showing, because "green"
+ * and "all four telemetry tiles read --" are the same fact.
+ */
+static void testSettingsCommandRow() {
+	section("Settings command row");
+
+	feedLiveTelemetry();
+	tap(BTN_CFG_X, BTN_ARM_Y);          // into settings (this force-disarms)
+	frames(2);
+	uint32_t chipOn = fakeRegionHash(120, 0, 120, 26);
+	uint32_t idle   = fakeRegionHash(0, 195, 240, 55);
+	fakeDumpFrame("shot_config_edt_on.ppm");
+
+	// Letting telemetry expire has to change the chip, or the colour is
+	// decoration rather than a readout.
+	EscTelemetry none;
+	memset(&none, 0, sizeof(none));
+	fakeSetTelemetry(&none);
+	frames(2);
+	checkTrue("EDT chip changes when telemetry stops",
+	          fakeRegionHash(120, 0, 120, 26) != chipOn);
+	fakeDumpFrame("shot_config_edt_off.ppm");
+	feedLiveTelemetry();
+	frames(2);
+	checkTrue("and changes back when it returns",
+	          fakeRegionHash(120, 0, 120, 26) == chipOn);
+
+	// The chip is not a button. Tapping it must not be mistaken for one.
+	int beepBefore = fakeBeepRequests();
+	tap(200, 12);
+	checkInt("tapping the chip does nothing", fakeBeepRequests(), beepBefore);
+
+	// BEEP now has the row to itself, so a tap anywhere along it lands.
+	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	checkInt("tapping BEEP sends the command", fakeBeepRequests(), beepBefore + 1);
+	uint32_t lit = fakeRegionHash(0, 195, 240, 55);
+	checkTrue("and the button acknowledges it", lit != idle);
+	fakeDumpFrame("shot_config_beep_flash.ppm");
+
+	fakeAdvance(400);
+	frames(2);
+	checkTrue("the flash clears itself",
+	          fakeRegionHash(0, 195, 240, 55) == idle);
+
+	// Left-hand end of the row, where the EDT button used to be.
+	fakePress(40, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	checkInt("the old EDT slot is BEEP now", fakeBeepRequests(), beepBefore + 2);
+	fakeAdvance(400); frames(2);
+
+	// Refusal. Not reachable by hand -- opening settings force-disarms and
+	// there is no ARM control on that screen -- so this drives the arm state
+	// directly. It is tested because the request can refuse, not because a
+	// user can currently make it.
+	escSetArmed(true);
+	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
+	uint32_t refused = fakeRegionHash(0, 195, 240, 55);
+	checkTrue("a refused command looks different from an accepted one",
+	          refused != lit && refused != idle);
+	fakeDumpFrame("shot_config_beep_refused.ppm");
+	escSetArmed(false);
+	fakeAdvance(400); frames(2);
+
+	tap(120, 308);                      // BACK, spans y 300..317
+	frames(2);
+}
+
+void runUiTests() {
+	// Off zero before anything is stamped. Virtual time starts at 0, and 0 is
+	// reserved for "this frame type has never arrived" -- so telemetry stamped
+	// at t=0 is correctly treated as absent, and every screenshot below would
+	// render an ESC that had said nothing.
+	fakeAdvance(1000);
+
+	feedLiveTelemetry();
 
 	gfxInit();
 	// Render the real splash, so the documentation screenshot cannot drift
@@ -99,6 +454,7 @@ void runUiTests() {
 		int tx = 8 + (224 * 70 / 100);
 		fakePress(tx, 260); frames(1); fakeHold(tx, 260); frames(2);
 		checkInt("drag to 70% of track", fakeThrottle(), 400 * 70 / 100, 6);
+		feedLiveTelemetry(); frames(2);   // the arm hold outlasted the fixture
 		fakeDumpFrame("shot_tester_armed.ppm");
 		fakeRelease(); frames(2);
 		checkInt("springs back to zero on release", fakeThrottle(), 0);
@@ -149,7 +505,7 @@ void runUiTests() {
 		tap(BTN_CFG_X, BTN_ARM_Y);
 		checkTrue("entering settings force-disarms", !fakeArmed());
 		fakeDumpFrame("shot_settings.ppm");
-		tap(120, BTN_AM32_Y);
+		tap(BTN_AM32_X, BTN_AM32_Y);
 		for (int i = 0; i < 8; i++) frames(1);
 		checkTrue("settings read and decoded", uiVisibleCount() > 0);
 		checkInt("poles decoded", uiByte(0x1B), 14);
@@ -233,4 +589,10 @@ void runUiTests() {
 		checkTrue("old hardcoded placement would overflow",
 		          24 + gfxTextW("DSHOT DISPLAY", 3) > GFX_W);
 	}
+
+	testLogScreen();
+	testManualLogSurvivesArming();
+	testKissDisplay();
+	testTelemetryExpires();
+	testSettingsCommandRow();
 }

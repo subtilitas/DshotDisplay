@@ -43,7 +43,7 @@ static uint32_t s_nextSendUs = 0;   /**< Deadline for the next frame. */
 static uint32_t s_lastRateMs = 0;   /**< Last time the rate counters rolled up. */
 static uint32_t s_rateGoodMark = 0; /**< goodPackets at the last roll-up. */
 static uint32_t s_rateBadMark = 0;  /**< badPackets at the last roll-up. */
-static bool     s_edtAutoDone = false; /**< Automatic EDT enable has fired. */
+static bool     s_edtAutoDone = false; /**< Enable sent to the ESC now connected. */
 /** @} */
 
 #if KISS_TELEM_ENABLE
@@ -120,19 +120,13 @@ void escHeartbeat() {
 	s_heartbeatMs = millis();
 }
 
-void escRequestEdtEnable() {
-	if (s_armed) return;               // commands are only valid when disarmed
-	s_pendingCmd  = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
-	s_pendingReps = 10;                // spec asks for 6; a few spare frames
-	s_edtRequested = true;
-}
-
-void escRequestBeep(uint8_t n) {
-	if (s_armed) return;
+bool escRequestBeep(uint8_t n) {
+	if (s_armed) return false;
 	if (n < 1) n = 1;
 	if (n > 5) n = 5;
 	s_pendingCmd  = (uint8_t)(DSHOT_CMD_BEACON1 + (n - 1));
 	s_pendingReps = 6;
+	return true;
 }
 
 bool escEdtRequested() { return s_edtRequested; }
@@ -163,12 +157,18 @@ void escSnapshot(EscTelemetry *out) {
 	critical_section_exit(&s_cs);
 }
 
-void escTaskBegin() {
+void escTaskInit() {
+	// Core0 owns this, and must do it before core1 is launched. See the note in
+	// esc_task.h: core0's first uiTick() calls escSnapshot(), which enters this
+	// critical section, and it will get there long before core1 has booted.
 	critical_section_init(&s_cs);
 	memset((void *)&s_tel, 0, sizeof(s_tel));
+}
 
-	s_esc = new BidirDShotX1(DSHOT_PIN, DSHOT_SPEED_KBAUD);
+void escTaskBegin() {
+	critical_section_enter_blocking(&s_cs);
 	s_tel.initError = s_esc->initError();
+	critical_section_exit(&s_cs);
 
 #if KISS_TELEM_ENABLE
 	memset(&s_kiss, 0, sizeof(s_kiss));
@@ -206,22 +206,22 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 			break;
 		case BidirDshotTelemetryType::VOLTAGE:
 			s_tel.volts = value * 0.25f;
-			s_tel.haveVolts = true;
+			s_tel.edtVoltsMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::CURRENT:
 			s_tel.amps = (float)value;
-			s_tel.haveAmps = true;
+			s_tel.edtAmpsMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::TEMPERATURE:
 			s_tel.tempC = (int16_t)value;
-			s_tel.haveTemp = true;
+			s_tel.edtTempMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::STRESS:
 			s_tel.stress = (uint8_t)value;
-			s_tel.haveStress = true;
+			s_tel.edtStressMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::STATUS:
@@ -230,6 +230,7 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 			s_tel.error     = (value & ESC_STATUS_ERROR_MASK)   != 0;
 			s_tel.warning   = (value & ESC_STATUS_WARNING_MASK) != 0;
 			s_tel.alert     = (value & ESC_STATUS_ALERT_MASK)   != 0;
+			s_tel.edtStatusMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::DEBUG_FRAME_1:
@@ -303,12 +304,30 @@ void escTaskPoll() {
 	uint32_t ms = millis();
 	bool uiAlive = (uint32_t)(ms - s_heartbeatMs) < UI_HEARTBEAT_TIMEOUT_MS;
 
-	// Once the ESC has been fed idle frames for a moment, turn EDT on.
-	if (!s_edtAutoDone && ms > 1500) {
-		s_edtAutoDone = true;
-		s_pendingCmd  = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
-		s_pendingReps = 10;
-		s_edtRequested = true;
+	// Turn EDT on once per ESC, as soon as one actually answers. lastRpmMs is
+	// written by applyTelemetry() on this core, so reading it here needs no
+	// lock. See edtAutoAction() for why this waits for eRPM rather than a
+	// timer.
+	bool linkUp = s_tel.lastRpmMs != 0 &&
+	              (uint32_t)(ms - s_tel.lastRpmMs) < ESC_LINK_STALE_MS;
+	switch (edtAutoAction(linkUp, s_edtAutoDone)) {
+		case EdtAutoAction::Send:
+			// DShot commands only take while disarmed, so if the tester is
+			// armed when the ESC appears, leave the one-shot unfired and try
+			// again next frame rather than marking it done and never sending.
+			if (s_armed) break;
+			s_edtAutoDone  = true;
+			s_pendingCmd   = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
+			s_pendingReps  = 10;
+			s_edtRequested = true;
+			break;
+		case EdtAutoAction::Rearm:
+			// The ESC is gone. Whatever replaces it is a different ESC and
+			// needs its own enable, so put the one-shot back.
+			s_edtAutoDone = false;
+			break;
+		case EdtAutoAction::None:
+			break;
 	}
 
 #if KISS_TELEM_ENABLE

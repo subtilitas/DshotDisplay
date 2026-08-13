@@ -1,10 +1,12 @@
 /**
  * @file st7789.h
- * @brief ST7789T3 panel driver for the Waveshare RP2350-Touch-LCD-2 (240x320).
+ * @brief ST7789T3 panel driver, 240x320, for both supported boards.
  *
- * Talks to the panel over hardware SPI0 with a dedicated DMA channel for pixel
- * pushes. Commands go out in 8-bit SPI frames; pixels go out in 16-bit frames
- * so RGB565 words land on the wire MSB-first with no software byte swapping.
+ * Talks to the panel over the hardware SPI instance the board header names in
+ * `LCD_SPI_PORT` (SPI0 on the 2.0" board, SPI1 on the 2.8"), with a
+ * dedicated DMA channel for pixel pushes. Commands go out in 8-bit SPI frames;
+ * pixels go out in 16-bit frames so RGB565 words land on the wire MSB-first
+ * with no software byte swapping.
  */
 
 #pragma once
@@ -12,11 +14,12 @@
 #include <stdint.h>
 
 /**
- * @brief Bring up SPI0, the DMA channel, and the panel itself.
+ * @brief Bring up `LCD_SPI_PORT`, the DMA channel, and the panel itself.
  *
- * @warning This pulses @ref PIN_LCD_RST, which is the same net as the touch
- *          controller's reset line. touchInit() must be called after this, not
- *          before.
+ * @warning This pulses `PIN_LCD_RST`. On the 2.0" board that is the same net
+ *          as the touch controller's reset line, so touchInit() must be called
+ *          after this, not before. The 2.8" board separates them, but the
+ *          ordering rule is the same on both so callers need not branch.
  */
 void st7789Init();
 
