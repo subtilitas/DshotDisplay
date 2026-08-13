@@ -1,13 +1,16 @@
 # SD logging in Betaflight blackbox format
 
-Status: implemented, not yet run against a card.
+Status: **working on hardware, both boards.** See "Bring-up" below.
 Branch: `dev/telemetry-logging`, ported to the native Pico SDK on
 `dev/pico-sdk-native`.
 
 ## Why blackbox format rather than CSV
 
-A CSV would be less work. The reason not to is tooling: Blackbox Explorer,
-`blackbox_decode`, PIDtoolbox and Plasmatree all read this format already. A log
+A CSV would be less work. The reason not to is tooling:
+[logwiju](https://subtilitas.github.io/logwiju/) — the intended viewer here, a
+browser-based plotter that takes a `.BFL` off the card with nothing to install —
+along with Blackbox Explorer, `blackbox_decode`, PIDtoolbox and Plasmatree, all
+read this format already. A log
 that opens in Blackbox Explorer can be scrubbed, zoomed and overlaid against
 flight logs from the same ESC on a real craft, which is exactly the comparison a
 bench tester exists to make.
@@ -19,15 +22,16 @@ validating its output with the actual `blackbox_decode` binary in CI.
 
 ## Scope
 
-**2.0" board only.** The 2.8" board's SD pins do not map onto any hardware SPI
-instance — `SD_SCK` is GP19, which is SPI0 **TX** in the RP2350 pin mux, not
-SCK — so it would need a PIO-SPI or SDIO driver. Out of scope. This branch is
-cut from `main`, which is 2.0"-only, so there is nothing to compile out.
-(`SD_LOG_ENABLE` exists anyway, and CI builds both settings.)
+Both boards, by two different interfaces. This started as 2.0"-only and the 2.8"
+was added later, when the 2.0" board in hand turned out to have a hardware fault
+and the question became which board could read a card at all.
 
 ## Hardware
 
-Pins are already in `board_pins.h` and map cleanly onto SPI1:
+The pins live in the per-board headers. The interface is chosen at compile time
+from `SD_IFACE_SPI` / `SD_IFACE_SDIO`, which `sd_hw_config.c` keys off.
+
+**RP2350-Touch-LCD-2 (2.0") — hardware SPI1, one bit wide:**
 
 | Signal | GPIO | SPI1 function |
 |---|---|---|
@@ -38,6 +42,24 @@ Pins are already in `board_pins.h` and map cleanly onto SPI1:
 
 The display is on SPI0, so SD writes and the display's multi-millisecond DMA
 bursts do not contend for a peripheral. They still contend for core0 time.
+
+**RP2350-Touch-LCD-2.8 — PIO SDIO, four bits wide:**
+
+| Signal | GPIO |
+|---|---|
+| `PIN_SD_SCK` (CLK) | 19 |
+| `PIN_SD_CMD` | 20 |
+| `PIN_SD_D0`..`D3` | 21, 22, 23, 24 |
+
+Hardware SPI is impossible there — `SD_SCK` is GP19, which is SPI0 **TX** in the
+pin mux, not SCK. SDIO is not a workaround though: the pins satisfy every
+constraint the PIO program imposes (D1..D3 directly follow D0, and CLK is
+`(D0 + 30) % 32`), so the board was laid out for it. Four bits is also faster
+than one, and it mounts at 25 MHz.
+
+SDIO runs on **pio1** because the DShot driver has pio0. Left to themselves both
+would claim state machines on the same block, and whichever initialised second
+would fail depending on timing.
 
 Library: FatFs, via carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`. `f_expand()`
 reserves a contiguous cluster run up front so writes do not stall on FAT
@@ -145,9 +167,10 @@ motor. See [kiss-telemetry.md](kiss-telemetry.md#erpm-which-source-is-actually-f
 `eRPMkiss[0]` updates at ~50 Hz, so under a `PREVIOUS` predictor it costs one
 byte per P frame for the ~19 frames in 20 where it has not changed.
 
-Open: whether to log the merged value plus a source flag, or KISS and EDT as
-separate fields. Separate is better for validating the KISS decoder and worse
-for tool compatibility. Possibly a debug-mode switch.
+Settled: both sources are logged separately. It costs about two bytes a frame
+and it means the KISS decoder can be checked against EDT from the log itself
+rather than trusted. The UI shows the merged value with a source tag; the log
+keeps them apart.
 
 ## Rate and volume
 
@@ -225,19 +248,49 @@ the workflow or vendoring a binary. Building from source is slower but honest.
 5. `src/sd_log.cpp` — card init, pre-allocation, ring buffer, chunked flush,
    overrun counting.
 6. Field table wired to `EscTelemetry` + throttle.
-7. UI: card status, start/stop, bytes written, drops.
+7. UI: card status, start/stop, bytes written, drops. *Done: CFG -> SD LOG,
+   plus a REC indicator in the status bar.*
 8. `config.h`: log rate, I interval, buffer size, field selection.
 9. Hardware bring-up: measure real throughput and worst-case stall; size the
    buffer from that rather than the guess above.
 10. README section.
 
+## Bring-up
+
+Both boards mount a card and write logs. The 2.8" did it first, over SDIO at
+25 MHz; the 2.0" followed once its board was replaced.
+
+The first attempt on the 2.0" never reached the code at all. Every card reported
+FatFs `FR_NOT_READY` at every clock rate from 12 MHz down to 200 kHz, and
+`tools/sdtest` found why: **GPIO27, the CMD line, was shorted to ground on that
+particular board.** It could not be driven high push-pull with the slot empty,
+so the card could never receive a command. A replacement board works over the
+same SPI path, so it was a unit fault rather than anything in the design.
+
+Ruled out along the way, none of it worth repeating: the pin map (confirmed
+against the schematic netlist), the SPI clock (all five rates failed
+identically), exFAT (enabled), SDXC (HCS/CCS handled), the driver's init
+sequence (correct 74-clock preamble), and the integration (`tools/sdtest` shares
+only sd_hw_config.c with the firmware and failed the same way).
+
+Two of my own mistakes are worth recording, because both produced confident
+wrong answers:
+
+- The pin test used an internal pull-down, which triggers **RP2350-E9** — a pad
+  so configured latches at ~2.1 V and reads high from then on. It duly reported
+  six perfectly good SDIO lines as "held high". The test now drives the pad and
+  reads back instead, which the erratum does not affect.
+- "Retry at a lower clock" retried nothing: the driver caches both the SPI setup
+  and the card state and revisits neither, so every attempt used the first
+  speed.
+
+Still unmeasured: BUF PEAK and WORST FLUSH under sustained logging, which are
+what should size `SD_LOG_BUFFER_BYTES`. 8 kB remains a guess.
+
 ## Open questions
 
-- Log the merged voltage/current, or KISS and EDT separately? Affects the field
-  table and tool compatibility.
-- Auto-start on arm, or manual only?
 - Is a `S` (slow) frame worth it for temperature and status, or is the saving
-  too small to justify the extra frame type?
+  too small to justify the extra frame type? Still open, and minor.
 - Does anything downstream care that `Firmware type` claims Cleanflight? That is
   what Betaflight itself writes, so probably not, but it is a lie worth knowing
   we are telling.

@@ -260,12 +260,20 @@ static void testPayloadBuilder() {
 /** @brief An EDT-only telemetry block: every EDT field present, no KISS. */
 static void edtOnly(EscTelemetry *t) {
 	memset(t, 0, sizeof(*t));
-	t->volts = 12.25f; t->haveVolts = true;   // EDT resolution: 0.25 V steps
-	t->amps  = 3.0f;   t->haveAmps  = true;   // EDT resolution: whole amps
-	t->tempC = 40;     t->haveTemp  = true;
+	t->volts = 12.25f; t->edtVoltsMs = 1;   // EDT resolution: 0.25 V steps
+	t->amps  = 3.0f;   t->edtAmpsMs  = 1;   // EDT resolution: whole amps
+	t->tempC = 40;     t->edtTempMs  = 1;
 	t->erpm  = 70000;
 	t->rpm   = 10000;
 }
+
+/**
+ * @brief Wide enough that EDT never expires during a test.
+ *
+ * The KISS-preference tests call escMerge() at scattered timestamps, and EDT
+ * expiry is not what they are about. Its own edge is testEdtStaleness().
+ */
+static const uint32_t EDT_NEVER = 1000000u;
 
 /** @brief Per-field preference and the staleness edge. */
 static void testMerge() {
@@ -276,7 +284,7 @@ static void testMerge() {
 
 	// No KISS at all: everything falls back to EDT.
 	edtOnly(&t);
-	escMerge(&t, 1000, 500, &r);
+	escMerge(&t, 1000, 500, EDT_NEVER, &r);
 	checkTrue("EDT used when KISS absent", r.voltsFrom == EscSource::Edt);
 	checkInt("EDT volts x100", (long)(r.volts * 100.0f + 0.5f), 1225);
 	checkTrue("no mAh without KISS", r.mahFrom == EscSource::None);
@@ -291,7 +299,7 @@ static void testMerge() {
 	t.kissTempC = 41;
 	t.kissMah = 250;
 	t.kissErpm = 69900;
-	escMerge(&t, 1000, 500, &r);
+	escMerge(&t, 1000, 500, EDT_NEVER, &r);
 	checkTrue("KISS preferred when fresh", r.voltsFrom == EscSource::Kiss);
 	checkInt("KISS volts x100", (long)(r.volts * 100.0f + 0.5f), 1237);
 	checkInt("KISS amps x100", (long)(r.amps * 100.0f + 0.5f), 342);
@@ -306,9 +314,9 @@ static void testMerge() {
 	checkTrue("KISS erpm flagged present", r.haveKissErpm);
 
 	// The staleness edge. 499 ms old is fresh, 500 is not.
-	escMerge(&t, 900 + 499, 500, &r);
+	escMerge(&t, 900 + 499, 500, EDT_NEVER, &r);
 	checkTrue("499 ms old is fresh", r.voltsFrom == EscSource::Kiss);
-	escMerge(&t, 900 + 500, 500, &r);
+	escMerge(&t, 900 + 500, 500, EDT_NEVER, &r);
 	checkTrue("500 ms old is stale", r.voltsFrom == EscSource::Edt);
 	checkInt("falls back to EDT volts", (long)(r.volts * 100.0f + 0.5f), 1225);
 
@@ -321,7 +329,7 @@ static void testMerge() {
 	// KISS present but EDT never seen: stale KISS leaves nothing behind.
 	memset(&t, 0, sizeof(t));
 	t.haveKiss = true; t.kissLastMs = 0; t.kissVolts = 12.0f;
-	escMerge(&t, 5000, 500, &r);
+	escMerge(&t, 5000, 500, EDT_NEVER, &r);
 	checkTrue("no source at all", r.voltsFrom == EscSource::None);
 	checkInt("reads zero, not stale data", (long)(r.volts * 100.0f), 0);
 }
@@ -337,12 +345,116 @@ static void testMergeWraparound() {
 
 	// Frame arrived 100 ms before the counter wrapped; "now" is 50 ms after.
 	t.kissLastMs = 0xFFFFFF9Cu;      // -100 as unsigned
-	escMerge(&t, 50, 500, &r);
+	escMerge(&t, 50, 500, EDT_NEVER, &r);
 	checkTrue("150 ms across the wrap is fresh", r.voltsFrom == EscSource::Kiss);
 
 	// Same frame, but now 600 ms have passed across the wrap.
-	escMerge(&t, 500, 500, &r);
+	escMerge(&t, 500, 500, EDT_NEVER, &r);
 	checkTrue("600 ms across the wrap is stale", r.voltsFrom == EscSource::Edt);
+}
+
+/**
+ * @brief EDT fields expire; they do not hold their last value forever.
+ *
+ * This is the bug the timestamps replaced `have*` flags for. A boolean that
+ * only ever goes true meant unplugging the ESC, or swapping it for a different
+ * one, left the previous readings on screen looking entirely live.
+ */
+static void testEdtStaleness() {
+	section("EDT expiry");
+
+	EscTelemetry t;
+	EscReading r;
+	edtOnly(&t);                       // stamps every EDT field at t=1
+	t.stress = 77;
+	t.edtStressMs = 1;
+	t.warning = true;
+	t.edtStatusMs = 1;
+
+	escMerge(&t, 1 + 999, 500, 1000, &r);
+	checkTrue("999 ms old is fresh", r.voltsFrom == EscSource::Edt);
+	checkInt("and carries its value", (long)(r.volts * 100.0f + 0.5f), 1225);
+	checkTrue("stress fresh", r.stressFrom == EscSource::Edt);
+	checkInt("stress value", r.stress, 77);
+	checkTrue("status fresh", r.statusFrom == EscSource::Edt);
+	checkTrue("warning flag survives", r.warning);
+	checkTrue("edtFresh set", r.edtFresh);
+
+	escMerge(&t, 1 + 1000, 500, 1000, &r);
+	checkTrue("1000 ms old is stale", r.voltsFrom == EscSource::None);
+	checkInt("value is dropped, not held", (long)(r.volts * 100.0f), 0);
+	checkTrue("amps dropped", r.ampsFrom == EscSource::None);
+	checkTrue("temp dropped", r.tempFrom == EscSource::None);
+	checkTrue("stress dropped", r.stressFrom == EscSource::None);
+	checkInt("stress reads zero", r.stress, 0);
+	checkTrue("edtFresh clear", !r.edtFresh);
+
+	// The direction that matters most: an expired status block must not read
+	// as all-clear. A warning that quietly becomes OK is worse than no
+	// indicator at all.
+	checkTrue("status source gone", r.statusFrom == EscSource::None);
+	checkTrue("warning not silently cleared to OK", !r.warning);
+
+	// Expiry is per field: one frame type stopping does not blank the rest.
+	edtOnly(&t);
+	t.edtTempMs = 1;
+	t.edtVoltsMs = 900;
+	escMerge(&t, 1500, 500, 1000, &r);
+	checkTrue("voltage still fresh", r.voltsFrom == EscSource::Edt);
+	checkTrue("temperature expired alone", r.tempFrom == EscSource::None);
+
+	// Never-seen is not the same as stale, and must not read fresh at boot --
+	// stamp 0 against a nowMs of 0 is the case a bare subtraction gets wrong.
+	memset(&t, 0, sizeof(t));
+	escMerge(&t, 0, 500, 1000, &r);
+	checkTrue("unstamped field is not fresh at t=0", r.voltsFrom == EscSource::None);
+	checkTrue("escFieldFresh rejects a zero stamp", !escFieldFresh(0, 0, 1000));
+	checkTrue("escFieldFresh accepts a real one", escFieldFresh(1, 500, 1000));
+}
+
+/**
+ * @brief The automatic EDT enable follows the ESC, not the clock.
+ *
+ * It used to fire once, 1.5 s after boot. That covers only the ESC that
+ * happened to be plugged in and powered at the time; connect one afterwards,
+ * power-cycle it, or swap it, and it never got the enable at all. eRPM kept
+ * working, because that is plain bidirectional DShot, so the result looked
+ * exactly like an ESC with no EDT support.
+ */
+static void testEdtAutoEnable() {
+	section("Automatic EDT enable");
+
+	// Nothing connected: nothing to do, however long we wait.
+	checkTrue("no ESC, nothing sent",
+	          edtAutoAction(false, false) == EdtAutoAction::None);
+
+	// An ESC answers.
+	checkTrue("ESC appears, enable is sent",
+	          edtAutoAction(true, false) == EdtAutoAction::Send);
+	checkTrue("and not sent twice while it stays",
+	          edtAutoAction(true, true) == EdtAutoAction::None);
+
+	// It goes away. The one-shot must re-arm, or the replacement never gets
+	// one -- which is the whole bug.
+	checkTrue("ESC leaves, the one-shot re-arms",
+	          edtAutoAction(false, true) == EdtAutoAction::Rearm);
+
+	// Full swap cycle, driven through the flag the firmware keeps.
+	bool sent = false;
+	int sends = 0;
+	auto step = [&](bool linkUp) {
+		switch (edtAutoAction(linkUp, sent)) {
+			case EdtAutoAction::Send:  sent = true;  sends++; break;
+			case EdtAutoAction::Rearm: sent = false;          break;
+			case EdtAutoAction::None:                         break;
+		}
+	};
+	for (int i = 0; i < 50; i++) step(true);    // first ESC, running
+	checkInt("exactly one enable for the first ESC", sends, 1);
+	for (int i = 0; i < 50; i++) step(false);   // unplugged
+	checkInt("none while nothing is connected", sends, 1);
+	for (int i = 0; i < 50; i++) step(true);    // replacement fitted
+	checkInt("the replacement gets its own", sends, 2);
 }
 
 /** @brief Source labels, which the UI prints verbatim. */
@@ -365,5 +477,7 @@ void runKissTests() {
 	testPayloadBuilder();
 	testMerge();
 	testMergeWraparound();
+	testEdtStaleness();
+	testEdtAutoEnable();
 	testSourceLabels();
 }

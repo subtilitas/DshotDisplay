@@ -10,12 +10,24 @@ env:
   PICO_SDK_VERSION: "2.1.1"
 
 jobs:
-  # Builds the real firmware for the real target with the native Pico SDK.
+  # Builds the real firmware for both boards with the native Pico SDK.
   # Dependency versions are pinned in CMakeLists.txt, so this builds identically
   # here and locally.
+  #
+  # Both boards, always. They differ by far more than a pin map -- a different
+  # SPI instance for the panel, a different I2C, a different touch controller and
+  # an entirely different SD interface -- so building one proves very little
+  # about the other, and the parts that differ are precisely the parts nobody
+  # compiles by hand.
   firmware:
-    name: Firmware
+    name: Firmware (${{ matrix.board.slug }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board:
+          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
+          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +45,7 @@ jobs:
           path: |
             ~/pico-sdk
             build/_deps
-          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ matrix.board.slug }}-${{ hashFiles('CMakeLists.txt') }}
 
       # tinyusb is needed for stdio over USB CDC; without the submodule the SDK
       # silently builds without USB support and SERIAL_TELEMETRY goes nowhere.
@@ -51,25 +63,32 @@ jobs:
           # env values -- CMake would receive the literal string "~/pico-sdk"
           # and report the SDK missing.
           export PICO_SDK_PATH="$HOME/pico-sdk"
-          cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
+          cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
+                -DBOARD=${{ matrix.board.id }} .
           ninja -C build
           arm-none-eabi-size build/DshotDisplay.elf
 
       # Run the same validator the release uses, on every push. Releases are
       # rare, so a check that only runs at release time is a check that rots
       # unnoticed between them -- which is exactly how it shipped broken.
-      - name: Validate the image
+      - name: Validate the images
         run: |
           bash test/check_uf2_selftest.sh
           bash test/check_uf2.sh build/DshotDisplay.uf2
+          bash test/check_uf2.sh build/sdtest.uf2
 
       # Every green build produces a flashable image, so a change can be tried
       # on hardware without cutting a release first.
-      - name: Upload firmware image
+      # sdtest goes up too: it is the tool that diagnosed a shorted CMD line on
+      # one board and proved the card on another, and it is only useful if it is
+      # to hand when a card will not mount.
+      - name: Upload firmware images
         uses: actions/upload-artifact@v4
         with:
-          name: DshotDisplay-uf2
-          path: build/DshotDisplay.uf2
+          name: DshotDisplay-${{ matrix.board.slug }}
+          path: |
+            build/DshotDisplay.uf2
+            build/sdtest.uf2
           if-no-files-found: error
 
   # Runs the firmware's own logic on the host, against stubs. Catches the
@@ -79,9 +98,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # `make both` runs the suite once per board. Only the pin map and the
+      # splash board name differ on the host, but the splash is length-checked
+      # and the 2.8" name is the longer one.
       - name: Build and run
         working-directory: test
-        run: make run
+        run: make both
       - name: Upload rendered frames on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -109,9 +131,11 @@ jobs:
         working-directory: test
         run: make bbcheck BBDECODE=/tmp/bbt/obj/blackbox_decode
 
-  # Every build-time option, with warnings fatal. These permutations are easy
-  # to break precisely because nobody compiles them by hand. Host syntax-only
-  # against the stubs, which is far quicker than a full cross build per combo.
+  # Every build-time option, on every board, with warnings fatal. These
+  # permutations are easy to break precisely because nobody compiles them by
+  # hand -- and the touch drivers are only ever compiled here, since each is
+  # #if'd out on the board it is not for and the host tests link fakes instead.
+  # Syntax-only against the stubs, far quicker than a cross build per combo.
   variants:
     name: Config permutations
     runs-on: ubuntu-latest
@@ -124,7 +148,8 @@ jobs:
         run: |
           set -e
           fail=0
-          for tx in 0 1; do
+          for board in BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8; do
+           for tx in 0 1; do
             for jump in 0 1; do
               for rot in 0 2; do
                 for kiss in 0 1; do
@@ -134,9 +159,11 @@ jobs:
                     sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
                     sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
                     sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
-                    printf 'TX=%s JUMP=%s ROT=%s KISS=%s SD=%s ... ' "$tx" "$jump" "$rot" "$kiss" "$sd"
+                    printf '%s TX=%s JUMP=%s ROT=%s KISS=%s SD=%s ... ' \
+                      "${board#BOARD_RP2350_}" "$tx" "$jump" "$rot" "$kiss" "$sd"
                     if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
-                           -Wno-unused-parameter -DKISS_TELEM_ENABLE=$kiss -DSD_LOG_ENABLE=$sd \
+                           -Wno-unused-parameter -DBOARD=$board \
+                           -DKISS_TELEM_ENABLE=$kiss -DSD_LOG_ENABLE=$sd \
                            -Itest/stubs -I"$work/src" \
                            "$work"/src/*.cpp; then
                       echo ok
@@ -148,6 +175,7 @@ jobs:
                 done
               done
             done
+           done
           done
 
           # And confirm the portrait guard actually refuses landscape, rather
@@ -176,7 +204,12 @@ jobs:
         run: python3 test/check_docs.py
 
       - name: Install doxygen
-        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
+        run: |
+          sudo apt-get update && sudo apt-get install -y doxygen graphviz
+          # MARKDOWN_ID_STYLE in the Doxyfile needs >= 1.9.8. Older versions
+          # warn about the unknown tag, and every warning fails this job, so
+          # print the version rather than leaving that as a riddle.
+          doxygen --version
 
       # Any warning left here is structural -- a broken @ref target, a second
       # @mainpage, a missing image -- not a style opinion.

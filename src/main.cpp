@@ -13,9 +13,14 @@
  * which is itself how this block first went wrong.
  *
  * A self-contained bidirectional DShot ESC tester for the Waveshare
- * RP2350-Touch-LCD-2. Drag the on-screen throttle and the board sends
- * bidirectional DShot to a single ESC while decoding the eRPM and Extended
- * DShot Telemetry that comes back on the same wire.
+ * RP2350-Touch-LCD-2 and RP2350-Touch-LCD-2.8. Drag the on-screen throttle and
+ * the board sends bidirectional DShot to a single ESC while decoding the eRPM
+ * and Extended DShot Telemetry that comes back on the same wire.
+ *
+ * One board per build, chosen with `-DBOARD=`. They are not interchangeable:
+ * different SPI instance for the panel, different I2C, a different touch
+ * controller, and a different SD interface — hardware SPI on the 2.0", PIO
+ * SDIO on the 2.8".
  *
  * @section arch Two cores
  *
@@ -39,12 +44,12 @@
  * All of these live in `src/`:
  *
  * - @ref config.h — every tunable setting
- * - @ref board_pins.h — RP2350-Touch-LCD-2 pin map, from the schematic
+ * - @ref board_pins.h — pin map for the selected board, from the schematic
  * - @ref esc_task.h — core1 DShot pump and EDT decode
  * - @ref ui.h — screens, touch handling, arm and throttle state machines
  * - @ref gfx.h — RGB565 framebuffer, dirty bands, fonts
  * - @ref st7789.h — panel init and DMA blitter
- * - @ref cst816.h — capacitive touch
+ * - @ref touch.h — capacitive touch, CST816D or CST328 by board
  * - @ref sd_log.h — blackbox logging to the microSD slot (core0)
  *
  * @warning This drives a real motor. Read the safety section of README.md
@@ -54,13 +59,14 @@
 #include "plat.h"
 #include <pico/multicore.h>
 #include <pico/stdlib.h>
+#include <hardware/gpio.h>
 #include <stdio.h>
 
 #include "config.h"
 #include "board_pins.h"
 #include "gfx.h"
 #include "st7789.h"
-#include "cst816.h"
+#include "touch.h"
 #include "esc_task.h"
 #include "ui.h"
 #include "sd_log.h"
@@ -80,9 +86,22 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  * shares, so touchInit() has to follow it.
  */
 void setup() {
+#ifdef PIN_BAT_EN
+	// First thing, before anything that could take a millisecond: on the 2.8"
+	// board this is the latch that keeps VBAT connected once the power button
+	// is released. Miss it and the board dies mid-boot on battery. Harmless on
+	// USB, and absent entirely on boards without the latch.
+	gpio_init(PIN_BAT_EN);
+	gpio_set_dir(PIN_BAT_EN, GPIO_OUT);
+	gpio_put(PIN_BAT_EN, 1);
+#endif
+
 #if SERIAL_TELEMETRY
 	stdio_init_all();
 #endif
+
+	// Before anything can call escSnapshot(), and before core1 is launched.
+	escTaskInit();
 
 	gfxInit();
 	st7789Init();       // also pulses the shared LCD/touch reset line
@@ -95,6 +114,12 @@ void setup() {
 	delay(SPLASH_MS);
 	gfxFill(C_BG);
 	st7789FlushDirty();
+
+	// Paint one real frame before touching the card. Mounting talks to hardware
+	// that may not be there, and however well it behaves it is the last thing
+	// that runs before the screen would otherwise sit blank. If it ever does
+	// stall, a frozen UI says far more than a black panel does.
+	uiTick();
 
 #if SD_LOG_ENABLE
 	// A missing card is the normal bench case, not a fault: logging is
@@ -117,8 +142,7 @@ void loop() {
 
 #if SD_LOG_ENABLE
 	// Encoding is cheap and only fills a RAM ring, so it runs every pass to
-	// keep the log cadence even.
-	sdLogSetArmed(uiArmed());
+	// keep the log cadence even. uiTick() reports arm changes itself.
 	sdLogTick(micros(), uiThrottle());
 
 	// Writing is the expensive half -- a card can pause tens of milliseconds
@@ -177,10 +201,18 @@ static void core1Main() {
 /**
  * @brief Core0 entry point.
  *
- * Order matters. Core1 is launched only after core0 has finished bringing up
- * the display and the UI, because escTaskBegin() claims a PIO state machine and
- * st7789Init() claims a DMA channel — starting them concurrently makes which
- * one wins a matter of timing.
+ * Order matters, in two directions.
+ *
+ * Core1 is launched only after core0 has brought up the display, because
+ * escTaskBegin() claims a PIO state machine and st7789Init() claims a DMA
+ * channel; starting them concurrently makes which one wins a matter of timing.
+ *
+ * But core0 must not *use* anything core1 initialises before core1 has run, and
+ * it very nearly does: the first loop() calls uiTick(), which calls
+ * escSnapshot(), which takes a critical section. So that critical section is
+ * initialised by escTaskInit() on core0 inside setup(), not by escTaskBegin()
+ * on core1. Getting this wrong does not race intermittently — core0 wins every
+ * time, and the board shows the splash and then a black screen forever.
  *
  * @return Never returns.
  */
