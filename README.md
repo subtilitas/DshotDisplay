@@ -183,8 +183,12 @@ Prebuilt `.uf2` images are attached to every
 [release](https://github.com/subtilitas/DshotDisplay/releases). Hold BOOT, tap RESET,
 release BOOT, and copy the file onto the drive that appears.
 
-Every green CI run also uploads a `.uf2` artifact, so an untagged change can be tried on
-hardware without cutting a release.
+Every green CI run also uploads a `.uf2` artifact per board, so an untagged change can be
+tried on hardware without cutting a release.
+
+`tools/sdtest` is not among them. It is a bench diagnostic, not firmware, and an
+unlabelled second `.uf2` beside the real one is an invitation to flash the wrong thing.
+Build it locally when a card will not mount — a plain `ninja -C build` produces both.
 
 ### Reproducible builds
 
@@ -611,7 +615,7 @@ src/
   sd_log.{h,cpp}        FatFs writer, lifecycle, drop accounting
   sd_hw_config.c        SD wiring for the FatFs driver
 tools/
-  sdtest/               standalone SD bring-up test, built alongside the firmware
+  sdtest/               standalone SD bring-up test; built locally, never released
   make_previews.py      restitches docs/*.png from the test suite's frames
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + preview images
@@ -666,10 +670,10 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 
 | Job | What it catches |
 |---|---|
-| **Firmware** | Real Pico SDK build for RP2350, pinned by `CMakeLists.txt`, plus UF2 validation |
+| **Firmware** | Real Pico SDK build for both boards, pinned by `CMakeLists.txt`, plus UF2 validation |
 | **Host tests** | Protocol, codec and UI regressions a compile cannot see |
 | **Blackbox round-trip** | Encodes a log and decodes it with Betaflight's own `blackbox_decode`, comparing every value |
-| **Config permutations** | All 32 combinations of `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP`, `LCD_ROTATION`, `KISS_TELEM_ENABLE` and `SD_LOG_ENABLE`, warnings fatal |
+| **Config permutations** | All 64 combinations of board, `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP`, `LCD_ROTATION`, `KISS_TELEM_ENABLE` and `SD_LOG_ENABLE`, warnings fatal |
 | **Doxygen** | Undocumented additions |
 
 The permutation job exists because those options are exactly the ones nobody compiles by
@@ -684,13 +688,14 @@ git tag -a v1.0.0 -m "First release"
 git push origin v1.0.0
 ```
 
-`release.yml` runs the host and documentation checks, builds `.uf2` images for both RP2350
-cores, checksums them, and publishes a GitHub Release with the images attached.
+`release.yml` runs the host and documentation checks, builds a `.uf2` for each board,
+checksums them, and publishes a GitHub Release with the images attached.
 
 Assets per release:
 
 ```
-DshotDisplay-v1.0.0-rp2350.uf2
+DshotDisplay-v1.0.0-touch-lcd-2.uf2
+DshotDisplay-v1.0.0-touch-lcd-2.8.uf2
 SHA256SUMS.txt
 ```
 
