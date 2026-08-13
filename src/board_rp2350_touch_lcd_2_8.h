@@ -40,8 +40,8 @@
  * | 25   | KEY_BAT      | power button, 10 k pull-up, pressed = low        |
  * | 26   | BAT_EN       | battery power latch — see @ref PIN_BAT_EN        |
  * | 27   | BAT_ADC      | ADC1, 200k/100k divider                          |
- * | 28   | **free**     | J4 pin 11 — the ESC signal pin                   |
- * | 29   | **free**     | J4 pin 12                                        |
+ * | 28   | **free**     | J4 pin 11                                        |
+ * | 29   | **free**     | J4 pin 12 — the ESC signal pin, @ref DSHOT_PIN    |
  *
  * There are no 2.54 mm headers on this board. Everything is brought out on
  * JST-SH 1.0 mm connectors, so an ESC lead needs a pigtail either way:
