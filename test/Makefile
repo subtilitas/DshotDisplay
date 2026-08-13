@@ -6,6 +6,7 @@
 #   make build    build only
 #   make syntax   typecheck the device-only sources, both boards
 #   make bbcheck  round-trip a log through the upstream blackbox_decode
+#   make previews rebuild the screenshots in docs/ from this run's frames
 #   make clean
 #
 # Needs nothing but a C++17 compiler: the firmware is compiled against the
@@ -46,7 +47,7 @@ DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
 
 BIN := dshot_tests
 
-.PHONY: all build run both syntax bbcheck clean
+.PHONY: all build run both syntax bbcheck previews clean
 
 all: syntax run bbcheck
 
@@ -106,6 +107,13 @@ bbcheck:
 			gen_blackbox_log.cpp ../src/blackbox_encode.cpp -lm && \
 		python3 check_blackbox.py "$(BBDECODE)" ./gen_blackbox_log; \
 	fi
+
+# Restitch docs/*.png from the frames the run above just wrote. Separate target
+# rather than part of `all`, so a test run does not leave the working tree
+# dirty -- but one command away, because the manual version of this step is
+# what let the published screenshots go stale for several releases.
+previews: run
+	python3 ../tools/make_previews.py
 
 clean:
 	rm -f $(BIN) gen_blackbox_log *.ppm *.BFL

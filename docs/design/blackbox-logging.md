@@ -1,7 +1,7 @@
 # SD logging in Betaflight blackbox format
 
 Status: **working on hardware, both boards.** See "Bring-up" below.
-Branch: `dev/telemetry-logging`, ported to the native Pico SDK on
+Branch: `dev/telemetry-logging`, then `dev/multiboard-sdio`; ported to the native Pico SDK on
 `dev/pico-sdk-native`.
 
 ## Why blackbox format rather than CSV
@@ -55,7 +55,10 @@ Hardware SPI is impossible there — `SD_SCK` is GP19, which is SPI0 **TX** in t
 pin mux, not SCK. SDIO is not a workaround though: the pins satisfy every
 constraint the PIO program imposes (D1..D3 directly follow D0, and CLK is
 `(D0 + 30) % 32`), so the board was laid out for it. Four bits is also faster
-than one, and it mounts at 25 MHz.
+than one. `sdtest` mounted a card there at 25 MHz, but the firmware ships at
+`SD_LOG_SDIO_HZ`, 10 MHz: SDIO is far more sensitive to signal integrity than
+one-bit SPI, and a card that enumerates and then corrupts is worse than one that
+refuses. Raise it once there is a reason to.
 
 SDIO runs on **pio1** because the DShot driver has pio0. Left to themselves both
 would claim state machines on the same block, and whichever initialised second
@@ -258,7 +261,7 @@ the workflow or vendoring a binary. Building from source is slower but honest.
 ## Bring-up
 
 Both boards mount a card and write logs. The 2.8" did it first, over SDIO at
-25 MHz; the 2.0" followed once its board was replaced.
+25 MHz in `sdtest`; the 2.0" followed once its board was replaced.
 
 The first attempt on the 2.0" never reached the code at all. Every card reported
 FatFs `FR_NOT_READY` at every clock rate from 12 MHz down to 200 kHz, and

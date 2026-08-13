@@ -133,10 +133,14 @@ static void enterLogScreen() {
 static void testLogScreen() {
 	section("SD logging screen");
 
-	// A card that mounted but is not recording.
+	// A card that mounted but is not recording. The card details matter even
+	// though no assertion reads them: this frame is published, and a screen
+	// reading "MOUNT 0 OK" beside "CARD NONE" contradicts itself.
 	SdLogStatus st;
 	memset(&st, 0, sizeof(st));
 	st.state = SdLogState::Idle;
+	st.cardType = 3;             // SDHC/XC
+	st.cardSizeMB = 30500;       // a 32 GB card, as the card reports itself
 	fakeSdLogSet(&st);
 
 	enterLogScreen();
@@ -157,6 +161,8 @@ static void testLogScreen() {
 	// the screen exists to make visible.
 	memset(&st, 0, sizeof(st));
 	st.state = SdLogState::Logging;
+	st.cardType = 3;
+	st.cardSizeMB = 30500;
 	st.fileNumber = 42;
 	st.framesLogged = 12345;
 	st.bytesWritten = 178000;
