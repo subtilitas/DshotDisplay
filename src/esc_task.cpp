@@ -120,14 +120,6 @@ void escHeartbeat() {
 	s_heartbeatMs = millis();
 }
 
-bool escRequestEdtEnable() {
-	if (s_armed) return false;         // commands are only valid when disarmed
-	s_pendingCmd  = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
-	s_pendingReps = 10;                // spec asks for 6; a few spare frames
-	s_edtRequested = true;
-	return true;
-}
-
 bool escRequestBeep(uint8_t n) {
 	if (s_armed) return false;
 	if (n < 1) n = 1;
@@ -320,6 +312,10 @@ void escTaskPoll() {
 	              (uint32_t)(ms - s_tel.lastRpmMs) < ESC_LINK_STALE_MS;
 	switch (edtAutoAction(linkUp, s_edtAutoDone)) {
 		case EdtAutoAction::Send:
+			// DShot commands only take while disarmed, so if the tester is
+			// armed when the ESC appears, leave the one-shot unfired and try
+			// again next frame rather than marking it done and never sending.
+			if (s_armed) break;
 			s_edtAutoDone  = true;
 			s_pendingCmd   = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
 			s_pendingReps  = 10;

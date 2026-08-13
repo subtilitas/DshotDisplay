@@ -178,15 +178,12 @@ void escSetThrottle(uint16_t t) { g_throttle = t; }
 void escSetArmed(bool a) { g_armed = a; }
 void escSetPoles(uint8_t) {}
 void escHeartbeat() {}
-// Mirrors the two-line rule in esc_task.cpp: both commands are refused while
+// Mirrors the two-line rule in esc_task.cpp: the command is refused while
 // armed. esc_task.cpp cannot be linked here (PIO, UART), so this is a copy --
 // but the thing under test is what the UI does with the answer, and that is
 // the shipped code.
-static int g_edtRequests = 0;
 static int g_beepRequests = 0;
-int  fakeEdtRequests()  { return g_edtRequests; }
 int  fakeBeepRequests() { return g_beepRequests; }
-bool escRequestEdtEnable() { g_edtRequests++; return !g_armed; }
 bool escRequestBeep(uint8_t) { g_beepRequests++; return !g_armed; }
 bool escEdtRequested() { return true; }
 // Verbatim, with no helpful stamping of arrival times. That stamping used to

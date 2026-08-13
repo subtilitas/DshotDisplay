@@ -49,8 +49,6 @@ void fakeSetTelemetry(const EscTelemetry *t);
  */
 uint32_t fakeRegionHash(int x, int y, int w, int h);
 
-/** @brief How many times the UI has asked for an EDT enable. */
-int fakeEdtRequests();
 /** @brief How many times the UI has asked for a beep. */
 int fakeBeepRequests();
 

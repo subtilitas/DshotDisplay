@@ -254,17 +254,16 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
   what's spinning.
-- **EDT ON / EDT OFF** — green while EDT frames are arriving, red while they are not,
-  and pressing it re-sends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` either way. The colour
-  and the word always agree, and both follow *received frames* rather than whether the
-  command was sent: the enable is fire-and-forget and the ESC never acknowledges it, so
-  arriving telemetry is the only evidence it took. The firmware also sends it by
-  itself, once per ESC, as soon as one starts answering.
+- **EDT ON / EDT OFF** — the chip in the title bar. Green while EDT frames are arriving,
+  red while they are not. Read-only: there is no enable button, because the firmware
+  sends one to each ESC as it appears. It follows *received frames* rather than whether
+  the command was sent — the enable is fire-and-forget and the ESC never acknowledges
+  it, so arriving telemetry is the only evidence it took.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
 
-Both commands flash the button for a moment when pressed. The command itself lasts about
-ten milliseconds against a 40 Hz repaint, so without that the buttons look like they do
-nothing — and the ESC answering with a beep from the next room is not feedback.
+BEEP flashes for a moment when pressed. The command itself lasts about six milliseconds
+against a 40 Hz repaint, so without that the button looks like it does nothing — and an
+ESC answering from the next room is not feedback.
 - **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
 - **SD LOG** — blackbox logging status and manual start/stop. See below.
 
