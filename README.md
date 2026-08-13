@@ -46,14 +46,11 @@ UI has hung and forces throttle to zero on its own.
 panel, different I2C, a different touch controller (CST816D vs CST328), and a
 different SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
 
-The pin map below is the 2.0". The 2.8" equivalent is in
-`src/board_rp2350_touch_lcd_2_8.h`; the short version is that it has no 2.54 mm
-headers, everything comes out on JST-SH connectors, and only GP28 and GP29 are
-free for an ESC.
-— RP2350A, 16 MB flash, 240×320 IPS (ST7789T3 over SPI), CST816D capacitive touch,
-QMI8658 IMU, LiPo charger.
+The 2.0" is an RP2350A with 16 MB flash, a 240×320 IPS panel (ST7789T3 over
+SPI), CST816D capacitive touch, a QMI8658 IMU and a LiPo charger. The 2.8" is
+the same silicon behind a larger panel, with a CST328 controller.
 
-### Pin map (from the official schematic)
+### Pin map (2.0", from the official schematic)
 
 | Function | GPIO | Notes |
 |---|---|---|
@@ -114,6 +111,19 @@ Removing the BEC wire is the answer, not a different pin.
 Keep the ESC ground and the board ground tied together, and keep the signal wire short —
 bidirectional DShot at 600 kBaud does not enjoy 30 cm of unshielded flapping servo lead.
 If telemetry is flaky, drop `DSHOT_SPEED_KBAUD` to 300 before blaming the firmware.
+
+### The 2.8" board
+
+Its pin map is `src/board_rp2350_touch_lcd_2_8.h`. The short version: no 2.54 mm
+headers at all — everything comes out on JST-SH connectors — and of those, only
+**GP28** (J4 pin 11) and **GP29** (J4 pin 12) are free for an ESC. GP28 is the
+default; build with `-DDSHOT_PIN=29` for the other. An ESC on the wrong one of
+those two is simply silent, with nothing reported anywhere, because nothing is
+listening on the pin you wired.
+
+It also carries a power-button latch on GP26 that the firmware asserts as the
+very first thing at boot. Without it the board drops dead mid-boot whenever it
+is running on battery rather than USB.
 
 ---
 
@@ -375,10 +385,14 @@ none of this has been measured against real hardware yet.
 
 Files land on the card as `LOGnnnnn.BFL`.
 
-**[logwiju](https://subtilitas.github.io/logwiju/) is the intended viewer.** Drop
-a `.BFL` straight off the card onto the page and it plots it — no install, no
-upload, no account. It runs entirely in the browser, so the log never leaves the
-machine. Wheel to zoom, drag to pan, shift+drag for a box zoom, double-click to
+**[logwiju](https://subtilitas.github.io/logwiju/) is the intended viewer.**
+Pronounced the German way — *log-vee-yoo*, since German `w` is an English *v*
+and `j` an English *y* — which comes out as "logview". The tail is **WI**ngert
+**JU**lian.
+
+Drop a `.BFL` straight off the card onto the page and it plots it — no install,
+no upload, no account. It runs entirely in the browser, so the log never leaves
+the machine. Wheel to zoom, drag to pan, shift+drag for a box zoom, double-click to
 fit; pick which fields to show from the side panel.
 
 The logs also open in
@@ -681,7 +695,7 @@ words go out MSB-first with no software byte swapping. Commands go out in 8-bit 
 - [pico-bidir-dshot](https://github.com/bastian2001/pico-bidir-dshot) by bastian2001 — the
   PIO DShot implementation doing the actual protocol work.
 - [logwiju](https://subtilitas.github.io/logwiju/) — the browser-based blackbox viewer
-  these logs are meant to be read in.
+  these logs are meant to be read in. Said in German it is simply "logview".
 - [DShot — the missing handbook](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/)
 - [Extended DShot Telemetry](https://github.com/bird-sanctuary/extended-dshot-telemetry)
 - [Waveshare RP2350-Touch-LCD-2 wiki](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)
