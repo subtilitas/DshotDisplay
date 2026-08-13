@@ -6,8 +6,11 @@ Branch: `dev/telemetry-logging`, ported to the native Pico SDK on
 
 ## Why blackbox format rather than CSV
 
-A CSV would be less work. The reason not to is tooling: Blackbox Explorer,
-`blackbox_decode`, PIDtoolbox and Plasmatree all read this format already. A log
+A CSV would be less work. The reason not to is tooling:
+[logwiju](https://subtilitas.github.io/logwiju/) — the intended viewer here, a
+browser-based plotter that takes a `.BFL` off the card with nothing to install —
+along with Blackbox Explorer, `blackbox_decode`, PIDtoolbox and Plasmatree, all
+read this format already. A log
 that opens in Blackbox Explorer can be scrubbed, zoomed and overlaid against
 flight logs from the same ESC on a real craft, which is exactly the comparison a
 bench tester exists to make.

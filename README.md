@@ -320,8 +320,9 @@ so the question can be settled with data. The arithmetic is in
 ### Blackbox logging to microSD
 
 Logs are written in Betaflight's blackbox format, so they open directly in
-Blackbox Explorer, `blackbox_decode` and PIDtoolbox. Files are named
-`LOGnnnnn.BFL` on a FAT-formatted card.
+[**logwiju**](https://subtilitas.github.io/logwiju/) — the intended viewer for
+these logs — as well as Blackbox Explorer, `blackbox_decode` and PIDtoolbox.
+Files are named `LOGnnnnn.BFL` on a FAT-formatted card.
 
 ![SD log screen](docs/log-preview.png)
 
@@ -372,7 +373,15 @@ none of this has been measured against real hardware yet.
 
 ### Reading the logs
 
-Files land on the card as `LOGnnnnn.BFL`. They open directly in
+Files land on the card as `LOGnnnnn.BFL`.
+
+**[logwiju](https://subtilitas.github.io/logwiju/) is the intended viewer.** Drop
+a `.BFL` straight off the card onto the page and it plots it — no install, no
+upload, no account. It runs entirely in the browser, so the log never leaves the
+machine. Wheel to zoom, drag to pan, shift+drag for a box zoom, double-click to
+fit; pick which fields to show from the side panel.
+
+The logs also open in
 [Blackbox Explorer](https://github.com/betaflight/blackbox-log-viewer), or on the
 command line:
 
@@ -671,6 +680,8 @@ words go out MSB-first with no software byte swapping. Commands go out in 8-bit 
 
 - [pico-bidir-dshot](https://github.com/bastian2001/pico-bidir-dshot) by bastian2001 — the
   PIO DShot implementation doing the actual protocol work.
+- [logwiju](https://subtilitas.github.io/logwiju/) — the browser-based blackbox viewer
+  these logs are meant to be read in.
 - [DShot — the missing handbook](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/)
 - [Extended DShot Telemetry](https://github.com/bird-sanctuary/extended-dshot-telemetry)
 - [Waveshare RP2350-Touch-LCD-2 wiki](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2)
