@@ -164,6 +164,44 @@ static int16_t  s_padTouchY = 0;         // where the finger landed
 static int16_t  s_padAnchorPos = 0;      // negated y, so bigger = higher up
 static uint16_t s_padAnchorThrottle = 0;
 
+/**
+ * @defgroup ui_cmdflash Command button feedback
+ *
+ * EDT and BEEP fire one-shot DShot commands. The command itself is over in
+ * 6-10 frames -- 10 ms at 1 kHz -- which at a 40 Hz repaint is invisible, so
+ * the buttons appeared dead even though both were working. Worse, both are
+ * refused outright while armed, and that refusal was silent too.
+ *
+ * So the press is latched briefly and the button is drawn
+ * inverted for that long: accent-coloured when the command went out, red when
+ * it was refused. Long enough to register, short enough not to lag the next
+ * press.
+ * @{
+ */
+/** @brief How long a press stays acknowledged on screen, in ms. */
+#define CMD_FLASH_MS 350
+
+/** @brief Which command button is currently flashing. */
+enum class CmdFlash : uint8_t { None = 0, Edt, Beep };
+
+static CmdFlash s_cmdFlash = CmdFlash::None;
+static bool     s_cmdFlashOk = false;   /**< False when the ESC refused it. */
+static uint32_t s_cmdFlashUntilMs = 0;
+
+/** @brief True while a press is still being acknowledged on screen. */
+static bool cmdFlashActive() {
+	return s_cmdFlash != CmdFlash::None &&
+	       (int32_t)(millis() - s_cmdFlashUntilMs) < 0;
+}
+
+/** @brief Latch a press for the UI to show. @param which Button. @param ok Accepted. */
+static void cmdFlashSet(CmdFlash which, bool ok) {
+	s_cmdFlash = which;
+	s_cmdFlashOk = ok;
+	s_cmdFlashUntilMs = millis() + CMD_FLASH_MS;
+}
+/** @} */
+
 static TouchState s_touch;
 static EscTelemetry s_tel;
 static float s_batteryV = 0.0f;
@@ -184,6 +222,7 @@ static struct {
 	int  voltsSrc, ampsSrc, mah;
 	int  throttleRaw, maxPct, thrArmed, thrHold;
 	int  config, poles;
+	int  cmdFlash, edtActive;
 	int  logState, logFile, logDrops;
 	uint32_t logBytes, logFrames, logPeak, logWorstMs;
 } s_shown;
@@ -372,17 +411,20 @@ static void drawRpm() {
 static void drawTelemetry() {
 	// Merged view: KISS where it is fresh, EDT otherwise, decided per field.
 	EscReading r;
-	escMerge(&s_tel, millis(), KISS_STALE_MS, &r);
+	escMerge(&s_tel, millis(), KISS_STALE_MS, EDT_STALE_MS, &r);
 
 	// Hundredths, not tenths. KISS resolves 0.01 V and 0.01 A, and rounding the
 	// display to 0.1 would throw away exactly the precision the extra wire was
 	// run for.
 	int volts100 = (int)(r.volts * 100.0f + 0.5f);
 	int amps100  = (int)(r.amps * 100.0f + 0.5f);
-	int status   = s_tel.alert ? 3 : s_tel.error ? 2 : s_tel.warning ? 1 : 0;
+	// -1 is "no status block", not "OK". An expired status must not read as
+	// all-clear -- that is the one direction a warning indicator may not fail.
+	int status   = (r.statusFrom == EscSource::None) ? -1
+	             : r.alert ? 3 : r.error ? 2 : r.warning ? 1 : 0;
 
 	if (s_shown.volts100 == volts100 && s_shown.amps100 == amps100 &&
-	    s_shown.tempC == r.tempC && s_shown.stress == s_tel.stress &&
+	    s_shown.tempC == r.tempC && s_shown.stress == (int)r.stress &&
 	    s_shown.status == status && s_shown.rate == s_tel.packetRate &&
 	    s_shown.errPct == s_tel.errPercent &&
 	    s_shown.voltsSrc == (int)r.voltsFrom && s_shown.ampsSrc == (int)r.ampsFrom &&
@@ -392,7 +434,7 @@ static void drawTelemetry() {
 	s_shown.volts100 = volts100;
 	s_shown.amps100  = amps100;
 	s_shown.tempC    = r.tempC;
-	s_shown.stress   = s_tel.stress;
+	s_shown.stress   = r.stress;
 	s_shown.status   = status;
 	s_shown.rate     = s_tel.packetRate;
 	s_shown.errPct   = s_tel.errPercent;
@@ -435,14 +477,16 @@ static void drawTelemetry() {
 		gfxText(cx[0] + cw - 6 - gfxTextW(buf, 1), cy[1] + 4, buf, C_DIM, 1);
 	}
 
-	if (s_tel.haveStress) snprintf(buf, sizeof(buf), "%d", s_tel.stress);
-	else                  snprintf(buf, sizeof(buf), "--");
+	if (r.stressFrom != EscSource::None) snprintf(buf, sizeof(buf), "%d", r.stress);
+	else                                 snprintf(buf, sizeof(buf), "--");
 	drawLabelled(cx[1], cy[1], cw, ch, "STRESS", buf,
-	             (s_tel.stress > 200) ? C_AMBER : C_TEXT);
+	             (r.stressFrom != EscSource::None && r.stress > 200) ? C_AMBER : C_TEXT);
 
 	static const char *STATUS_TXT[4] = {"OK", "WARN", "ERROR", "ALERT"};
 	static const uint16_t STATUS_COL[4] = {C_LIME, C_AMBER, C_RED, C_MAGENTA};
-	drawLabelled(cx[0], cy[2], cw, ch, "ESC STATUS", STATUS_TXT[status], STATUS_COL[status]);
+	drawLabelled(cx[0], cy[2], cw, ch, "ESC STATUS",
+	             status < 0 ? "--" : STATUS_TXT[status],
+	             status < 0 ? C_DIM : STATUS_COL[status]);
 
 	snprintf(buf, sizeof(buf), "%d/S", s_tel.packetRate);
 	uint16_t linkCol = s_tel.errPercent > 5 ? C_AMBER : C_TEXT;
@@ -525,16 +569,38 @@ static void drawButtons() {
 
 /** @brief Full-screen settings overlay. */
 static void drawConfig() {
+	// Is EDT actually delivering, as opposed to having been asked for? The
+	// enable is fire-and-forget -- the ESC never acknowledges it -- so arriving
+	// frames are the only evidence, and the button cannot report success.
+	EscReading r;
+	escMerge(&s_tel, millis(), KISS_STALE_MS, EDT_STALE_MS, &r);
+	int edtActive = (int)r.edtFresh;
+
+	// The flash is part of the redraw key, so releasing it repaints too --
+	// otherwise the button would light up and stay lit until something else
+	// happened to invalidate the screen.
+	int flashKey = cmdFlashActive() ? ((int)s_cmdFlash * 2 + (s_cmdFlashOk ? 1 : 0)) : 0;
+
 	if (s_shown.config == 1 && s_shown.poles == s_poles &&
-	    s_shown.maxPct == (int)((uint32_t)s_maxThrottle * 100 / 2000))
+	    s_shown.maxPct == (int)((uint32_t)s_maxThrottle * 100 / 2000) &&
+	    s_shown.cmdFlash == flashKey && s_shown.edtActive == edtActive)
 		return;
 	s_shown.config = 1;
 	s_shown.poles = s_poles;
 	s_shown.maxPct = (int)((uint32_t)s_maxThrottle * 100 / 2000);
+	s_shown.cmdFlash = flashKey;
+	s_shown.edtActive = edtActive;
 
 	gfxFill(C_BG);
 	gfxRect(0, 0, GFX_W, 26, C_PANEL);
 	gfxText(8, 9, "SETTINGS", C_TEXT, 2);
+
+	// EDT state lives in the title bar rather than on the button, because the
+	// button is a verb and this is a fact. Conflating the two is what made
+	// "EDT ON" read as a status stuck permanently at ON.
+	const char *edtTxt = edtActive ? "EDT LIVE" : "EDT IDLE";
+	gfxText(GFX_W - 8 - gfxTextW(edtTxt, 1), 12, edtTxt,
+	        edtActive ? C_CYAN : C_DIM, 1);
 
 	char buf[24];
 
@@ -550,9 +616,22 @@ static void drawConfig() {
 	snprintf(buf, sizeof(buf), "%d%%", (int)((uint32_t)s_maxThrottle * 100 / 2000));
 	gfxText(120 - gfxTextW(buf, 3) / 2, 158, buf, C_AMBER, 3);
 
-	drawBtn(BTN_EDT, "EDT ON", C_PANEL, C_CYAN, 1);
-	drawBtn(BTN_BEEP, "BEEP", C_PANEL, C_CYAN, 1);
-	gfxTextCenter(CFG_HINT_Y, "COMMANDS NEED THE ESC DISARMED", C_DIM, 1);
+	// Inverted while the press is being acknowledged: red if the ESC refused
+	// the command because it is armed, accent if it went out.
+	bool edtLit  = cmdFlashActive() && s_cmdFlash == CmdFlash::Edt;
+	bool beepLit = cmdFlashActive() && s_cmdFlash == CmdFlash::Beep;
+	uint16_t litFill = s_cmdFlashOk ? C_CYAN : C_RED;
+	drawBtn(BTN_EDT, "ENABLE EDT", edtLit ? litFill : C_PANEL,
+	        edtLit ? C_BG : C_CYAN, 1);
+	drawBtn(BTN_BEEP, "BEEP", beepLit ? litFill : C_PANEL,
+	        beepLit ? C_BG : C_CYAN, 1);
+	// The hint turns into the reason when a press is refused, so the red flash
+	// is explained rather than just noticed.
+	bool refused = cmdFlashActive() && !s_cmdFlashOk;
+	gfxTextCenter(CFG_HINT_Y,
+	              refused ? "REFUSED - DISARM THE ESC FIRST"
+	                      : "COMMANDS NEED THE ESC DISARMED",
+	              refused ? C_RED : C_DIM, 1);
 
 	drawBtn(BTN_AM32, "AM32 CFG", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1);
@@ -724,9 +803,9 @@ static void handleConfigTouch() {
 		s_maxThrottle += MAX_THROTTLE_STEP;
 		s_shown.maxPct = -1;
 	} else if (hit(BTN_EDT, x, y)) {
-		escRequestEdtEnable();
+		cmdFlashSet(CmdFlash::Edt, escRequestEdtEnable());
 	} else if (hit(BTN_BEEP, x, y)) {
-		escRequestBeep(1);
+		cmdFlashSet(CmdFlash::Beep, escRequestBeep(1));
 	} else if (hit(BTN_AM32, x, y)) {
 		s_am32 = true;
 		gfxFill(C_BG);
