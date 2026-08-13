@@ -24,6 +24,16 @@ RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = README.md
 MARKDOWN_SUPPORT       = YES
 
+# Give markdown headings the same anchors GitHub does, so a link written as
+# (#am32-esc-configuration) resolves in both places. Doxygen's own scheme is
+# autotoc_md<N>, which no README can link to by hand and which renumbers
+# whenever a heading is added above it.
+#
+# Needs doxygen >= 1.9.8. An older one does not merely ignore this -- it warns
+# about the unknown tag, and the docs job fails on any warning at all, so the
+# version is printed there to make that obvious rather than puzzling.
+MARKDOWN_ID_STYLE      = GITHUB
+
 # README references docs/ui-preview.png; without this the image is reported
 # missing even though the file is right there.
 IMAGE_PATH             = docs

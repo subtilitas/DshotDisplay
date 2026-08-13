@@ -204,7 +204,12 @@ jobs:
         run: python3 test/check_docs.py
 
       - name: Install doxygen
-        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
+        run: |
+          sudo apt-get update && sudo apt-get install -y doxygen graphviz
+          # MARKDOWN_ID_STYLE in the Doxyfile needs >= 1.9.8. Older versions
+          # warn about the unknown tag, and every warning fails this job, so
+          # print the version rather than leaving that as a riddle.
+          doxygen --version
 
       # Any warning left here is structural -- a broken @ref target, a second
       # @mainpage, a missing image -- not a style opinion.
