@@ -361,9 +361,29 @@ static void testTelemetryExpires() {
 static void testCommandButtonFeedback() {
 	section("Command button feedback");
 
+	// Live telemetry first, so the EDT button starts in its ON state and the
+	// comparisons below are against a known colour rather than whatever the
+	// previous test left behind.
+	feedLiveTelemetry();
 	tap(BTN_CFG_X, BTN_ARM_Y);          // into settings (this force-disarms)
 	frames(2);
 	uint32_t idle = fakeRegionHash(0, 195, 240, 55);
+	fakeDumpFrame("shot_config_edt_on.ppm");
+
+	// The button is a state display as well as an action: green "EDT ON" while
+	// frames arrive, red "EDT OFF" when they stop. Letting it expire has to
+	// change it, or the colour is decoration.
+	EscTelemetry none;
+	memset(&none, 0, sizeof(none));
+	fakeSetTelemetry(&none);
+	frames(2);
+	checkTrue("EDT button changes when telemetry stops",
+	          fakeRegionHash(0, 195, 240, 55) != idle);
+	fakeDumpFrame("shot_config_edt_off.ppm");
+	feedLiveTelemetry();
+	frames(2);
+	checkTrue("and changes back when it returns",
+	          fakeRegionHash(0, 195, 240, 55) == idle);
 
 	int edtBefore = fakeEdtRequests();
 	fakePress(CFG_EDT_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);

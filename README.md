@@ -254,10 +254,12 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
   what's spinning.
-- **ENABLE EDT** — resends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` (the firmware already
-  does this automatically 1.5 s after boot). It is a verb, not a status: whether EDT is
-  actually arriving is the **EDT LIVE** / **EDT IDLE** chip in the title bar, which keys
-  off frames received rather than off having asked.
+- **EDT ON / EDT OFF** — green while EDT frames are arriving, red while they are not,
+  and pressing it re-sends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` either way. The colour
+  and the word always agree, and both follow *received frames* rather than whether the
+  command was sent: the enable is fire-and-forget and the ESC never acknowledges it, so
+  arriving telemetry is the only evidence it took. The firmware also sends it once
+  automatically, 1.5 s after boot.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
 
 Both commands flash the button for a moment when pressed. The command itself lasts about
