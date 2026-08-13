@@ -65,7 +65,10 @@ jobs:
           export PICO_SDK_PATH="$HOME/pico-sdk"
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
                 -DBOARD=${{ matrix.board.id }} .
-          ninja -C build
+          # Named target rather than a bare `ninja`. The tree also defines
+          # sdtest, a bench diagnostic that is nobody's firmware; building it
+          # here would only slow the job and tempt someone to flash it.
+          ninja -C build DshotDisplay
           arm-none-eabi-size build/DshotDisplay.elf
 
       # Run the same validator the release uses, on every push. Releases are
@@ -75,20 +78,14 @@ jobs:
         run: |
           bash test/check_uf2_selftest.sh
           bash test/check_uf2.sh build/DshotDisplay.uf2
-          bash test/check_uf2.sh build/sdtest.uf2
 
       # Every green build produces a flashable image, so a change can be tried
       # on hardware without cutting a release first.
-      # sdtest goes up too: it is the tool that diagnosed a shorted CMD line on
-      # one board and proved the card on another, and it is only useful if it is
-      # to hand when a card will not mount.
       - name: Upload firmware images
         uses: actions/upload-artifact@v4
         with:
           name: DshotDisplay-${{ matrix.board.slug }}
-          path: |
-            build/DshotDisplay.uf2
-            build/sdtest.uf2
+          path: build/DshotDisplay.uf2
           if-no-files-found: error
 
   # Runs the firmware's own logic on the host, against stubs. Catches the

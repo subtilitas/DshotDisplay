@@ -98,7 +98,11 @@ jobs:
           export PICO_SDK_PATH="$HOME/pico-sdk"
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
                 -DBOARD=${{ matrix.board.id }} .
-          ninja -C build
+          # Named target rather than a bare `ninja`. sdtest is a bench
+          # diagnostic and is deliberately not part of a release: an unlabelled
+          # second .uf2 beside the firmware is an invitation to flash the wrong
+          # one, and it does nothing a user of the tester wants.
+          ninja -C build DshotDisplay
           arm-none-eabi-size build/DshotDisplay.elf
 
       # Prove the validator works before trusting its verdict. The first version
@@ -116,13 +120,6 @@ jobs:
           out="dist/DshotDisplay-${TAG}-${SLUG}.uf2"
           cp build/DshotDisplay.uf2 "$out"
           bash test/check_uf2.sh "$out"
-
-          # The SD diagnostic ships too. It is what tells a shorted CMD line
-          # apart from a card that will not mount, and it is no use if it has to
-          # be built from source at the moment it is needed.
-          sd="dist/sdtest-${TAG}-${SLUG}.uf2"
-          cp build/sdtest.uf2 "$sd"
-          bash test/check_uf2.sh "$sd"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -165,8 +162,7 @@ jobs:
 
           The two are not interchangeable: different SPI instance for the panel,
           different I2C, a different touch controller and a different SD
-          interface. `sdtest-*.uf2` is a headless card diagnostic — flash it and
-          read USB serial at 115200 if a card will not mount.
+          interface.
 
           ## Flashing
 
@@ -227,8 +223,21 @@ jobs:
           # a partially-populated release is a real outcome worth catching.
           assets=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           echo "$assets"
-          for want in touch-lcd-2.uf2 touch-lcd-2.8.uf2 SHA256SUMS; do
-            echo "$assets" | grep -q "$want" || {
-              echo "::error::no asset matching '$want' on $TAG"; exit 1; }
+          # Full names, fixed-string match. While sdtest also shipped, a bare
+          # "touch-lcd-2.uf2" was satisfied by sdtest-...-touch-lcd-2.uf2, so
+          # the guard would have passed a release with no firmware in it.
+          for want in "DshotDisplay-${TAG}-touch-lcd-2.uf2" \
+                      "DshotDisplay-${TAG}-touch-lcd-2.8.uf2" \
+                      "SHA256SUMS.txt"; do
+            echo "$assets" | grep -qxF "$want" || {
+              echo "::error::no asset named '$want' on $TAG"; exit 1; }
           done
-          echo "all expected assets present"
+
+          # And nothing unexpected: sdtest is deliberately not released, so a
+          # stray diagnostic image beside the firmware should fail the run
+          # rather than quietly invite someone to flash it.
+          unexpected=$(echo "$assets" | grep -v '^DshotDisplay-' | grep -v '^SHA256SUMS.txt$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::unexpected assets on $TAG: $unexpected"; exit 1
+          fi
+          echo "all expected assets present, and only those"
