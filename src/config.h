@@ -166,6 +166,22 @@
 #define KISS_STALE_MS          500
 
 /**
+ * @brief How long an EDT field stays valid after its last frame, in ms.
+ *
+ * Past this the field blanks to `--` instead of holding its last value. The
+ * same argument as @ref KISS_STALE_MS, one level down: unplug the ESC, or swap
+ * it for a different one, and the old voltage, current, temperature and stress
+ * would otherwise sit there indefinitely, indistinguishable from live readings.
+ *
+ * A second is many EDT frames. The ESC interleaves the frame types and the full
+ * cycle completes in a handful of milliseconds at 1 kHz, so this only expires
+ * when telemetry has genuinely stopped, not between two frames of the same
+ * kind. It is deliberately longer than @ref KISS_STALE_MS — EDT is the fallback,
+ * and a fallback that expires first is no fallback.
+ */
+#define EDT_STALE_MS          1000
+
+/**
  * @brief Abandon a reply that has not completed this long after the request.
  *
  * Only matters for the timeout counter and for discarding a partial frame; the

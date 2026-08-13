@@ -214,7 +214,8 @@ void sdLogTick(uint32_t nowUs, uint16_t throttle) {
 	escSnapshot(&t);
 
 	EscReading r;
-	escMerge(&t, millis(), KISS_STALE_MS, &r);
+	uint32_t nowMs = millis();
+	escMerge(&t, nowMs, KISS_STALE_MS, EDT_STALE_MS, &r);
 
 	int32_t v[BB_FIELD_COUNT] = {0};
 	// Every field but temperature is declared unsigned in the log header, and a
@@ -225,11 +226,17 @@ void sdLogTick(uint32_t nowUs, uint16_t throttle) {
 	v[BB_F_ERPM_KISS]    = (int32_t)r.kissErpm;
 	v[BB_F_VBAT]         = (int32_t)(r.voltsFrom == EscSource::Kiss ? t.kissVolts * 100.0f + 0.5f : 0.0f);
 	v[BB_F_AMPERAGE]     = (int32_t)(r.ampsFrom == EscSource::Kiss ? t.kissAmps * 100.0f + 0.5f : 0.0f);
-	v[BB_F_VBAT_EDT]     = (int32_t)(t.haveVolts ? t.volts * 100.0f + 0.5f : 0.0f);
-	v[BB_F_AMPERAGE_EDT] = (int32_t)(t.haveAmps ? t.amps * 100.0f + 0.5f : 0.0f);
+	// The EDT columns are logged raw rather than merged, so they need the same
+	// expiry applied by hand -- otherwise a disconnected ESC writes its last
+	// voltage into every subsequent frame and the trace shows a rock-steady
+	// pack instead of the moment the data stopped.
+	v[BB_F_VBAT_EDT]     = (int32_t)(escFieldFresh(t.edtVoltsMs, nowMs, EDT_STALE_MS)
+	                                 ? t.volts * 100.0f + 0.5f : 0.0f);
+	v[BB_F_AMPERAGE_EDT] = (int32_t)(escFieldFresh(t.edtAmpsMs, nowMs, EDT_STALE_MS)
+	                                 ? t.amps * 100.0f + 0.5f : 0.0f);
 	v[BB_F_TEMP]         = r.tempC;                    // the one signed field
 	v[BB_F_MAH]          = r.mah;
-	v[BB_F_STRESS]       = t.stress;
+	v[BB_F_STRESS]       = r.stress;
 
 	for (int i = 0; i < BB_FIELD_COUNT; i++) {
 		if (i != BB_F_TEMP && v[i] < 0) v[i] = 0;

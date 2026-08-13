@@ -120,19 +120,21 @@ void escHeartbeat() {
 	s_heartbeatMs = millis();
 }
 
-void escRequestEdtEnable() {
-	if (s_armed) return;               // commands are only valid when disarmed
+bool escRequestEdtEnable() {
+	if (s_armed) return false;         // commands are only valid when disarmed
 	s_pendingCmd  = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
 	s_pendingReps = 10;                // spec asks for 6; a few spare frames
 	s_edtRequested = true;
+	return true;
 }
 
-void escRequestBeep(uint8_t n) {
-	if (s_armed) return;
+bool escRequestBeep(uint8_t n) {
+	if (s_armed) return false;
 	if (n < 1) n = 1;
 	if (n > 5) n = 5;
 	s_pendingCmd  = (uint8_t)(DSHOT_CMD_BEACON1 + (n - 1));
 	s_pendingReps = 6;
+	return true;
 }
 
 bool escEdtRequested() { return s_edtRequested; }
@@ -212,22 +214,22 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 			break;
 		case BidirDshotTelemetryType::VOLTAGE:
 			s_tel.volts = value * 0.25f;
-			s_tel.haveVolts = true;
+			s_tel.edtVoltsMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::CURRENT:
 			s_tel.amps = (float)value;
-			s_tel.haveAmps = true;
+			s_tel.edtAmpsMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::TEMPERATURE:
 			s_tel.tempC = (int16_t)value;
-			s_tel.haveTemp = true;
+			s_tel.edtTempMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::STRESS:
 			s_tel.stress = (uint8_t)value;
-			s_tel.haveStress = true;
+			s_tel.edtStressMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::STATUS:
@@ -236,6 +238,7 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 			s_tel.error     = (value & ESC_STATUS_ERROR_MASK)   != 0;
 			s_tel.warning   = (value & ESC_STATUS_WARNING_MASK) != 0;
 			s_tel.alert     = (value & ESC_STATUS_ALERT_MASK)   != 0;
+			s_tel.edtStatusMs = millis();
 			s_tel.goodPackets++;
 			break;
 		case BidirDshotTelemetryType::DEBUG_FRAME_1:
