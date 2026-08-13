@@ -412,6 +412,51 @@ static void testEdtStaleness() {
 	checkTrue("escFieldFresh accepts a real one", escFieldFresh(1, 500, 1000));
 }
 
+/**
+ * @brief The automatic EDT enable follows the ESC, not the clock.
+ *
+ * It used to fire once, 1.5 s after boot. That covers only the ESC that
+ * happened to be plugged in and powered at the time; connect one afterwards,
+ * power-cycle it, or swap it, and it never got the enable at all. eRPM kept
+ * working, because that is plain bidirectional DShot, so the result looked
+ * exactly like an ESC with no EDT support.
+ */
+static void testEdtAutoEnable() {
+	section("Automatic EDT enable");
+
+	// Nothing connected: nothing to do, however long we wait.
+	checkTrue("no ESC, nothing sent",
+	          edtAutoAction(false, false) == EdtAutoAction::None);
+
+	// An ESC answers.
+	checkTrue("ESC appears, enable is sent",
+	          edtAutoAction(true, false) == EdtAutoAction::Send);
+	checkTrue("and not sent twice while it stays",
+	          edtAutoAction(true, true) == EdtAutoAction::None);
+
+	// It goes away. The one-shot must re-arm, or the replacement never gets
+	// one -- which is the whole bug.
+	checkTrue("ESC leaves, the one-shot re-arms",
+	          edtAutoAction(false, true) == EdtAutoAction::Rearm);
+
+	// Full swap cycle, driven through the flag the firmware keeps.
+	bool sent = false;
+	int sends = 0;
+	auto step = [&](bool linkUp) {
+		switch (edtAutoAction(linkUp, sent)) {
+			case EdtAutoAction::Send:  sent = true;  sends++; break;
+			case EdtAutoAction::Rearm: sent = false;          break;
+			case EdtAutoAction::None:                         break;
+		}
+	};
+	for (int i = 0; i < 50; i++) step(true);    // first ESC, running
+	checkInt("exactly one enable for the first ESC", sends, 1);
+	for (int i = 0; i < 50; i++) step(false);   // unplugged
+	checkInt("none while nothing is connected", sends, 1);
+	for (int i = 0; i < 50; i++) step(true);    // replacement fitted
+	checkInt("the replacement gets its own", sends, 2);
+}
+
 /** @brief Source labels, which the UI prints verbatim. */
 static void testSourceLabels() {
 	section("Source labels");
@@ -433,5 +478,6 @@ void runKissTests() {
 	testMerge();
 	testMergeWraparound();
 	testEdtStaleness();
+	testEdtAutoEnable();
 	testSourceLabels();
 }

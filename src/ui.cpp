@@ -303,9 +303,9 @@ static void relativeThrottle(int nowPos, int16_t *anchorPos,
 	s_throttle = (uint16_t)t;
 }
 
-/** @brief True if an eRPM frame has arrived in the last 500 ms. */
+/** @brief True if an eRPM frame has arrived recently. @see ESC_LINK_STALE_MS */
 static bool telemetryAlive() {
-	return s_tel.lastRpmMs != 0 && (uint32_t)(millis() - s_tel.lastRpmMs) < 500;
+	return escFieldFresh(s_tel.lastRpmMs, millis(), ESC_LINK_STALE_MS);
 }
 
 /**

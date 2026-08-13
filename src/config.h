@@ -182,6 +182,19 @@
 #define EDT_STALE_MS          1000
 
 /**
+ * @brief How long without an eRPM frame before the ESC counts as gone, in ms.
+ *
+ * eRPM is plain bidirectional DShot — every ESC that works at all answers with
+ * it, whether or not it supports EDT — so its presence is the definition of
+ * "an ESC is connected". Losing it is what re-arms the automatic EDT enable, so
+ * that a replacement ESC gets its own.
+ *
+ * Shorter than @ref EDT_STALE_MS deliberately. eRPM arrives every frame at
+ * 1 kHz, where EDT frame types are interleaved and any one of them is rarer.
+ */
+#define ESC_LINK_STALE_MS      500
+
+/**
  * @brief Abandon a reply that has not completed this long after the request.
  *
  * Only matters for the timeout counter and for discarding a partial frame; the

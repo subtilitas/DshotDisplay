@@ -258,8 +258,8 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   and pressing it re-sends `DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE` either way. The colour
   and the word always agree, and both follow *received frames* rather than whether the
   command was sent: the enable is fire-and-forget and the ESC never acknowledges it, so
-  arriving telemetry is the only evidence it took. The firmware also sends it once
-  automatically, 1.5 s after boot.
+  arriving telemetry is the only evidence it took. The firmware also sends it by
+  itself, once per ESC, as soon as one starts answering.
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
 
 Both commands flash the button for a moment when pressed. The command itself lasts about
@@ -299,6 +299,13 @@ the temperature tile and is KISS-only — EDT does not carry it.
 ---
 
 ## Telemetry and logging
+
+EDT is enabled automatically — you should not normally need that button. The enable
+goes out once per ESC, triggered by the first eRPM frame rather than by a timer: an ESC
+that has answered a frame is demonstrably powered, booted and listening. Lose eRPM for
+`ESC_LINK_STALE_MS` and the one-shot re-arms, so an ESC connected later, power-cycled,
+or swapped for a different one gets its own enable instead of silently running without
+EDT for the rest of the session.
 
 Every reading expires. A value that has not been refreshed for `EDT_STALE_MS` (1 s)
 blanks to `--` rather than holding its last number, and eRPM does the same after 500 ms.
