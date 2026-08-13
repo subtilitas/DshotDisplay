@@ -28,10 +28,14 @@
  * candidates. See the "Plugging an ESC in directly" section of README.md for
  * why GP20 and GP29 are not usable there.
  *
- * On the **RP2350-Touch-LCD-2.8** this is **GP28**, J4 pin 11. That board has
- * an RTC, a codec and an SD slot where the other one has a camera header, and
- * GP28 and GP29 are the only two GPIOs left unclaimed. GP29 works identically
- * if you prefer the end of the connector.
+ * On the **RP2350-Touch-LCD-2.8** this is **GP29**, J4 pin 12 — the last pin on
+ * the connector, which is the easy one to find and the easy one to solder to.
+ * That board has an RTC, a codec and an SD slot where the other one has a
+ * camera header, so GP28 (J4 pin 11) and GP29 are the only two GPIOs left
+ * unclaimed. GP28 works identically; build with `-DDSHOT_PIN=28` for it.
+ *
+ * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
+ * never hears a frame, because the firmware is driving a pin no wire is on.
  *
  * Override with `-DDSHOT_PIN=n` or by editing the value here.
  *
@@ -43,7 +47,7 @@
   #if BOARD == BOARD_RP2350_TOUCH_LCD_2
     #define DSHOT_PIN          4
   #else
-    #define DSHOT_PIN          28
+    #define DSHOT_PIN          29
   #endif
 #endif
 

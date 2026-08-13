@@ -116,10 +116,11 @@ If telemetry is flaky, drop `DSHOT_SPEED_KBAUD` to 300 before blaming the firmwa
 
 Its pin map is `src/board_rp2350_touch_lcd_2_8.h`. The short version: no 2.54 mm
 headers at all — everything comes out on JST-SH connectors — and of those, only
-**GP28** (J4 pin 11) and **GP29** (J4 pin 12) are free for an ESC. GP28 is the
-default; build with `-DDSHOT_PIN=29` for the other. An ESC on the wrong one of
-those two is simply silent, with nothing reported anywhere, because nothing is
-listening on the pin you wired.
+**GP28** (J4 pin 11) and **GP29** (J4 pin 12) are free for an ESC. **GP29 is the
+default** — last pin on the connector, easiest to find and to solder. Build with
+`-DDSHOT_PIN=28` for the other one. An ESC on the wrong one of the two is simply
+silent, with nothing reported anywhere, because nothing is listening on the pin
+you wired.
 
 It also carries a power-button latch on GP26 that the firmware asserts as the
 very first thing at boot. Without it the board drops dead mid-boot whenever it
@@ -161,10 +162,10 @@ Two build options worth knowing:
 
 ```sh
 -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8   # the 2.8" board; default is the 2.0"
--DDSHOT_PIN=29                        # ESC on a different GPIO than the default
+-DDSHOT_PIN=28                        # ESC on a different GPIO than the default
 ```
 
-`DSHOT_PIN` defaults to **GP4** on the 2.0" and **GP28** on the 2.8". The 2.8"
+`DSHOT_PIN` defaults to **GP4** on the 2.0" and **GP29** on the 2.8". The 2.8"
 brings out only GP28 (J4 pin 11) and GP29 (J4 pin 12), so those are the two
 choices there — and an ESC on the wrong one is simply silent, with no error
 anywhere, because nothing is listening on the pin you wired.

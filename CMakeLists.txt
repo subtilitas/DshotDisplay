@@ -36,10 +36,10 @@ set_property(CACHE BOARD PROPERTY STRINGS
     BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8)
 
 # Which GPIO the ESC signal wire lands on. Empty means "whatever board_pins.h
-# defaults to" -- GP4 on the 2.0", GP28 on the 2.8". Set it when the wire is
+# defaults to" -- GP4 on the 2.0", GP29 on the 2.8". Set it when the wire is
 # somewhere else:
 #
-#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 -DDSHOT_PIN=29 ...
+#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 -DDSHOT_PIN=28 ...
 #
 # The 2.8" brings out GP28 (J4 pin 11) and GP29 (J4 pin 12) and nothing else, so
 # those are the only two choices there.
