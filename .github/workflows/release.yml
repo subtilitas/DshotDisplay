@@ -56,7 +56,13 @@ jobs:
           - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
           - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
     steps:
+      # ref: is load-bearing for workflow_dispatch. Without it a manual run
+      # checks out the branch it was launched from and attaches binaries built
+      # from that to a release named after an older tag -- and --verify-tag does
+      # not catch it, because the tag does exist. It is the build that is wrong.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - name: Install the ARM toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
@@ -134,13 +140,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.version.outputs.tag }}
           fetch-depth: 0   # generated notes need the history
 
       - uses: actions/download-artifact@v4
         with:
           pattern: uf2-*
           path: dist
-          merge-multiple: true
           merge-multiple: true
 
       - name: Checksums
@@ -174,12 +180,14 @@ jobs:
 
           | ESC | 2.0" board | 2.8" board |
           |---|---|---|
-          | Signal | **GP4** — P2 header, pin 11 | **GP28** — J4 pin 11 |
+          | Signal | **GP4** — P2 header, pin 11 | **GP29** — J4 pin 12 |
           | Ground | **GND** — P2 header, pin 13 | **GND** — J4 pin 1 or 5 |
 
-          The 2.8" brings out only GP28 and GP29, so build with `-DDSHOT_PIN=29`
-          if the wire is on the other one. An ESC on the wrong pin is silent, with
-          no error anywhere.
+          The 2.8" brings out only GP28 and GP29. Either works — change it on the
+          board itself from **CFG → SETUP**, which remembers the choice across
+          power cycles. An ESC on the wrong pin used to be silent with no error
+          anywhere; the SETUP screen now shows the live packet rate beside the
+          pin selector, so you can see it come off zero.
 
           Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output,
           and RP2350 GPIO is not 5 V tolerant.

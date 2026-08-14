@@ -73,6 +73,11 @@ def main():
                 continue
             actual = []
             for arg in sig.group(1).split(","):
+                # Strip a default argument first. Without this the name is read
+                # off the end of the whole clause, so `bool pressed = false`
+                # reports its parameter as "false" -- and then demands that a
+                # parameter called "false" be documented.
+                arg = arg.split("=")[0]
                 found = re.findall(r"(\w+)\s*$", arg.strip())
                 if found and found[0] != "void":
                     actual.append(found[0])

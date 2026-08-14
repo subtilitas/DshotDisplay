@@ -255,6 +255,24 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   run; turning it off zeroes the throttle immediately.
 - **CFG** — settings, and the way to **SETUP**. Entering it force-disarms.
 
+**How the buttons behave**
+
+Every button except DISARM fires when you *lift* your finger, not when you land
+it, and shows a pressed outline in between. So a mis-tap can be cancelled by
+sliding off before letting go — which is what every touchscreen does, and
+therefore the one interaction nobody has to be told about.
+
+DISARM is the deliberate exception. It fires on touch-down, because the control
+whose job is "stop the motor now" is the one control that must not wait.
+
+The `-` / `+` steppers repeat while held and accelerate, so the throttle ceiling
+is one press end to end rather than twenty taps. A single tap still moves
+exactly one step.
+
+Arming and disarming dip the backlight for a moment. It is a whole-panel event,
+which means you catch it while looking at the motor rather than at the screen —
+and the badge changing colour in a corner is not.
+
 **Settings screen**
 
 ![Settings screen](docs/settings-preview.png)
@@ -483,6 +501,7 @@ at.
 | `SD_LOG_BUFFER_BYTES` | `8192` | Ring buffer. **The one to measure** — see BUF PEAK and WORST FLUSH |
 | `SD_LOG_CHUNK_BYTES` | `512` | Flush granularity. Keep it a multiple of 512 or the card does read-modify-write |
 | `SD_LOG_PREALLOC_BYTES` | `16 MB` | Contiguous space reserved per file, so the FAT is not rewritten mid-log. About ten minutes at the default rate |
+| `SD_LOG_SYNC_MS` | `2000` | How often the file's directory entry is committed. Without it the only sync is at STOP, so pulling the battery mid-run loses the whole file rather than the last two seconds |
 | `SD_LOG_AUTO_ON_ARM` | `1` | Start and stop logging with ARM, alongside the manual button |
 
 ### Reading the logs
@@ -637,7 +656,9 @@ Built into the firmware:
 - Arming needs a deliberate 1 s hold with the throttle already at zero.
 - Throttle springs back to zero on finger-lift unless HOLD is explicitly enabled.
 - Configurable throttle ceiling, default 20 %.
-- Auto-disarm after 30 s with no touch input (`IDLE_DISARM_MS`).
+- Auto-disarm after 30 s with no touch input (`IDLE_DISARM_MS`), counted down
+  on screen for the last five seconds. A motor stopping for no visible reason is
+  indistinguishable from a fault.
 - Core1 zeroes the throttle if core0 stops sending heartbeats.
 - Entering the settings screen force-disarms, and so does changing any wiring.
 - A settings save is refused while armed: writing flash stops the DShot pump.
@@ -676,6 +697,7 @@ src/
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
   ui_setup.{h,cpp}      SETUP screen: pins, bitrate, contrast, hold-to-save
+  ui_input.{h,cpp}      tap-on-release and held-repeat rules, shared (pure)
   am32_bl.{h,cpp}       one-wire bootloader transport (reused for FW flashing)
   am32_eeprom.{h,cpp}   AM32 settings layout, decoding and presentation
   gfx.{h,cpp}           RGB565 framebuffer, dirty bands, 5x7 font, 7-seg digits

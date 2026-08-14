@@ -324,6 +324,20 @@
 #define SD_LOG_PREALLOC_BYTES  (16u * 1024u * 1024u)
 
 /**
+ * @brief Commit the log file's directory entry at most this often, in ms.
+ *
+ * A log is only readable up to its last f_sync(). Without a periodic one the
+ * only sync is at sdLogStop(), so pulling the battery mid-run -- which the
+ * safety section of README.md recommends having a way to do -- loses the entire
+ * file rather than the last couple of seconds.
+ *
+ * Cheap because the file is pre-allocated contiguously: the FAT is not being
+ * extended, only the directory entry rewritten. Taken right after a chunk goes
+ * out, when the ring is at its emptiest.
+ */
+#define SD_LOG_SYNC_MS         2000
+
+/**
  * @brief Start logging automatically when the tester arms.
  *
  * Manual start/stop is always available. With this on, arming also starts a log

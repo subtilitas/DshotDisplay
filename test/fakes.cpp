@@ -85,7 +85,17 @@ void uart_set_fifo_enabled(uart_inst_t *, bool) {}
 // display: render into the real framebuffer, never push pixels anywhere
 // ---------------------------------------------------------------------------
 void st7789FlushDirty() { gfxClearDirty(); }
-void st7789SetBacklight(uint8_t) {}
+// Recorded rather than discarded: the arm-feedback dip is only observable as a
+// backlight level, so a fake that threw it away would make it untestable.
+static uint8_t g_backlight = 0;
+static uint8_t g_backlightMin = 255;
+uint8_t fakeBacklight() { return g_backlight; }
+uint8_t fakeBacklightMin() { return g_backlightMin; }
+void fakeBacklightResetMin() { g_backlightMin = 255; }
+void st7789SetBacklight(uint8_t level) {
+	g_backlight = level;
+	if (level < g_backlightMin) g_backlightMin = level;
+}
 
 // ---------------------------------------------------------------------------
 // scripted touch

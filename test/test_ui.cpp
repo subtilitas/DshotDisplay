@@ -11,6 +11,7 @@
 #include "check.h"
 #include "fakes.h"
 #include "settings.h"
+#include "ui_input.h"
 #include "gfx.h"
 #include "ui.h"
 #include "touch.h"
@@ -81,6 +82,16 @@ static void swipe(int x0, int x1, int y, int step) {
 // --- settings-screen command buttons, mirroring ui.cpp ---
 #define CFG_BEEP_X  120   // BTN_BEEP spans the full row, x 14..225
 #define CFG_CMD_Y_T 219   // y 200..237
+#define CFG_BEEP_Y  CFG_CMD_Y_T
+// --- settings-screen steppers: BTN_*_M x 14..59, BTN_*_P x 180..225 ---
+#define CFG_POLES_M_X  37
+#define CFG_POLES_P_X 203
+#define CFG_POLES_Y    92   // BTN_POLES_* y 72..111
+#define CFG_MAXT_M_X   37
+#define CFG_MAXT_P_X  203
+#define CFG_MAXT_Y    168   // BTN_MAXT_* y 148..187
+// --- throttle gauge: THR_TRACK_Y 248, height 26 ---
+#define THR_Y         260
 // --- logging-screen coordinates, mirroring ui.cpp ---
 #define LOG_TOGGLE_Y 232
 #define LOG_RETRY_Y  270
@@ -685,6 +696,162 @@ static void testSetupSave() {
 	fakeDumpFrame("shot_settings_unsaved.ppm");
 }
 
+
+/**
+ * @brief Sliding a finger off a button before lifting cancels it.
+ *
+ * The escape hatch. Every screen but the ARM button used to commit on
+ * touch-down, which means a mis-tap has already happened by the time you see
+ * it -- and on glass there is no travel to warn you first.
+ */
+static void testTapCancels() {
+	section("Touch: a tap can be cancelled by sliding off");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+
+	// HOLD is observable through the throttle gauge: with it on, the bar latches
+	// instead of springing back. Arm, prove it springs back, then try to turn
+	// HOLD on by a press that slides away -- it must still spring back.
+	holdToArm();
+	swipe(20, 160, THR_Y, 8);
+	frames(2);
+	checkInt("spring mode: released throttle returns to zero", fakeThrottle(), 0);
+
+	fakePress(BTN_HOLD_X, BTN_ARM_Y); frames(2);
+	fakeHold(BTN_ARM_X, BTN_ARM_Y);   frames(2);   // slide off, onto ARM
+	fakeRelease();                    frames(2);
+	swipe(20, 160, THR_Y, 8);
+	frames(2);
+	checkInt("sliding off HOLD never turned it on", fakeThrottle(), 0);
+
+	// The same press, released in place, does toggle it.
+	tap(BTN_HOLD_X, BTN_ARM_Y);
+	swipe(20, 160, THR_Y, 8);
+	frames(2);
+	checkTrue("released in place, HOLD latched the throttle", fakeThrottle() > 0);
+	tap(BTN_HOLD_X, BTN_ARM_Y);       // back off, which zeroes it
+	tap(BTN_CFG_X, BTN_ARM_Y);        // into settings for the rest
+
+	// The settings screen: press BEEP, slide to BACK, release. Neither fires.
+	int beeps = fakeBeepRequests();
+	fakePress(120, CFG_BEEP_Y);  frames(2);
+	fakeHold(120, 308);          frames(2);
+	fakeRelease();               frames(2);
+	checkInt("sliding off BEEP sent nothing", fakeBeepRequests(), beeps);
+
+	// Still on the settings screen, which the next tap proves by working: BACK
+	// is only hit-tested here, so if the slide had activated it this fails.
+	fakePress(120, CFG_BEEP_Y);  frames(2);
+	fakeRelease();               frames(2);
+	checkInt("released in place, it fires", fakeBeepRequests(), beeps + 1);
+	checkTrue("so the screen never left", true);
+}
+
+/** @brief A held stepper repeats and accelerates; a tap moves exactly one step. */
+static void testStepperRepeat() {
+	section("Touch: hold-to-repeat on the settings steppers");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	tap(BTN_CFG_X, BTN_ARM_Y);
+
+	// One tap, one step. The delay before repeating is what makes this true.
+	uint16_t start = settings()->maxThrottle;
+	tap(CFG_MAXT_P_X, CFG_MAXT_Y);
+	checkInt("a tap moves exactly one step",
+	         settings()->maxThrottle, start + MAX_THROTTLE_STEP);
+
+	// Held: many steps, and the whole range is reachable without lifting.
+	start = settings()->maxThrottle;
+	fakePress(CFG_MAXT_P_X, CFG_MAXT_Y); frames(1);
+	for (int i = 0; i < 200; i++) { fakeHold(CFG_MAXT_P_X, CFG_MAXT_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkTrue("holding walks the ceiling up", settings()->maxThrottle > start);
+	checkInt("and reaches the top without lifting",
+	         settings()->maxThrottle, MAX_THROTTLE_CEILING);
+	checkTrue("never past it", settings()->maxThrottle <= MAX_THROTTLE_CEILING);
+
+	// And back down, without underflowing past one step.
+	fakePress(CFG_MAXT_M_X, CFG_MAXT_Y); frames(1);
+	for (int i = 0; i < 300; i++) { fakeHold(CFG_MAXT_M_X, CFG_MAXT_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkInt("and back down to one step, never below",
+	         settings()->maxThrottle, MAX_THROTTLE_STEP);
+
+	// Poles stay even throughout, which is what the eRPM maths assumes.
+	fakePress(CFG_POLES_P_X, CFG_POLES_Y); frames(1);
+	bool even = true;
+	for (int i = 0; i < 120; i++) {
+		fakeHold(CFG_POLES_P_X, CFG_POLES_Y); frames(1);
+		if (settings()->poles & 1) even = false;
+	}
+	fakeRelease(); frames(1);
+	checkTrue("pole count stays even while repeating", even);
+	checkTrue("and inside its range",
+	          settings()->poles >= MIN_MOTOR_POLES && settings()->poles <= MAX_MOTOR_POLES);
+}
+
+/** @brief The repeat rule itself, away from any screen. */
+static void testRepeatRule() {
+	section("Touch: the repeat rule");
+
+	Repeat r{};
+	checkTrue("fires once immediately on press", repeatFires(&r, +1, 1000));
+	checkTrue("then pauses", !repeatFires(&r, +1, 1100));
+	checkTrue("still paused just before the delay",
+	          !repeatFires(&r, +1, 1000 + REPEAT_DELAY_MS));
+	checkTrue("repeats after the delay", repeatFires(&r, +1, 1000 + REPEAT_DELAY_MS + 130));
+
+	// Accelerates: the gap between steps shrinks the longer it is held.
+	checkInt("slow tier", repeatInterval(500), 120);
+	checkInt("faster after 1.2 s", repeatInterval(1500), 60);
+	checkInt("fastest after 2.5 s", repeatInterval(3000), 25);
+
+	// Reversing restarts the acceleration rather than carrying it over.
+	Repeat r2{};
+	repeatFires(&r2, +1, 0);
+	for (uint32_t t = 100; t < 4000; t += 20) repeatFires(&r2, +1, t);
+	checkTrue("reversing fires at once", repeatFires(&r2, -1, 4000));
+	checkTrue("and starts slow again", !repeatFires(&r2, -1, 4100));
+
+	// Letting go resets.
+	checkTrue("release is not a step", !repeatFires(&r2, 0, 4200));
+	checkTrue("and the next press fires immediately", repeatFires(&r2, -1, 4300));
+}
+
+/** @brief Arming and disarming dip the backlight, so the panel announces them. */
+static void testArmBacklightDip() {
+	section("Touch: the panel announces arm and disarm");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(6);
+	uint8_t resting = fakeBacklight();
+	checkTrue("resting at the configured level", resting > 0);
+
+	fakeBacklightResetMin();
+	holdToArm();
+	frames(1);
+	checkTrue("arming dips the panel", fakeBacklightMin() < resting);
+
+	frames(20);   // the dip is short
+	checkInt("and comes back", fakeBacklight(), resting);
+
+	fakeBacklightResetMin();
+	tap(BTN_ARM_X, BTN_ARM_Y);          // DISARM fires on press
+	frames(1);
+	checkTrue("no longer armed", !uiArmed());
+	checkTrue("disarming dips it too", fakeBacklightMin() < resting);
+	frames(20);
+	checkInt("and comes back again", fakeBacklight(), resting);
+}
+
 void runUiTests() {
 	// Off zero before anything is stamped. Virtual time starts at 0, and 0 is
 	// reserved for "this frame type has never arrived" -- so telemetry stamped
@@ -855,6 +1022,11 @@ void runUiTests() {
 	testKissDisplay();
 	testTelemetryExpires();
 	testSettingsCommandRow();
+
+	testTapCancels();
+	testStepperRepeat();
+	testRepeatRule();
+	testArmBacklightDip();
 
 	testSetupWiring();
 	testSetupKiss();

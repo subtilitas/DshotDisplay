@@ -11,6 +11,7 @@
 #include "ui.h"
 #include "ui_am32.h"
 #include "ui_setup.h"
+#include "ui_input.h"
 #include "settings.h"
 #include "gfx.h"
 #include "touch.h"
@@ -175,6 +176,15 @@ static int16_t  s_dragAnchorX = 0;
 static uint16_t s_dragAnchorThrottle = 0;
 
 // relative throttle pad (the number-display area)
+/**
+ * @brief Repeat state for the two steppers on the settings screen.
+ *
+ * One per control, not one shared: sliding a finger from the pole stepper onto
+ * the ceiling stepper must not carry the first one's acceleration across.
+ */
+static Repeat s_polesRepeat;
+static Repeat s_maxtRepeat;
+
 static bool     s_padDragging = false;
 static bool     s_padEngaged = false;    // deadzone cleared
 static int16_t  s_padTouchY = 0;         // where the finger landed
@@ -219,6 +229,30 @@ static void cmdFlashSet(CmdFlash which, bool ok) {
 }
 /** @} */
 
+/**
+ * @defgroup ui_blflash Arm feedback through the backlight
+ *
+ * Arming and disarming are the two most consequential things this UI does, and
+ * both used to announce themselves only by a badge changing colour -- in a
+ * corner of a screen you are not looking at, because you are looking at the
+ * motor.
+ *
+ * Dipping the whole panel for a moment is a peripheral-vision event. It costs
+ * one PWM write per frame, needs no hardware neither board has, and works
+ * identically in both themes.
+ * @{
+ */
+/** @brief How long the panel dims for on an arm-state change, in ms. */
+#define BL_DIP_MS 120
+/** @brief Fraction of the normal level to dip to, as a divisor. */
+#define BL_DIP_DIV 4
+
+static uint32_t s_blDipUntil = 0;
+
+/** @brief Start a dip. Called on every arm and disarm, however it happened. */
+static void backlightDip() { s_blDipUntil = millis() + BL_DIP_MS; }
+/** @} */
+
 static TouchState s_touch;
 static EscTelemetry s_tel;
 static float s_batteryV = 0.0f;
@@ -239,7 +273,7 @@ static struct {
 	int  voltsSrc, ampsSrc, mah;
 	int  throttleRaw, maxPct, thrArmed, thrHold;
 	int  config, poles;
-	int  cmdFlash, edtActive, dirty;
+	int  cmdFlash, edtActive, dirty, btnPress, idleLeft, padLive;
 	int  logState, logFile, logDrops;
 	uint32_t logBytes, logFrames, logPeak, logWorstMs;
 } s_shown;
@@ -252,13 +286,56 @@ static bool hit(const Btn &b, int x, int y) {
 	return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
 }
 
-/** @brief Draw a rounded button with its label centred. */
+/**
+ * @brief Draw a rounded button with its label centred.
+ *
+ * The pressed look is deliberately additive -- a brighter frame and the label
+ * nudged a pixel down and right -- rather than swapping the fill and foreground.
+ * Every button here picks its label colour to suit its own fill (white on red,
+ * cyan on panel, background-coloured on a flash), so a state that replaces the
+ * fill would have to know about all of those to stay legible. Adding to what is
+ * already there cannot break any of those pairings, and reads on every one.
+ *
+ * @param b       Target rectangle.
+ * @param label   Text, centred.
+ * @param fill    Resting fill colour.
+ * @param fg      Label colour, chosen against @p fill.
+ * @param scale   Text scale.
+ * @param pressed True while a finger is on it.
+ */
 static void drawBtn(const Btn &b, const char *label, uint16_t fill,
-                    uint16_t fg, int scale) {
+                    uint16_t fg, int scale, bool pressed = false) {
 	gfxRoundRect(b.x, b.y, b.w, b.h, 6, fill);
-	gfxRoundFrame(b.x, b.y, b.w, b.h, 6, C_GRID);
+	gfxRoundFrame(b.x, b.y, b.w, b.h, 6, pressed ? C_INK : C_GRID);
+	if (pressed && b.w > 6 && b.h > 6)
+		gfxRoundFrame(b.x + 2, b.y + 2, b.w - 4, b.h - 4, 4, C_INK);
 	int tw = gfxTextW(label, scale);
-	gfxText(b.x + (b.w - tw) / 2, b.y + (b.h - 7 * scale) / 2, label, fg, scale);
+	int dx = pressed ? 1 : 0;
+	gfxText(b.x + dx + (b.w - tw) / 2, b.y + dx + (b.h - 7 * scale) / 2,
+	        label, fg, scale);
+}
+
+/**
+ * @brief True while @p b is being touched by a press that began inside it.
+ *
+ * Both halves matter. Without the current position a finger that slid off still
+ * looks held; without the start position a finger that slid *on* from elsewhere
+ * looks pressed and would fire on release.
+ */
+static bool pressing(const Btn &b, const TouchState &t) {
+	return t.down && hit(b, t.x, t.y) && hit(b, t.downX, t.downY);
+}
+
+/**
+ * @brief True on the frame a tap completes: released inside, started inside.
+ *
+ * This is the escape hatch. Firing on touch-down means a mis-tap has already
+ * happened by the time you notice it; firing on release means sliding a finger
+ * off the button cancels, which is what every touch UI does and therefore what
+ * nobody has to be told.
+ */
+static bool tapped(const Btn &b, const TouchState &t) {
+	return t.released && hit(b, t.x, t.y) && hit(b, t.downX, t.downY);
 }
 
 /** @brief Draw one telemetry tile: dim caption above a larger value. */
@@ -344,11 +421,25 @@ static void drawStatusBar() {
 	SdLogStatus log;
 	sdLogStatus(&log);
 
+	// Seconds left before the idle interlock disarms, or -1 when it is not
+	// imminent. Counting down out loud matters: a motor stopping for no visible
+	// reason is indistinguishable from a fault, and this interlock has no other
+	// symptom at all.
+	int idleLeft = -1;
+#if IDLE_DISARM_MS > 0
+	if (s_armed) {
+		int32_t left = (int32_t)IDLE_DISARM_MS - (int32_t)(millis() - s_lastTouchMs);
+		if (left < 0) left = 0;
+		if (left <= 5000) idleLeft = (int)((left + 999) / 1000);
+	}
+#endif
+
 	if (s_shown.armed == (int)s_armed && s_shown.armProgress == progress &&
 	    s_shown.battMv == battMv && s_shown.edt == (int)escEdtRequested() &&
-	    s_shown.logState == (int)log.state)
+	    s_shown.logState == (int)log.state && s_shown.idleLeft == idleLeft)
 		return;
 
+	s_shown.idleLeft = idleLeft;
 	s_shown.armed = s_armed;
 	s_shown.armProgress = progress;
 	s_shown.battMv = battMv;
@@ -383,9 +474,17 @@ static void drawStatusBar() {
 	}
 	gfxText(104, 14, lg, lgCol, 1);
 
-	snprintf(buf, sizeof(buf), "%d.%02dV", (int)s_batteryV,
-	         (int)((s_batteryV - (int)s_batteryV) * 100.0f + 0.5f));
-	gfxText(GFX_W - 4 - gfxTextW(buf, 2), 7, buf, C_TEXT, 2);
+	if (idleLeft >= 0) {
+		// Displaces the pack voltage rather than squeezing in beside it: for the
+		// five seconds this is up it is the more urgent of the two, and there is
+		// not room for both at a legible size.
+		snprintf(buf, sizeof(buf), "IDLE %ds", idleLeft);
+		gfxText(GFX_W - 4 - gfxTextW(buf, 2), 7, buf, C_AMBER, 2);
+	} else {
+		snprintf(buf, sizeof(buf), "%d.%02dV", (int)s_batteryV,
+		         (int)((s_batteryV - (int)s_batteryV) * 100.0f + 0.5f));
+		gfxText(GFX_W - 4 - gfxTextW(buf, 2), 7, buf, C_TEXT, 2);
+	}
 }
 
 /** @brief Big seven-segment RPM readout, eRPM line and the pad affordance. */
@@ -396,8 +495,10 @@ static void drawRpm() {
 	if (rpm > 99999) rpm = 99999;
 
 	if (s_shown.rpm == rpm && s_shown.erpm == erpm &&
-	    s_shown.linkAlive == (int)alive && s_shown.rpmArmed == (int)s_armed)
+	    s_shown.linkAlive == (int)alive && s_shown.rpmArmed == (int)s_armed &&
+	    s_shown.padLive == (int)s_padEngaged)
 		return;
+	s_shown.padLive = s_padEngaged;
 	s_shown.rpm = rpm;
 	s_shown.erpm = erpm;
 	s_shown.linkAlive = alive;
@@ -420,8 +521,13 @@ static void drawRpm() {
 
 	// Tell the user this whole region is a throttle pad -- a relative control
 	// with no visible handle is invisible otherwise.
-	const char *hint = "SWIPE = THROTTLE";
-	gfxText(226 - gfxTextW(hint, 1), 114, hint, s_armed ? C_CYAN : C_GRID, 1);
+	// Three states, not two. The pad has a deadzone, so there is a moment
+	// between touching it and it taking effect, and the only other evidence a
+	// drag engaged is the throttle number moving -- which is exactly what you
+	// are not watching while a motor spins up.
+	const char *hint = s_padEngaged ? "SWIPE ACTIVE" : "SWIPE = THROTTLE";
+	gfxText(226 - gfxTextW(hint, 1), 114, hint,
+	        s_padEngaged ? C_LIME : s_armed ? C_CYAN : C_GRID, 1);
 }
 
 /** @brief Six EDT tiles: voltage, current, temperature, stress, status, link. */
@@ -567,9 +673,15 @@ static void drawThrottle() {
 
 /** @brief ARM/DISARM, HOLD and CFG buttons. */
 static void drawButtons() {
+	// The pressed state is part of the key, or a button would light up under a
+	// finger and stay lit until something else happened to invalidate the row.
+	int pressKey = (pressing(BTN_ARM, s_touch) ? 1 : 0) |
+	               (pressing(BTN_HOLD, s_touch) ? 2 : 0) |
+	               (pressing(BTN_CFG, s_touch) ? 4 : 0);
 	if (s_shown.holdOn == (int)s_hold && s_shown.btnArmed == (int)s_armed &&
-	    s_shown.config == (int)s_config)
+	    s_shown.config == (int)s_config && s_shown.btnPress == pressKey)
 		return;
+	s_shown.btnPress = pressKey;
 	s_shown.holdOn = s_hold;
 	s_shown.btnArmed = s_armed;
 	s_shown.config = s_config;
@@ -580,10 +692,10 @@ static void drawButtons() {
 	gfxRect(0, Z_THR_Y1 + 1, GFX_W, Z_BTN_Y1 - Z_THR_Y1, C_BG);
 	drawBtn(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
 	        s_armed ? C_RED : C_PANEL, s_armed ? C_ONACCENT : C_TEXT,
-	        s_armed ? 2 : 1);
+	        s_armed ? 2 : 1, pressing(BTN_ARM, s_touch));
 	drawBtn(BTN_HOLD, "HOLD", s_hold ? C_BLUE : C_PANEL,
-	        s_hold ? C_ONACCENT : C_DIM, 1);
-	drawBtn(BTN_CFG, "CFG", C_PANEL, C_DIM, 1);
+	        s_hold ? C_ONACCENT : C_DIM, 1, pressing(BTN_HOLD, s_touch));
+	drawBtn(BTN_CFG, "CFG", C_PANEL, C_DIM, 1, pressing(BTN_CFG, s_touch));
 }
 
 /** @} */
@@ -637,14 +749,14 @@ static void drawConfig() {
 	char buf[24];
 
 	gfxText(14, CFG_POLES_Y - 20, "MOTOR POLES", C_DIM, 1);
-	drawBtn(BTN_POLES_M, "-", C_PANEL, C_TEXT, 2);
-	drawBtn(BTN_POLES_P, "+", C_PANEL, C_TEXT, 2);
+	drawBtn(BTN_POLES_M, "-", C_PANEL, C_TEXT, 2, pressing(BTN_POLES_M, s_touch));
+	drawBtn(BTN_POLES_P, "+", C_PANEL, C_TEXT, 2, pressing(BTN_POLES_P, s_touch));
 	snprintf(buf, sizeof(buf), "%d", s_poles);
 	gfxText(120 - gfxTextW(buf, 3) / 2, 82, buf, C_TEXT, 3);
 
 	gfxText(14, CFG_MAXT_Y - 20, "THROTTLE CEILING", C_DIM, 1);
-	drawBtn(BTN_MAXT_M, "-", C_PANEL, C_TEXT, 2);
-	drawBtn(BTN_MAXT_P, "+", C_PANEL, C_TEXT, 2);
+	drawBtn(BTN_MAXT_M, "-", C_PANEL, C_TEXT, 2, pressing(BTN_MAXT_M, s_touch));
+	drawBtn(BTN_MAXT_P, "+", C_PANEL, C_TEXT, 2, pressing(BTN_MAXT_P, s_touch));
 	snprintf(buf, sizeof(buf), "%d%%", (int)((uint32_t)s_maxThrottle * 100 / 2000));
 	gfxText(120 - gfxTextW(buf, 3) / 2, 158, buf, C_AMBER, 3);
 
@@ -655,7 +767,7 @@ static void drawConfig() {
 	// the theme, so an inverted button stays inverted in either palette.
 	drawBtn(BTN_BEEP, "BEEP", beepLit ? (s_cmdFlashOk ? C_INK : C_AMBER)
 	                                  : C_PANEL,
-	        beepLit ? C_PAPER : C_CYAN, 1);
+	        beepLit ? C_PAPER : C_CYAN, 1, pressing(BTN_BEEP, s_touch));
 
 	// The hint turns into the reason when a press is refused, so the amber
 	// flash is explained rather than just noticed.
@@ -665,10 +777,10 @@ static void drawConfig() {
 	                      : "BEEP NEEDS THE ESC DISARMED",
 	              refused ? C_RED : C_DIM, 1);
 
-	drawBtn(BTN_AM32, "AM32", C_PANEL, C_CYAN, 1);
-	drawBtn(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1);
-	drawBtn(BTN_SETUP, "SETUP", C_PANEL, C_CYAN, 1);
-	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1);
+	drawBtn(BTN_AM32, "AM32", C_PANEL, C_CYAN, 1, pressing(BTN_AM32, s_touch));
+	drawBtn(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1, pressing(BTN_LOG, s_touch));
+	drawBtn(BTN_SETUP, "SETUP", C_PANEL, C_CYAN, 1, pressing(BTN_SETUP, s_touch));
+	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1, pressing(BTN_BACK, s_touch));
 }
 
 /** @brief One label/value row on the logging screen. */
@@ -788,73 +900,93 @@ static void drawLogScreen() {
 	bool usable = (st.state != SdLogState::NoCard);
 	drawBtn(BTN_LOG_TOGGLE, active ? "STOP" : "START",
 	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
-	        usable ? (active ? C_ONACCENT : C_LIME) : C_GRID, 2);
+	        usable ? (active ? C_ONACCENT : C_LIME) : C_GRID, 2,
+	        pressing(BTN_LOG_TOGGLE, s_touch));
 
 	// The card is only mounted once, at boot, so one inserted afterwards needs
 	// this. Without it, "insert card, nothing happens" is indistinguishable
 	// from a card the firmware cannot read.
-	drawBtn(BTN_LOG_RETRY, "RETRY MOUNT", C_PANEL, C_CYAN, 1);
-	drawBtn(BTN_LOG_BACK, "BACK", C_PANEL, C_TEXT, 1);
+	drawBtn(BTN_LOG_RETRY, "RETRY MOUNT", C_PANEL, C_CYAN, 1,
+	        pressing(BTN_LOG_RETRY, s_touch));
+	drawBtn(BTN_LOG_BACK, "BACK", C_PANEL, C_TEXT, 1,
+	        pressing(BTN_LOG_BACK, s_touch));
 }
 
-/** @brief Touch handling for the logging screen. */
+/** @brief Touch handling for the logging screen. All three fire on release. */
 static void handleLogTouch() {
-	if (!s_touch.pressed) return;
-	int x = s_touch.x, y = s_touch.y;
+	if (s_touch.down) s_shown.config = -1;   // keep the pressed look live
 
-	if (hit(BTN_LOG_TOGGLE, x, y)) {
+	if (tapped(BTN_LOG_TOGGLE, s_touch)) {
 		if (sdLogActive()) sdLogStop();
 		else               sdLogStart();
 		s_shown.config = -1;
-	} else if (hit(BTN_LOG_RETRY, x, y)) {
+	} else if (tapped(BTN_LOG_RETRY, s_touch)) {
 		sdLogRemount();
 		s_shown.config = -1;
-	} else if (hit(BTN_LOG_BACK, x, y)) {
+	} else if (tapped(BTN_LOG_BACK, s_touch)) {
 		s_logScreen = false;
 		invalidateAll();
 		gfxFill(C_BG);
 	}
 }
 
-/** @brief Dispatch a press on the settings overlay. */
+/**
+ * @brief Dispatch input on the settings overlay.
+ *
+ * Two idioms, and which one a control gets follows from what it does. A stepper
+ * repeats while held, because its range is wider than anyone wants to tap
+ * across -- the throttle ceiling is twenty steps end to end. Everything else
+ * fires on release, so it can be cancelled by sliding off.
+ */
 static void handleConfigTouch() {
-	if (!s_touch.pressed) return;
 	int x = s_touch.x, y = s_touch.y;
 
-	if (hit(BTN_POLES_M, x, y) && s_poles > MIN_MOTOR_POLES) {
-		s_poles -= 2;
-		escSetPoles(s_poles);
-		s_shown.poles = -1;
-	} else if (hit(BTN_POLES_P, x, y) && s_poles < MAX_MOTOR_POLES) {
-		s_poles += 2;
-		escSetPoles(s_poles);
-		s_shown.poles = -1;
-	} else if (hit(BTN_MAXT_M, x, y) && s_maxThrottle > MAX_THROTTLE_STEP) {
-		s_maxThrottle -= MAX_THROTTLE_STEP;
-		s_shown.maxPct = -1;
-	} else if (hit(BTN_MAXT_P, x, y) && s_maxThrottle < MAX_THROTTLE_CEILING) {
-		s_maxThrottle += MAX_THROTTLE_STEP;
-		s_shown.maxPct = -1;
-	} else if (hit(BTN_BEEP, x, y)) {
+	// --- steppers: repeat while held ---
+	int polesDir = pressing(BTN_POLES_M, s_touch) ? -1
+	             : pressing(BTN_POLES_P, s_touch) ? +1 : 0;
+	if (repeatFires(&s_polesRepeat, polesDir, millis())) {
+		int p = (int)s_poles + 2 * polesDir;
+		if (p >= MIN_MOTOR_POLES && p <= MAX_MOTOR_POLES) {
+			s_poles = (uint8_t)p;
+			escSetPoles(s_poles);
+			s_shown.poles = -1;
+		}
+	}
+
+	int maxtDir = pressing(BTN_MAXT_M, s_touch) ? -1
+	            : pressing(BTN_MAXT_P, s_touch) ? +1 : 0;
+	if (repeatFires(&s_maxtRepeat, maxtDir, millis())) {
+		int t = (int)s_maxThrottle + MAX_THROTTLE_STEP * maxtDir;
+		if (t >= MAX_THROTTLE_STEP && t <= MAX_THROTTLE_CEILING) {
+			s_maxThrottle = (uint16_t)t;
+			s_shown.maxPct = -1;
+		}
+	}
+	if (polesDir || maxtDir) return;
+
+	// --- everything else: fires on release, inside, having started inside ---
+	if (s_touch.down) { s_shown.cmdFlash = -1; }   // keep the pressed look live
+	if (tapped(BTN_BEEP, s_touch)) {
 		cmdFlashSet(CmdFlash::Beep, escRequestBeep(1));
-	} else if (hit(BTN_AM32, x, y)) {
+	} else if (tapped(BTN_AM32, s_touch)) {
 		s_am32 = true;
 		gfxFill(C_BG);
 		uiAm32Enter();
-	} else if (hit(BTN_LOG, x, y)) {
+	} else if (tapped(BTN_LOG, s_touch)) {
 		s_logScreen = true;
 		s_config = false;
 		s_shown.config = -1;
 		gfxFill(C_BG);
-	} else if (hit(BTN_SETUP, x, y)) {
+	} else if (tapped(BTN_SETUP, s_touch)) {
 		s_setup = true;
 		gfxFill(C_BG);
 		uiSetupEnter();
-	} else if (hit(BTN_BACK, x, y)) {
+	} else if (tapped(BTN_BACK, s_touch)) {
 		s_config = false;
 		invalidateAll();
 		gfxFill(C_BG);
 	}
+	(void)x; (void)y;
 }
 
 /**
@@ -930,12 +1062,16 @@ static void handleMainTouch() {
 	// --- arm button: press and hold ---
 	if (s_touch.down && hit(BTN_ARM, x, y) && hit(BTN_ARM, s_touch.downX, s_touch.downY)) {
 		if (s_armed) {
-			// disarm is instant, on press
+			// Disarm is instant, on press. The one control that deliberately
+			// does not wait for release: everything else here can afford the
+			// cancel gesture, and the button whose job is "stop the motor now"
+			// cannot.
 			if (s_touch.pressed) {
 				s_armed = false;
 				s_throttle = 0;
 				s_hold = false;
 				escSetArmed(false);
+				backlightDip();
 				invalidateAll();
 			}
 		} else {
@@ -951,6 +1087,7 @@ static void handleMainTouch() {
 				s_throttle = 0;
 				escSetArmed(true);
 				s_armPressing = false;
+				backlightDip();
 				invalidateAll();
 			}
 		}
@@ -958,19 +1095,19 @@ static void handleMainTouch() {
 		s_armPressing = false;
 	}
 
-	if (s_touch.pressed) {
-		if (hit(BTN_HOLD, x, y)) {
-			s_hold = !s_hold;
-			if (!s_hold) s_throttle = 0;
-		} else if (hit(BTN_CFG, x, y)) {
-			s_config = true;
-			s_armed = false;
-			s_throttle = 0;
-			s_hold = false;
-			escSetArmed(false);
-			invalidateAll();
-			s_shown.config = -1;
-		}
+	if (tapped(BTN_HOLD, s_touch)) {
+		s_hold = !s_hold;
+		if (!s_hold) s_throttle = 0;
+	} else if (tapped(BTN_CFG, s_touch)) {
+		bool wasArmed = s_armed;
+		s_config = true;
+		s_armed = false;
+		s_throttle = 0;
+		s_hold = false;
+		escSetArmed(false);
+		if (wasArmed) backlightDip();
+		invalidateAll();
+		s_shown.config = -1;
 	}
 }
 
@@ -991,6 +1128,28 @@ bool uiArmed() { return s_armed; }
 void uiInit() {
 	memset(&s_touch, 0, sizeof(s_touch));
 	memset(&s_tel, 0, sizeof(s_tel));
+
+	// Which screen is showing is UI state too, and this function claims to reset
+	// UI state. It did not, which on hardware is invisible -- it runs once, at
+	// boot, from a cold start -- and in the test suite meant a case that left
+	// the settings overlay up handed it to whatever ran next, where taps landed
+	// on a screen the test did not think it was looking at.
+	s_config = false;
+	s_logScreen = false;
+	s_am32 = false;
+	s_setup = false;
+	s_armed = false;
+	s_hold = false;
+	s_throttle = 0;
+	s_armPressing = false;
+	s_dragging = false;
+	s_padDragging = false;
+	s_padEngaged = false;
+	s_cmdFlash = CmdFlash::None;
+	s_blDipUntil = 0;
+	s_polesRepeat = Repeat{};
+	s_maxtRepeat = Repeat{};
+
 	invalidateAll();
 
 	// 12-bit SAR, 3.3 V reference. adc_init() must precede the GPIO setup.
@@ -1023,6 +1182,15 @@ void uiTick() {
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 
 	if (s_touch.down) s_lastTouchMs = millis();
+
+	// Backlight, every frame: the level is a function of the theme, the stored
+	// preference and whether a dip is running, so recomputing it is simpler than
+	// tracking who last changed which of the three.
+	{
+		uint8_t want = themeBacklight(settings()->backlight);
+		if ((int32_t)(millis() - s_blDipUntil) < 0) want = (uint8_t)(want / BL_DIP_DIV);
+		st7789SetBacklight(want);
+	}
 
 	// SETUP owns the whole screen while it runs. It can change the pin the pump
 	// drives and the palette everything is rendered in, so leaving it has to
@@ -1082,6 +1250,7 @@ void uiTick() {
 			s_throttle = 0;
 			s_hold = false;
 			escSetArmed(false);
+			backlightDip();
 			invalidateAll();
 		}
 #endif

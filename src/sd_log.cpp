@@ -41,6 +41,10 @@ static uint8_t         s_ringBuf[SD_LOG_BUFFER_BYTES];
 
 static uint32_t s_nextFrameUs = 0;
 static uint32_t s_worstFlushMs = 0;
+/** @brief millis() of the last f_sync(). @see SD_LOG_SYNC_MS */
+static uint32_t s_lastSyncMs = 0;
+/** @brief Set while sdLogStop() drains, so the last partial chunk goes out. */
+static bool     s_draining = false;
 static uint32_t s_framesLogged = 0;
 static uint32_t s_cardBytes = 0;
 static bool     s_armed = false;
@@ -174,6 +178,8 @@ bool sdLogStart() {
 	s_cardBytes = 0;
 	s_worstFlushMs = 0;
 	s_nextFrameUs = micros();
+	s_lastSyncMs = millis();
+	s_draining = false;
 	s_state = SdLogState::Logging;
 	return true;
 }
@@ -185,7 +191,11 @@ void sdLogStop() {
 
 	// Drain what is left. Bounded so a failing card cannot hang the UI here;
 	// whatever does not make it out is lost, which is what the counters are for.
+	// s_draining lets sdLogFlush() write a partial chunk, which it otherwise
+	// refuses to do -- without it the tail of every log would be discarded.
+	s_draining = true;
 	for (int i = 0; i < 64 && logRingUsed(&s_ring) > 0; i++) sdLogFlush();
+	s_draining = false;
 
 	// Hand back the unused pre-allocation, then commit the directory entry.
 	f_truncate(&s_file);
@@ -246,16 +256,46 @@ void sdLogTick(uint32_t nowUs, uint16_t throttle) {
 	s_framesLogged++;
 }
 
+/**
+ * @brief Commit the directory entry every @ref SD_LOG_SYNC_MS, at most.
+ *
+ * Without this the only f_sync() is in sdLogStop(), so a log that ends by the
+ * battery being pulled has no directory entry at all and the whole run is lost.
+ * That is not a hypothetical ending: "have a way to cut battery power that is
+ * not the touchscreen" is the safety advice this firmware ships with.
+ *
+ * The cost is one FAT update against an already-preallocated contiguous run, so
+ * the stall is small and bounded -- and it is taken while the buffer is empty,
+ * immediately after a chunk went out, which is the cheapest moment there is.
+ */
+static void syncIfDue() {
+	if (s_state != SdLogState::Logging || s_draining) return;
+	uint32_t now = millis();
+	if ((uint32_t)(now - s_lastSyncMs) < SD_LOG_SYNC_MS) return;
+	s_lastSyncMs = now;
+	uint32_t t0 = now;
+	f_sync(&s_file);
+	uint32_t took = millis() - t0;
+	if (took > s_worstFlushMs) s_worstFlushMs = took;
+}
+
 void sdLogFlush() {
 	if (s_state != SdLogState::Logging) return;
 
 	const uint8_t *p = nullptr;
 	uint32_t avail = logRingPeek(&s_ring, &p);
-	if (avail == 0) return;
 
 	// Sector-aligned chunks, so the card is not doing read-modify-write on our
-	// behalf. Below a full chunk, wait -- unless the log is stopping, in which
-	// case sdLogStop() drains whatever is left regardless.
+	// behalf. Actually waiting for one, which this did not used to do: it wrote
+	// whatever was available, and since loop() calls this on every pass with no
+	// rate limit, "whatever was available" was almost always a few bytes. Every
+	// write was then a partial sector -- precisely the read-modify-write the
+	// chunking exists to avoid, and a large part of what WORST FLUSH measured.
+	if (avail == 0 || (avail < SD_LOG_CHUNK_BYTES && !s_draining)) {
+		syncIfDue();
+		return;
+	}
+
 	uint32_t n = avail < SD_LOG_CHUNK_BYTES ? avail : SD_LOG_CHUNK_BYTES;
 
 	uint32_t t0 = millis();
@@ -272,6 +312,7 @@ void sdLogFlush() {
 
 	logRingConsume(&s_ring, n);
 	s_cardBytes += n;
+	syncIfDue();
 }
 
 void sdLogStatus(SdLogStatus *out) {

@@ -31,6 +31,7 @@ DEFINES := -DBOARD=$(BOARD)
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
         test_blackbox.cpp test_log_ring.cpp test_settings.cpp fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
+        ../src/ui_input.cpp \
         ../src/settings.cpp ../src/am32_eeprom.cpp \
         ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp \
         ../src/log_ring.cpp
