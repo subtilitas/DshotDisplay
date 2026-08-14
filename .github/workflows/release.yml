@@ -219,7 +219,7 @@ jobs:
         working-directory: dist
         run: |
           ls -l
-          sha256sum *.uf2 > SHA256SUMS.txt
+          sha256sum ./*.uf2 > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Write release notes
