@@ -16,6 +16,7 @@
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 #include "hardware/i2c.h"
+#include "hardware/spi.h"
 #include "hardware/uart.h"
 #include "gfx.h"
 #include "st7789.h"
@@ -67,6 +68,20 @@ uint32_t clock_get_hz(enum clock_index) { return 150000000u; }
 //     in this file drives the UI tests instead ---
 i2c_inst_t *i2c0 = nullptr;
 i2c_inst_t *i2c1 = nullptr;
+
+// The board descriptors name an SPI instance and a touch driver each. On the
+// host none of them is ever dialled -- the panel and the touch chip are both
+// faked -- but the descriptors are real objects whose fields have to resolve
+// at link time.
+spi_inst_t *spi0 = nullptr;
+spi_inst_t *spi1 = nullptr;
+
+static bool fakeTouchDriverInit() { return true; }
+static void fakeTouchDriverPoll(TouchState *) {}
+extern const TouchDriver TOUCH_DRIVER_CST816D;
+extern const TouchDriver TOUCH_DRIVER_CST816D = { "CST816D", fakeTouchDriverInit, fakeTouchDriverPoll };
+extern const TouchDriver TOUCH_DRIVER_CST328;
+extern const TouchDriver TOUCH_DRIVER_CST328  = { "CST328",  fakeTouchDriverInit, fakeTouchDriverPoll };
 void i2c_init(i2c_inst_t *, unsigned) {}
 int i2c_write_timeout_us(i2c_inst_t *, uint8_t, const uint8_t *, size_t, bool, unsigned) { return -1; }
 int i2c_read_timeout_us(i2c_inst_t *, uint8_t, uint8_t *, size_t, bool, unsigned) { return -1; }

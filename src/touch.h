@@ -2,8 +2,10 @@
  * @file touch.h
  * @brief Capacitive touch interface, independent of which controller is fitted.
  *
- * Two implementations exist and exactly one compiles. Which one is settled in
- * @ref board_pins.h by the board being built for:
+ * Both implementations always compile, and the board descriptor names which one
+ * to call. They used to be mutually exclusive `#if`s, each exporting exactly
+ * `touchInit` and `touchPoll` -- which is a duplicate-symbol error the moment
+ * an image has to be able to drive either board.
  *
  * | Board | Controller | Driver | Address |
  * |---|---|---|---|
@@ -20,6 +22,7 @@
 #include <stdint.h>
 
 #include "config.h"
+#include "board_desc.h"
 
 /** @brief Native panel width, in portrait, independent of @ref LCD_ROTATION. */
 #define TOUCH_NATIVE_W 240
@@ -80,6 +83,12 @@ struct TouchState {
  * @return true if the controller answered an identifying read.
  */
 bool touchInit();
+
+/**
+ * @brief The driver the active board names, or nullptr before one is selected.
+ * @return Its TouchDriver.
+ */
+const TouchDriver *touchActiveDriver();
 
 /**
  * @brief Poll the controller and update @p t.

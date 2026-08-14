@@ -19,7 +19,7 @@
 #include "esc_task.h"
 #include "esc_merge.h"
 #include "sd_log.h"
-#include "board_pins.h"
+#include "board_desc.h"
 #include "config.h"
 
 #include "plat.h"
@@ -1130,7 +1130,7 @@ void uiDrawSplash() {
 	gfxTextCenter(216, "JuWi made", C_CYAN, 2);
 	// Which board this image was built for. Cheap here, and the alternative is
 	// working it out by flashing a UF2 and seeing whether the screen lights up.
-	gfxTextCenter(248, BOARD_LABEL, C_GRID, 1);
+	gfxTextCenter(248, g_board->label, C_GRID, 1);
 }
 
 uint16_t uiThrottle() { return s_throttle; }
@@ -1165,7 +1165,7 @@ void uiInit() {
 
 	// 12-bit SAR, 3.3 V reference. adc_init() must precede the GPIO setup.
 	adc_init();
-	adc_gpio_init(PIN_BAT_ADC);
+	adc_gpio_init(g_board->batAdcPin);
 
 	// The palette and backlight follow the stored preference before the first
 	// frame, so a board saved in high contrast never flashes a dark screen on
@@ -1187,9 +1187,9 @@ void uiTick() {
 	touchPoll(&s_touch);
 
 	// battery, lightly smoothed
-	adc_select_input(BAT_ADC_CHAN);
+	adc_select_input(g_board->batAdcChan);
 	int raw = (int)adc_read();
-	float v = (raw * 3.3f / 4095.0f) * BAT_DIVIDER;
+	float v = (raw * 3.3f / 4095.0f) * g_board->batDivider;
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 
 	if (s_touch.down) s_lastTouchMs = millis();

@@ -18,11 +18,8 @@
  * @see touch.h for the interface both touch drivers implement.
  */
 
-#include "board_pins.h"
-
-#ifdef BOARD_TOUCH_CST328
-
 #include "touch.h"
+#include "board_desc.h"
 #include "config.h"
 #include "gfx.h"
 
@@ -33,6 +30,11 @@
 /** @brief Per-transfer I2C timeout. Long enough for a 400 kHz byte, short
  *         enough that a wedged bus does not stall the UI. */
 #define I2C_TIMEOUT_US 2000
+
+/** @brief I2C instance the touch controller sits on. @see board_desc.h */
+#define TOUCH_I2C ((i2c_inst_t *)g_board->i2c)
+/** @brief 7-bit address, from the descriptor. */
+#define TOUCH_ADDR (g_board->tpAddr)
 
 /**
  * @defgroup cst328_regs CST328 register map
@@ -87,7 +89,7 @@ static int16_t s_downX = 0, s_downY = 0; /**< Where the current press started. *
 static bool wrCmd(uint16_t reg) {
 	// 16-bit register address, big-endian, and the address alone is the command.
 	uint8_t a[2] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF) };
-	return i2c_write_timeout_us(BOARD_I2C, CST328_I2C_ADDR, a, 2, false,
+	return i2c_write_timeout_us(TOUCH_I2C, TOUCH_ADDR, a, 2, false,
 	                            I2C_TIMEOUT_US) == 2;
 }
 
@@ -103,35 +105,39 @@ static bool rdRegs(uint16_t reg, uint8_t *buf, uint8_t n) {
 	uint8_t a[2] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF) };
 	// nostop=true leaves a repeated start; a stop here would make the
 	// controller forget the register pointer.
-	if (i2c_write_timeout_us(BOARD_I2C, CST328_I2C_ADDR, a, 2, true,
+	if (i2c_write_timeout_us(TOUCH_I2C, TOUCH_ADDR, a, 2, true,
 	                         I2C_TIMEOUT_US) != 2) return false;
-	return i2c_read_timeout_us(BOARD_I2C, CST328_I2C_ADDR, buf, n, false,
+	return i2c_read_timeout_us(TOUCH_I2C, TOUCH_ADDR, buf, n, false,
 	                           I2C_TIMEOUT_US) == n;
 }
 
-bool touchInit() {
-	gpio_init(PIN_TP_INT);
-	gpio_set_dir(PIN_TP_INT, GPIO_IN);
-	gpio_pull_up(PIN_TP_INT);
+/** @brief Bring the CST328 up. @return true if it answered its firmware word. */
+static bool cst328Init() {
+	gpio_init(g_board->tpInt);
+	gpio_set_dir(g_board->tpInt, GPIO_IN);
+	gpio_pull_up(g_board->tpInt);
 
-	i2c_init(BOARD_I2C, 400 * 1000);
-	gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
-	gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
-	gpio_pull_up(PIN_I2C_SDA);
-	gpio_pull_up(PIN_I2C_SCL);
+	i2c_init(TOUCH_I2C, 400 * 1000);
+	gpio_set_function(g_board->sda, GPIO_FUNC_I2C);
+	gpio_set_function(g_board->scl, GPIO_FUNC_I2C);
+	gpio_pull_up(g_board->sda);
+	gpio_pull_up(g_board->scl);
 
-#if !TOUCH_RST_SHARED_WITH_LCD
-	// TP_RST is its own net on this board, so nothing has pulsed it yet. The
-	// datasheet wants 200 ms before the part answers; 120 ms is what every
-	// working driver actually uses, and the probe below retries anyway.
-	gpio_init(PIN_TP_RST);
-	gpio_set_dir(PIN_TP_RST, GPIO_OUT);
-	gpio_put(PIN_TP_RST, 1);
-	delay(10);
-	gpio_put(PIN_TP_RST, 0);
-	delay(10);
-	gpio_put(PIN_TP_RST, 1);
-#endif
+	// A runtime test now, not #if: whether TP_RST is its own net is a property
+	// of the board, and a unified image does not know which one it is on until
+	// it is told.
+	if (!g_board->tpRstSharedWithLcd) {
+		// Nothing has pulsed it yet. The datasheet wants 200 ms before the part
+		// answers; 120 ms is what every working driver actually uses, and the
+		// probe below retries anyway.
+		gpio_init(g_board->tpRst);
+		gpio_set_dir(g_board->tpRst, GPIO_OUT);
+		gpio_put(g_board->tpRst, 1);
+		delay(10);
+		gpio_put(g_board->tpRst, 0);
+		delay(10);
+		gpio_put(g_board->tpRst, 1);
+	}
 	delay(120);
 
 	// Presence check: in debug mode the firmware word reads back with 0xCACA in
@@ -154,7 +160,8 @@ bool touchInit() {
 	return ok;
 }
 
-void touchPoll(TouchState *t) {
+/** @brief Sample the CST328. @param[in,out] t State to update. */
+static void cst328Poll(TouchState *t) {
 	uint8_t b[5];
 	bool down = false;
 	int16_t x = t->x, y = t->y;
@@ -187,4 +194,6 @@ void touchPoll(TouchState *t) {
 	s_prevDown = down;
 }
 
-#endif /* BOARD_TOUCH_CST328 */
+/** @brief The CST328 driver, as named by the 2.8" board's descriptor. */
+extern const TouchDriver TOUCH_DRIVER_CST328;
+extern const TouchDriver TOUCH_DRIVER_CST328 = { "CST328", cst328Init, cst328Poll };

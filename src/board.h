@@ -54,6 +54,23 @@
  */
 #define BOARD_RP2350_TOUCH_LCD_2_8  29
 
+/**
+ * @brief One image for both boards, with the choice made on the board itself.
+ *
+ * Compiles both pin maps, both touch drivers and both SD back ends, and picks
+ * between them at run time from a stored setting. Costs a few kilobytes of
+ * flash against 4 MB, and removes the entire class of "wrong image on the wrong
+ * board" -- which matters more than it sounds, because the 2.8" image asserts a
+ * power latch the 2.0" does not and the symptom of getting it wrong is a screen
+ * that never lights.
+ *
+ * The single-board values remain, and CI still builds them. They are smaller,
+ * and they are what keeps the preprocessor path from rotting.
+ *
+ * @see board_desc.h
+ */
+#define BOARD_UNIFIED               0
+
 /** @} */
 
 /**

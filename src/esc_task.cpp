@@ -42,10 +42,14 @@ static volatile bool     s_edtRequested = false; /**< EDT enable has been issued
  * new driver is built from a consistent set.
  * @{
  */
-static volatile uint8_t  s_dshotPin   = DSHOT_PIN;              /**< ESC signal GPIO. */
+// Seeded properly by escTaskInit() from the stored settings. These initialisers
+// only cover the window before that runs, which is why they are the safest
+// values rather than any particular board's: pin 0 drives nothing on either
+// board until escTaskInit() replaces it.
+static volatile uint8_t  s_dshotPin   = 0;                      /**< ESC signal GPIO. */
 static volatile uint16_t s_dshotKbaud = DSHOT_SPEED_KBAUD;      /**< DShot bitrate. */
-static volatile uint8_t  s_kissEnable = DEFAULT_KISS_ENABLE;    /**< KISS wire expected. */
-static volatile uint8_t  s_kissPin    = DEFAULT_KISS_PIN;       /**< KISS RX GPIO. */
+static volatile uint8_t  s_kissEnable = 0;                      /**< KISS wire expected. */
+static volatile uint8_t  s_kissPin    = 0;                      /**< KISS RX GPIO. */
 static volatile bool     s_rebuildReq = false;                  /**< Rebuild pending. */
 /** @} */
 

@@ -63,7 +63,7 @@
 #include <stdio.h>
 
 #include "config.h"
-#include "board_pins.h"
+#include "board_desc.h"
 #include "gfx.h"
 #include "st7789.h"
 #include "touch.h"
@@ -74,6 +74,14 @@
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
 #define UI_PERIOD_MS 25
+
+/**
+ * @brief The power latch, asserted before the board is known.
+ *
+ * GP26 on the 2.8". SD_SCK on the 2.0", where it is released again as soon as
+ * the stored board id has been read. @see setup()
+ */
+#define BAT_EN_EARLY_PIN 26
 
 static uint32_t s_nextUiMs = 0;   /**< Deadline for the next UI frame. */
 #if SERIAL_TELEMETRY
@@ -87,15 +95,27 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  * shares, so touchInit() has to follow it.
  */
 void setup() {
-#ifdef PIN_BAT_EN
-	// First thing, before anything that could take a millisecond: on the 2.8"
-	// board this is the latch that keeps VBAT connected once the power button
-	// is released. Miss it and the board dies mid-boot on battery. Harmless on
-	// USB, and absent entirely on boards without the latch.
-	gpio_init(PIN_BAT_EN);
-	gpio_set_dir(PIN_BAT_EN, GPIO_OUT);
-	gpio_put(PIN_BAT_EN, 1);
-#endif
+	// First thing, before anything that could take a millisecond, and before we
+	// know which board this is.
+	//
+	// On the 2.8" GP26 is the latch that keeps VBAT connected once the power
+	// button is released; miss it and the board dies mid-boot on battery. That
+	// cannot wait for the stored board id, because reading it means reading
+	// flash, which takes longer than the button is held.
+	//
+	// On the 2.0" GP26 is SD_SCK. Driving an idle SD clock high with the card
+	// deselected is harmless -- no transaction is in progress and nothing has
+	// been initialised -- and it is released again below once the board is
+	// known. Asserting it unconditionally is the one thing a unified image
+	// cannot defer.
+	//
+	// @warning Validate this on a 2.0" board before relying on it. It is the
+	//          single step in the unified image that touches a pin whose
+	//          function differs between the two, and it is reasoned rather than
+	//          measured.
+	gpio_init(BAT_EN_EARLY_PIN);
+	gpio_set_dir(BAT_EN_EARLY_PIN, GPIO_OUT);
+	gpio_put(BAT_EN_EARLY_PIN, 1);
 
 #if SERIAL_TELEMETRY
 	stdio_init_all();
@@ -105,6 +125,18 @@ void setup() {
 	// uiInit(), which reads the palette and backlight preference. A board with
 	// blank flash gets the compiled defaults and never knows the difference.
 	settingsLoad();
+
+	// Now the board is known -- either because this image only drives one, or
+	// because the stored settings name it. boardSelect() has already been
+	// applied by settingsValidate(); this covers the never-configured case.
+	if (settings()->boardId != BOARD_ID_UNSET) boardSelect(settings()->boardId);
+
+	// Hand GP26 back if this board does not want it held. On the 2.0" it is
+	// SD_SCK and the card driver claims it shortly afterwards.
+	if (g_board->batEnPin != (int8_t)BAT_EN_EARLY_PIN) {
+		gpio_set_dir(BAT_EN_EARLY_PIN, GPIO_IN);
+		gpio_disable_pulls(BAT_EN_EARLY_PIN);
+	}
 
 	// Before anything can call escSnapshot(), and before core1 is launched.
 	escTaskInit();

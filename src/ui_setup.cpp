@@ -23,7 +23,7 @@
 #include "st7789.h"
 #include "touch.h"
 #include "config.h"
-#include "board_pins.h"
+#include "board_desc.h"
 
 #include "plat.h"
 #include <stdio.h>
@@ -40,22 +40,34 @@
 #define BACK_W      48
 #define BACK_H      22
 
-#define SEC1_Y      34   /**< "WIRING" caption. */
-#define ROW_H       26   /**< Height of a row's controls. */
-#define ROW_PITCH   30   /**< Row top to row top. */
-#define R_PIN       44   /**< ESC pin. */
-#define R_SPEED     (R_PIN + ROW_PITCH)
-#define R_KISS      (R_PIN + 2 * ROW_PITCH)
-#define R_KISSPIN   (R_PIN + 3 * ROW_PITCH)
+/*
+ * One layout, always seven rows, with no section captions.
+ *
+ * The board row is drawn whether or not there is a choice to make: on a
+ * single-board image it is read-only, and "which board does this firmware think
+ * it is" is worth a line of its own regardless. The alternative was geometry
+ * that moved depending on how many boards the image carries, which meant the
+ * layout asserts stopped being compile-time constants -- and those asserts are
+ * the only thing standing between this screen and a caption drawn through a
+ * button.
+ *
+ * The captions went to pay for the row. Seven rows plus two captions do not fit
+ * above LINK, and of the two, the rows carry the information.
+ */
+#define ROW_H       24   /**< Height of a row's controls. */
+#define ROW_PITCH   26   /**< Row top to row top. */
+#define R_BOARD     36   /**< Which board this is. */
+#define R_PIN       (R_BOARD + 1 * ROW_PITCH)  /**< ESC pin. */
+#define R_SPEED     (R_BOARD + 2 * ROW_PITCH)
+#define R_KISS      (R_BOARD + 3 * ROW_PITCH)
+#define R_KISSPIN   (R_BOARD + 4 * ROW_PITCH)
+#define R_CONTRAST  (R_BOARD + 5 * ROW_PITCH)
+#define R_BACKLIGHT (R_BOARD + 6 * ROW_PITCH)
 
-#define SEC2_Y      168  /**< "DISPLAY" caption. */
-#define R_CONTRAST  178
-#define R_BACKLIGHT (R_CONTRAST + ROW_PITCH)
+#define LINK_Y      224  /**< Live link readout. */
+#define NOTE_Y      236  /**< One line saying what state the settings are in. */
 
-#define LINK_Y      240  /**< Live link readout. */
-#define NOTE_Y      252  /**< One line saying what state the settings are in. */
-
-#define FOOT_Y      266
+#define FOOT_Y      254
 #define FOOT_H      40
 #define SAVE_X      8
 #define SAVE_W      150
@@ -70,11 +82,8 @@
 #define TOGGLE_W    (BTN_P_X + BTN_W - BTN_M_X)
 /** @} */
 
-static_assert(SEC1_Y >= HDR_H, "WIRING caption overlaps the header");
-static_assert(R_PIN >= SEC1_Y + 8, "first row overlaps the WIRING caption");
-static_assert(SEC2_Y >= R_KISSPIN + ROW_H, "DISPLAY caption overlaps the KISS row");
-static_assert(R_CONTRAST >= SEC2_Y + 8, "contrast row overlaps the DISPLAY caption");
-static_assert(LINK_Y >= R_BACKLIGHT + ROW_H, "LINK overlaps the backlight row");
+static_assert(R_BOARD >= HDR_H, "the first row overlaps the header");
+static_assert(LINK_Y >= R_BACKLIGHT + ROW_H, "LINK overlaps the last row");
 static_assert(NOTE_Y >= LINK_Y + 7, "note overlaps LINK");
 static_assert(FOOT_Y >= NOTE_Y + 7, "footer overlaps the note");
 static_assert(FOOT_Y + FOOT_H <= GFX_H, "footer runs off the panel");
@@ -133,8 +142,8 @@ static void button(int x, int y, int w, int h, const char *label,
  */
 static void drawStepRow(int y, const char *label, const char *value, uint16_t vcol) {
 	gfxRect(0, y, GFX_W, ROW_H, C_BG);
-	gfxText(8, y + 9, label, C_DIM, 1);
-	gfxText(VAL_R - gfxTextW(value, 2), y + 6, value, vcol, 2);
+	gfxText(8, y + 8, label, C_DIM, 1);
+	gfxText(VAL_R - gfxTextW(value, 2), y + 5, value, vcol, 2);
 	button(BTN_M_X, y, BTN_W, ROW_H, "-", C_PANEL, C_TEXT, 2);
 	button(BTN_P_X, y, BTN_W, ROW_H, "+", C_PANEL, C_TEXT, 2);
 }
@@ -149,7 +158,7 @@ static void drawStepRow(int y, const char *label, const char *value, uint16_t vc
  */
 static void drawToggleRow(int y, const char *label, const char *value, bool on) {
 	gfxRect(0, y, GFX_W, ROW_H, C_BG);
-	gfxText(8, y + 9, label, C_DIM, 1);
+	gfxText(8, y + 8, label, C_DIM, 1);
 	button(BTN_M_X, y, TOGGLE_W, ROW_H, value,
 	       on ? C_BLUE : C_PANEL, on ? C_ONACCENT : C_DIM, 1);
 }
@@ -166,6 +175,13 @@ static void drawToggleRow(int y, const char *label, const char *value, bool on) 
  * @return The text.
  */
 static const char *noteText(uint16_t *col) {
+	// Ahead of everything else: on a unified image's first boot nothing has been
+	// chosen, and every pin on this screen is being validated against a board
+	// that is only a guess until it is.
+	if (boardCount() > 1 && settings()->boardId == BOARD_ID_UNSET) {
+		*col = C_AMBER;
+		return "PICK YOUR BOARD, THEN HOLD SAVE";
+	}
 	if (s_saveOutcome == SaveOutcome::Failed) {
 		*col = C_RED;
 		return "SAVE FAILED - FLASH REFUSED THE WRITE";
@@ -218,7 +234,17 @@ static void drawAll() {
 	gfxText(6, 8, "SETUP", C_TEXT, 2);
 	button(BACK_X, BACK_Y, BACK_W, BACK_H, "BACK", C_PANEL, C_TEXT, 1);
 
-	gfxText(8, SEC1_Y, "WIRING", C_GRID, 1);
+	// Always shown; only tappable where there is something to choose. A
+	// single-board image knows what it is on, and a picker with one entry is a
+	// question with one answer -- but the answer is still worth reading.
+	if (boardCount() > 1) {
+		drawToggleRow(R_BOARD, "BOARD", g_board->label, true);
+	} else {
+		gfxRect(0, R_BOARD, GFX_W, ROW_H, C_BG);
+		gfxText(8, R_BOARD + 8, "BOARD", C_DIM, 1);
+		gfxText(GFX_W - 8 - gfxTextW(g_board->label, 1), R_BOARD + 8,
+		        g_board->label, C_GRID, 1);
+	}
 
 	snprintf(buf, sizeof(buf), "GP%u", (unsigned)s->dshotPin);
 	drawStepRow(R_PIN, "ESC PIN", buf, C_LIME);
@@ -232,8 +258,6 @@ static void drawAll() {
 	else               snprintf(buf, sizeof(buf), "--");
 	drawStepRow(R_KISSPIN, "KISS PIN", buf,
 	            s->kissEnable ? C_CYAN : C_DIM);
-
-	gfxText(8, SEC2_Y, "DISPLAY", C_GRID, 1);
 
 	drawToggleRow(R_CONTRAST, "CONTRAST",
 	              s->highContrast ? "HIGH" : "NORMAL", s->highContrast != 0);
@@ -329,6 +353,20 @@ bool uiSetupTick(const TouchState *t) {
 		if (hit(x, y, BACK_X, BACK_Y, BACK_W, BACK_H)) {
 			s_leaving = true;
 			return false;
+		} else if (boardCount() > 1 && hit(x, y, BTN_M_X, R_BOARD, TOGGLE_W, ROW_H)) {
+			// Cycle to the next board this image can drive. Everything below
+			// depends on it -- the free-pin mask most of all -- so the pins are
+			// reset to that board's defaults rather than carried across, where
+			// they would name GPIOs the new board does not offer and be
+			// silently repaired one at a time.
+			int n = boardCount();
+			int cur = 0;
+			for (int i = 0; i < n; i++) if (boardIdAt(i) == boardId()) cur = i;
+			boardSelect(boardIdAt((cur + 1) % n));
+			s->boardId    = boardId();
+			s->dshotPin   = g_board->defaultDshotPin;
+			s->kissPin    = g_board->defaultKissPin;
+			s->kissEnable = g_board->defaultKissEnable ? 1 : 0;
 		} else if (hit(x, y, BTN_M_X, R_PIN, BTN_W, ROW_H)) {
 			s->dshotPin = settingsNextPin(s->dshotPin, -1, false);
 		} else if (hit(x, y, BTN_P_X, R_PIN, BTN_W, ROW_H)) {

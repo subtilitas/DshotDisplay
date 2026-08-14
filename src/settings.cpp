@@ -11,7 +11,7 @@
 
 #include "settings.h"
 #include "config.h"
-#include "board_pins.h"
+#include "board_desc.h"
 
 #include <string.h>
 
@@ -40,7 +40,10 @@ static bool     s_stored = false;
 
 bool settingsPinFree(uint8_t pin) {
 	if (pin > 29) return false;
-	return (BOARD_FREE_GPIO_MASK >> pin) & 1u;
+	// From the active descriptor, not a compile-time mask: in a unified image
+	// the answer differs between the two boards, and the SETUP screen's pin
+	// steppers are the thing that must never offer an occupied GPIO.
+	return (g_board->freeGpioMask >> pin) & 1u;
 }
 
 /**
@@ -85,10 +88,13 @@ uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly) {
 
 void settingsDefaults(Settings *out) {
 	memset(out, 0, sizeof(*out));
-	out->dshotPin     = DSHOT_PIN;
+	// Pin defaults come from the board, not from config.h: a unified image has
+	// two boards' worth of them and config.h can only hold one.
+	out->boardId      = boardId();
+	out->dshotPin     = g_board->defaultDshotPin;
 	out->dshotKbaud   = DSHOT_SPEED_KBAUD;
-	out->kissEnable   = DEFAULT_KISS_ENABLE;
-	out->kissPin      = DEFAULT_KISS_PIN;
+	out->kissEnable   = g_board->defaultKissEnable ? 1 : 0;
+	out->kissPin      = g_board->defaultKissPin;
 	out->poles        = DEFAULT_MOTOR_POLES;
 	out->maxThrottle  = DEFAULT_MAX_THROTTLE;
 	out->backlight    = LCD_BACKLIGHT_DEFAULT;
@@ -125,9 +131,18 @@ bool settingsValidate(Settings *s) {
 	for (int i = 0; i < 4; i++) if (s->dshotKbaud == LEGAL_KBAUD[i]) legal = true;
 	if (!legal) { s->dshotKbaud = DSHOT_SPEED_KBAUD; ok = false; }
 
+	// --- board ---
+	// An id this image cannot drive is as untrustworthy as a bad CRC: every pin
+	// below is validated against the board's free mask, and validating them
+	// against the wrong board is worse than starting over.
+	if (s->boardId != BOARD_ID_UNSET && !boardSelect(s->boardId)) {
+		s->boardId = boardId();
+		ok = false;
+	}
+
 	// --- ESC pin ---
 	if (!settingsPinFree(s->dshotPin)) {
-		s->dshotPin = DSHOT_PIN;
+		s->dshotPin = g_board->defaultDshotPin;
 		ok = false;
 	}
 

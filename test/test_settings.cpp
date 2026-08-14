@@ -14,7 +14,7 @@
 
 #include "settings.h"
 #include "config.h"
-#include "board_pins.h"
+#include "board_desc.h"
 
 #include <string.h>
 #include <stddef.h>
@@ -192,7 +192,7 @@ static void testPinRules() {
 	// Not asserted against specific numbers: the free set differs per board and
 	// the suite runs for both. The rules are what is invariant.
 	checkTrue("the default ESC pin is free on this board",
-	          settingsPinFree(DSHOT_PIN));
+	          settingsPinFree(g_board->defaultDshotPin));
 	checkTrue("GP30 is not a pin", !settingsPinFree(30));
 
 	// UART RX exists only on GPn where n % 4 == 1, and which instance it is
