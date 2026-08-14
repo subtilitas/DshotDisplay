@@ -1,7 +1,6 @@
 /**
  * @file board_probe.h
- * @brief One-shot I2C identification of the board, for a unified image's
- *        first boot.
+ * @brief I2C identification of the board, on every boot of a unified image.
  *
  * board_desc.h used to argue against probing on the grounds that a probe must
  * guess a pin map first, and a wrong guess drives an LCD reset line out of an
@@ -18,13 +17,19 @@
  *   never sleep** — each board's IMU and, on the 2.8", the RTC. The touch
  *   controllers are probed too, but nothing relies on them: the CST816D is
  *   known to NACK when it autosleeps.
- * - It demands **exactly one** board answers. Anything else — nothing found,
- *   or (say) a fitted camera module back-driving GP6/GP7 into nonsense — is
- *   reported as @ref BOARD_ID_UNSET, and the caller stays in its safe state:
- *   power latch held, no display, no DShot output.
+ * - It demands **exactly one** board answers, and asks again a couple of
+ *   times before giving up. Anything else — nothing found, or (say) a fitted
+ *   camera module back-driving GP6/GP7 into nonsense — is reported as
+ *   @ref BOARD_ID_UNSET, and the caller stays in its safe state: power latch
+ *   held, no display, no DShot output.
  *
- * @see setup() in main.cpp for the only call site, and the SETUP screen for
- *      how the answer is confirmed (it is not persisted until the user saves).
+ * This runs on **every** boot, and its answer is the only one there is:
+ * nothing stored may override it, and the SETUP screen shows it read-only.
+ * A remembered board id that outranked the hardware is what made one wrong tap
+ * on a picker cost a reflash — a bad probe fails before a pin is driven and
+ * says so, where a bad stored choice is applied by the boot that reads it.
+ *
+ * @see setup() in main.cpp for the only call site.
  */
 
 #pragma once

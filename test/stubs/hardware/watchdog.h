@@ -1,9 +1,9 @@
 // Host-test stub for hardware/watchdog.h.
 //
-// platReboot() (plat.h) is how a saved board change takes effect, and the
-// tests assert both directions: saving a *new* board reboots, saving anything
-// else does not. So unlike the flash stub this one is genuinely called — the
-// implementation lives in fakes.cpp and counts into fakeRebootCount.
+// platReboot() (plat.h) has no caller: saving used to reboot when it changed
+// the stored board, and the board is detected rather than stored now. The stub
+// stays because plat.h includes this header, and fakes.cpp still defines the
+// symbol so the suite can assert that no save reboots.
 #pragma once
 #include <stdint.h>
 

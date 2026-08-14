@@ -343,19 +343,64 @@ static void testNoOpSaveWritesNothing() {
 	checkInt("with exactly one write", fakeFlashWrites() - before, 1);
 }
 
-static void testUnifiedBlankIsUnset() {
-	if (boardCount() < 2) return;
-	section("Settings: a unified image with blank flash admits it");
+static void testBlankNamesTheLiveBoard() {
+	section("Settings: blank flash names the board this boot detected");
 
-	// The first descriptor is a coherent value for early code to read, not an
-	// answer. Pretending otherwise is how 2.8" hardware used to boot with the
-	// 2.0" pin map: black screen, dead touch, and the power latch released.
+	// Which board it is has been settled before this load runs -- setup()
+	// probes for it on a unified image, the build fixes it on a single-board
+	// one -- so there is no third state left for the settings to be in.
+	// BOARD_ID_UNSET used to mean "carries two descriptors, does not yet know
+	// which"; probing on every boot, before the load, retired it.
 	fakeFlashClear();
 	settingsLoad();
-	checkInt("the board id is UNSET, not the first descriptor",
-	         settings()->boardId, BOARD_ID_UNSET);
-	// Who answers: the boot probe (device-only, see board_probe.h) or the
-	// SETUP picker -- and nothing else may guess.
+	checkInt("the board id is the live board's", settings()->boardId, boardId());
+	checkTrue("which is a board this image holds", boardId() != BOARD_ID_UNSET);
+	checkTrue("and the default ESC pin is free on it",
+	          settingsPinFree(settings()->dshotPin));
+}
+
+/**
+ * @brief The bricking path, as a test.
+ *
+ * A stored board id used to be applied on load. So a block naming the wrong
+ * board built the next boot's display, touch controller and pin map for
+ * hardware that was not there — and the SETUP screen that could have put it
+ * back was the screen that no longer came up. One wrong tap on a picker, and
+ * the only way in was a reflash over USB. Detection is the only thing that
+ * selects a board now; this is what proves the stored value cannot get its
+ * vote back.
+ */
+static void testStoredBoardNeverSelects() {
+	if (boardCount() < 2) return;
+	section("Settings: a block naming the other board cannot re-point this one");
+
+	uint8_t live  = boardId();
+	uint8_t other = boardIdAt(0) == live ? boardIdAt(1) : boardIdAt(0);
+
+	// The trap: a GPIO the other board leaves free and this one does not. That
+	// is the pin a load which honoured the block would have handed to the DShot
+	// pump -- an output driven into an on-board peripheral.
+	int trap = -1;
+	for (int p = 0; p < 30 && trap < 0; p++)
+		if (settingsPinFreeOn(other, (uint8_t)p) &&
+		    !settingsPinFreeOn(live, (uint8_t)p))
+			trap = p;
+
+	Settings s;
+	settingsDefaults(&s);
+	s.boardId = other;
+	if (trap >= 0) s.dshotPin = (uint8_t)trap;
+	fakeFlashClear();
+	storeValid(&s);
+	settingsLoad();
+
+	checkInt("the live board is untouched", boardId(), live);
+	checkInt("and the stored id is rewritten to it", settings()->boardId, live);
+	checkTrue("the ESC pin was re-judged against this board",
+	          settingsPinFree(settings()->dshotPin));
+	if (trap >= 0)
+		checkTrue("so the other board's pin did not survive",
+		          settings()->dshotPin != (uint8_t)trap);
 }
 
 void runSettingsTests() {
@@ -370,7 +415,8 @@ void runSettingsTests() {
 	testCrcKnownAnswer();
 	testForeignBoardBlock();
 	testNoOpSaveWritesNothing();
-	testUnifiedBlankIsUnset();
+	testBlankNamesTheLiveBoard();
+	testStoredBoardNeverSelects();
 
 	// Leave the module in a known state: test_ui.cpp runs after this and reads
 	// settings() for the pole count and throttle ceiling.

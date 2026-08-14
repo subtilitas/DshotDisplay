@@ -26,16 +26,21 @@
  *
  * @section board_desc_selection Which board
  *
- * Remembered from the stored settings once one has been saved. On a unified
- * image with nothing stored, the first boot has a chicken-and-egg problem this
- * section used to wave away: the SETUP picker can only be reached through a
- * display and touch controller whose pins are exactly the thing not yet known.
- * So the first boot *identifies* the board — see board_probe.h, whose probe is
- * deliberately narrower than the pin-map guessing `board.h` warns about: it
- * only ever drives two pins as open-drain I2C, on lines shown benign on both
- * schematics, and treats anything but exactly one answer as "unknown", which
- * keeps the power latch held and every output silent. The user still confirms
- * (or overrides) the answer on the SETUP screen; only a save persists it.
+ * Detected on every boot, and never remembered. A unified image *identifies*
+ * the board — see board_probe.h, whose probe is deliberately narrower than the
+ * pin-map guessing `board.h` warns about: it only ever drives two pins as
+ * open-drain I2C, on lines shown benign on both schematics, and treats
+ * anything but exactly one answer as "unknown", which keeps the power latch
+ * held and every output silent.
+ *
+ * There is no picker and no stored override, because the two ways of being
+ * wrong are not symmetrical. A probe that misreads the hardware fails at boot,
+ * before a pin is driven, and says so. A stored choice that misreads it is
+ * applied by the boot that reads it — building the display, the touch
+ * controller and the pin map for hardware that is not there — and the screen
+ * that could have corrected it is the screen that no longer comes up. The
+ * settings block still carries a board id, but only as a record of where it
+ * was written. @see settingsValidate()
  */
 
 #pragma once
@@ -164,7 +169,7 @@ struct BoardDesc {
  * @brief Stored in the settings block, so these values are on-flash format.
  * @{
  */
-#define BOARD_ID_UNSET     0  /**< No choice has been made yet. */
+#define BOARD_ID_UNSET     0  /**< Nothing identified. Never stored. */
 #define BOARD_ID_LCD_2     2  /**< Waveshare RP2350-Touch-LCD-2. */
 #define BOARD_ID_LCD_2_8  28  /**< Waveshare RP2350-Touch-LCD-2.8. */
 /** @} */
@@ -200,23 +205,23 @@ uint8_t boardId();
 /**
  * @brief How many boards this image can drive.
  *
- * One for a single-board build, two for a unified one. The SETUP screen offers
- * a board picker only when this is greater than one — there is nothing to
- * choose otherwise, and a picker with one entry is a question with one answer.
+ * One for a single-board build, two for a unified one. What it gates is the
+ * boot probe: an image that can drive only one board has nothing to identify,
+ * and asks nothing of the I2C buses.
  *
- * @return Number of selectable boards.
+ * @return Number of boards this image holds descriptors for.
  */
 int boardCount();
 
 /**
- * @brief The @p i th selectable board.
+ * @brief The @p i th board this image holds.
  * @param i Index below boardCount().
  * @return Its descriptor, or nullptr if @p i is out of range.
  */
 const struct BoardDesc *boardAt(int i);
 
 /**
- * @brief The board id of the @p i th selectable board.
+ * @brief The board id of the @p i th board this image holds.
  * @param i Index below boardCount().
  * @return One of @ref board_desc_ids, or @ref BOARD_ID_UNSET.
  */
