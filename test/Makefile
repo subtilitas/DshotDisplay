@@ -29,8 +29,9 @@ BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8
 DEFINES := -DBOARD=$(BOARD)
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
-        test_blackbox.cpp test_log_ring.cpp fakes.cpp \
-        ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp \
+        test_blackbox.cpp test_log_ring.cpp test_settings.cpp fakes.cpp \
+        ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
+        ../src/settings.cpp ../src/am32_eeprom.cpp \
         ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp \
         ../src/log_ring.cpp
 
@@ -43,7 +44,7 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
 # is not for, so building only one board would leave the other untouched.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
                ../src/cst328.cpp ../src/am32_bl.cpp ../src/sd_log.cpp \
-               ../src/main.cpp
+               ../src/settings_flash.cpp ../src/main.cpp
 
 BIN := dshot_tests
 

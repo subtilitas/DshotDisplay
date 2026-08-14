@@ -70,6 +70,7 @@
 #include "esc_task.h"
 #include "ui.h"
 #include "sd_log.h"
+#include "settings.h"
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
 #define UI_PERIOD_MS 25
@@ -99,6 +100,11 @@ void setup() {
 #if SERIAL_TELEMETRY
 	stdio_init_all();
 #endif
+
+	// Before escTaskInit(), which seeds core1's wiring from these, and before
+	// uiInit(), which reads the palette and backlight preference. A board with
+	// blank flash gets the compiled defaults and never knows the difference.
+	settingsLoad();
 
 	// Before anything can call escSnapshot(), and before core1 is launched.
 	escTaskInit();
@@ -172,8 +178,17 @@ void loop() {
 #endif
 }
 
-/** @brief Core1 setup: claim the PIO state machine for DShot. */
+/**
+ * @brief Core1 setup: opt in to being parked, then start the frame pump.
+ *
+ * `multicore_lockout_victim_init()` is what lets core0 write flash at all.
+ * Erasing a sector turns XIP off, and core1 executes from XIP, so core0 has to
+ * be able to hold it still first -- without this the settings save would fault
+ * core1 rather than fail, and it would do so only on the boards where somebody
+ * had actually pressed the button.
+ */
 void setup1() {
+	multicore_lockout_victim_init();
 	escTaskBegin();
 }
 

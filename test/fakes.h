@@ -54,3 +54,21 @@ int fakeBeepRequests();
 
 /** @brief Write the current framebuffer to a binary PPM, for eyeballing. */
 void fakeDumpFrame(const char *name);
+
+/** @brief Erase the fake settings flash to 0xFF, as a blank part reads. */
+void fakeFlashClear();
+
+/** @brief Make the fake settings flash refuse writes, as a full image would. */
+void fakeFlashSetWritable(bool on);
+
+/** @brief Raw bytes of the fake settings flash, for corrupting on purpose. */
+uint8_t *fakeFlashBytes();
+
+/** @brief How many times the UI has rebuilt the DShot pump's wiring. */
+int fakeConfigureCount();
+
+/** @brief DShot bitrate most recently pushed to the fake pump. */
+uint16_t fakeDshotKbaud();
+
+/** @brief GPIO most recently pushed to the fake pump. @see escTaskDshotPin() */
+uint8_t escTaskDshotPin();

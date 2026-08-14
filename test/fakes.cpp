@@ -21,6 +21,8 @@
 #include "st7789.h"
 #include "touch.h"
 #include "esc_task.h"
+#include "settings.h"
+#include "config.h"
 #include "am32_bl.h"
 #include "am32_eeprom.h"
 #include "sd_log.h"
@@ -194,6 +196,54 @@ void escSnapshot(EscTelemetry *o) { *o = g_tel; }
 void escTaskSuspend() { g_suspended = true; }
 void escTaskResume() { g_suspended = false; }
 bool escTaskSuspended() { return g_suspended; }
+
+// Mirrors esc_task.cpp: a wiring change disarms and zeroes the throttle,
+// because the ESC on the old pin stops hearing frames the moment it is
+// released. Tests assert on that, so the fake has to do it too.
+static uint8_t  g_dshotPin = DSHOT_PIN;
+static uint16_t g_dshotKbaud = DSHOT_SPEED_KBAUD;
+static int      g_configures = 0;
+int fakeConfigureCount() { return g_configures; }
+uint16_t fakeDshotKbaud() { return g_dshotKbaud; }
+void escTaskConfigure(uint8_t pin, uint16_t kbaud, bool, uint8_t) {
+	if (g_dshotPin == pin && g_dshotKbaud == kbaud) return;
+	g_dshotPin = pin;
+	g_dshotKbaud = kbaud;
+	g_armed = false;
+	g_throttle = 0;
+	g_configures++;
+}
+uint8_t escTaskDshotPin() { return g_dshotPin; }
+
+// ---------------------------------------------------------------------------
+// Settings storage
+//
+// settings.cpp holds every rule -- defaults, validation, the CRC, and the
+// discard-whole-block fallback -- and none of the flash sequence, so it links
+// here against this RAM array instead of settings_flash.cpp. That split is what
+// makes the rules testable at all: the interesting behaviour is "what happens
+// to a block that does not validate", and answering it needs to be able to
+// write a bad one.
+// ---------------------------------------------------------------------------
+static uint8_t g_flash[256];
+static bool    g_flashWritable = true;
+
+void fakeFlashClear() { memset(g_flash, 0xFF, sizeof(g_flash)); }
+void fakeFlashSetWritable(bool on) { g_flashWritable = on; }
+uint8_t *fakeFlashBytes() { return g_flash; }
+
+bool settingsStorageRead(void *dst, uint32_t len) {
+	if (len > sizeof(g_flash)) return false;
+	memcpy(dst, g_flash, len);
+	return true;
+}
+
+bool settingsStorageWrite(const void *src, uint32_t len) {
+	if (!g_flashWritable) return false;
+	if (len > sizeof(g_flash)) return false;
+	memcpy(g_flash, src, len);
+	return true;
+}
 
 // ---------------------------------------------------------------------------
 // Region fingerprint

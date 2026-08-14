@@ -10,6 +10,7 @@
 
 #include "check.h"
 #include "fakes.h"
+#include "settings.h"
 #include "gfx.h"
 #include "ui.h"
 #include "touch.h"
@@ -61,12 +62,14 @@ static void swipe(int x0, int x1, int y, int step) {
 #define BTN_ARM_Y   299
 #define BTN_HOLD_X  143
 #define BTN_CFG_X   205
-// The AM32 row is split: AM32 on the left, SD LOG on the right, with a gap
-// between them. Tapping the row centre lands in that gap and hits neither,
-// which is how this constant first went wrong.
-#define BTN_AM32_X   66   // BTN_AM32 spans x 14..117
-#define BTN_LOG_X   174   // BTN_LOG  spans x 122..225
-#define BTN_AM32_Y  275   // both span y 256..293
+// The nav row is three buttons with gaps between them, so tapping the row
+// centre lands in a gap and hits nothing -- which is how these constants first
+// went wrong, back when the row held two.
+// The AM32/LOG/SETUP row: three 68 px buttons with 4 px gaps, from x=14.
+#define BTN_AM32_X    48   // BTN_AM32  spans x  14..81
+#define BTN_LOG_X    120   // BTN_LOG   spans x  86..153
+#define BTN_SETUP_X  192   // BTN_SETUP spans x 158..225
+#define BTN_AM32_Y   275   // all three span y 256..293
 // --- config-screen coordinates ---
 #define AM32_BACK_X 216
 #define AM32_BACK_Y  23
@@ -431,6 +434,257 @@ static void testSettingsCommandRow() {
 	frames(2);
 }
 
+
+// --- SETUP screen coordinates, mirroring ui_setup.cpp ---
+#define SET_BACK_X  (GFX_W - 30)
+#define SET_BACK_Y   16
+#define SET_MINUS_X 168   // BTN_M_X 148 + BTN_W 40 -> centre 168
+#define SET_PLUS_X  212   // BTN_P_X 192 + BTN_W 40 -> centre 212
+#define SET_TOGGLE_X 190  // the wide toggle spans 148..231
+#define SET_R_PIN     57  // R_PIN 44, ROW_H 26
+#define SET_R_SPEED   87
+#define SET_R_KISS   117
+#define SET_R_KISSPIN 147
+#define SET_R_CONTRAST 191
+#define SET_R_BACKLIGHT 221
+#define SET_SAVE_X    83  // SAVE_X 8, SAVE_W 150
+#define SET_SAVE_Y   286  // FOOT_Y 266, FOOT_H 40
+#define SET_RESET_X  198
+#define SAVE_BAR_X     8   // progress bar spans SAVE_X..+SAVE_W
+#define SAVE_BAR_Y   262   // FOOT_Y - 4
+
+/** @brief Walk from the main screen into CFG, then into SETUP. */
+static void enterSetup() {
+	tap(BTN_CFG_X, BTN_ARM_Y);
+	tap(BTN_SETUP_X, BTN_AM32_Y);
+	frames(2);
+}
+
+/**
+ * @brief The SETUP screen: wiring changes reach the pump, and only legal
+ *        values can be selected.
+ *
+ * The last part is the one worth having. A pin picker whose buttons can land on
+ * an occupied GPIO needs an error state, a message, and a rule about what
+ * happens to a pin you cannot use; one that steps through the board's free mask
+ * needs none of those, because the invalid selection cannot be made. Asserting
+ * it here is what keeps that true when the mask changes.
+ */
+static void testSetupWiring() {
+	section("SETUP: wiring");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	enterSetup();
+
+	uint8_t start = settings()->dshotPin;
+	checkTrue("entering SETUP does not disturb the pin",
+	          escTaskDshotPin() == start);
+
+	// One step first, so the assertions below hold on the 2.8" too: that board
+	// offers exactly two free pins, so an even number of steps lands back where
+	// it started and nothing would be dirty.
+	tap(SET_PLUS_X, SET_R_PIN);
+	checkTrue("one step moves the pin", settings()->dshotPin != start);
+	checkTrue("changing the pin is unsaved", settingsDirty());
+	checkTrue("the change reached the DShot pump",
+	          escTaskDshotPin() == settings()->dshotPin);
+
+	// Then step all the way round and check every stop is legal.
+	bool allFree = true;
+	for (int i = 0; i < 6; i++) {
+		tap(SET_PLUS_X, SET_R_PIN);
+		if (!settingsPinFree(settings()->dshotPin)) allFree = false;
+		tap(SET_MINUS_X, SET_R_PIN);
+		if (!settingsPinFree(settings()->dshotPin)) allFree = false;
+	}
+	checkTrue("every step lands on a free GPIO", allFree);
+
+	// Bitrate halves and doubles through the four legal values, and wraps.
+	settings()->dshotKbaud = 600;
+	tap(SET_MINUS_X, SET_R_SPEED);
+	checkInt("minus steps the bitrate down", settings()->dshotKbaud, 300);
+	tap(SET_PLUS_X, SET_R_SPEED);
+	tap(SET_PLUS_X, SET_R_SPEED);
+	checkInt("plus steps it up", settings()->dshotKbaud, 1200);
+	tap(SET_PLUS_X, SET_R_SPEED);
+	checkInt("and wraps rather than sticking", settings()->dshotKbaud, 150);
+	checkInt("the pump was told", fakeDshotKbaud(), 150);
+
+	fakeDumpFrame("shot_setup.ppm");
+}
+
+/**
+ * @brief KISS can only be switched on against a pin that can actually receive.
+ *
+ * On the 2.8" board there is exactly one such pin and it is also the default
+ * ESC pin, so this is the case that decides whether the screen is honest or
+ * merely tidy.
+ */
+static void testSetupKiss() {
+	section("SETUP: KISS needs a pin of its own");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	enterSetup();
+
+	// Force the clash the board can create, then let the screen resolve it.
+	settings()->kissEnable = 0;
+	settings()->kissPin = settings()->dshotPin;
+	tap(SET_TOGGLE_X, SET_R_KISS);
+
+	if (settings()->kissEnable) {
+		checkTrue("if KISS came on, it is on a receiver",
+		          settingsUartForPin(settings()->kissPin) >= 0);
+		checkTrue("and not the ESC's pin",
+		          settings()->kissPin != settings()->dshotPin);
+		checkTrue("and a pin this board offers",
+		          settingsPinFree(settings()->kissPin));
+	} else {
+		// The 2.8": nowhere left to put it, so it stays off rather than
+		// pretending.
+		checkTrue("with no free receiver, KISS stays off", true);
+	}
+
+	// Switching it off is always available.
+	if (settings()->kissEnable) {
+		tap(SET_TOGGLE_X, SET_R_KISS);
+		checkInt("toggling again switches it off", settings()->kissEnable, 0);
+	}
+}
+
+/** @brief Contrast and backlight take effect immediately and persist. */
+static void testSetupDisplay() {
+	section("SETUP: high contrast");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	enterSetup();
+
+	checkTrue("starts in the dark theme", themeGet() == Theme::Dark);
+	uint16_t darkBg = C_BG;
+
+	tap(SET_TOGGLE_X, SET_R_CONTRAST);
+	checkTrue("toggle switches the theme", themeGet() == Theme::HighContrast);
+	checkTrue("the background inverted", C_BG != darkBg);
+	checkTrue("text is now the darker of the two", C_TEXT < C_BG);
+	checkTrue("strokes got heavier", themeStroke() > 1);
+	checkTrue("text got heavier", themeBold());
+	checkInt("backlight is forced to full", themeBacklight(100), 255);
+	fakeDumpFrame("shot_setup_contrast.ppm");
+
+	tap(SET_MINUS_X, SET_R_BACKLIGHT);
+	checkTrue("the preferred level still moves", settings()->backlight < LCD_BACKLIGHT_DEFAULT);
+	checkInt("but full brightness still wins while high contrast is on",
+	         themeBacklight(settings()->backlight), 255);
+
+	// The screen worth checking in high contrast is not this one: it is the
+	// tester, which is what you are looking at outdoors with a motor running.
+	// Rendering it here is what puts it in the published preview.
+	tap(SET_BACK_X, SET_BACK_Y);
+	frames(2);
+	tap(120, 308);                      // BACK, out of settings
+	// Live data in both halves of the published pair. A dark screen full of
+	// numbers next to a light screen reading "--" compares two different things.
+	feedLiveTelemetry();
+	frames(3);
+	fakeDumpFrame("shot_tester_contrast.ppm");
+	tap(BTN_CFG_X, BTN_ARM_Y);
+	tap(BTN_SETUP_X, BTN_AM32_Y);
+	frames(2);
+
+	tap(SET_TOGGLE_X, SET_R_CONTRAST);
+	checkTrue("toggling back restores the dark theme", themeGet() == Theme::Dark);
+	checkInt("and the preferred backlight level",
+	         themeBacklight(settings()->backlight), settings()->backlight);
+	checkInt("dark theme draws single-pixel frames", themeStroke(), 1);
+}
+
+/**
+ * @brief SAVE needs a full second held on the button, and nothing less.
+ *
+ * Same interlock as the AM32 write, for a weaker reason and a real one: a flash
+ * erase parks core1, which stops the DShot pump. It is a thing to do on purpose.
+ */
+static void testSetupSave() {
+	section("SETUP: hold to save");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	enterSetup();
+
+	tap(SET_PLUS_X, SET_R_PIN);
+	checkTrue("a change is pending", settingsDirty());
+
+	// A tap is not a save.
+	tap(SET_SAVE_X, SET_SAVE_Y);
+	checkTrue("a tap does not commit", settingsDirty());
+	checkTrue("and nothing was stored", !settingsStored());
+
+	// Releasing early does not commit either.
+	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
+	for (int i = 0; i < 20; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkTrue("half a second does not commit", settingsDirty());
+
+	// Moving off the button mid-hold cancels.
+	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
+	for (int i = 0; i < 20; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	for (int i = 0; i < 40; i++) { fakeHold(SET_RESET_X, SET_SAVE_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkTrue("sliding off cancels the hold", settingsDirty());
+
+	// The bar has to actually appear while holding, or the hold is invisible.
+	uint32_t idle = fakeRegionHash(SAVE_BAR_X, SAVE_BAR_Y, 150, 3);
+	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
+	for (int i = 0; i < 20; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	checkTrue("the hold draws a progress bar",
+	          fakeRegionHash(SAVE_BAR_X, SAVE_BAR_Y, 150, 3) != idle);
+	fakeRelease(); frames(2);
+	checkTrue("and it clears on release",
+	          fakeRegionHash(SAVE_BAR_X, SAVE_BAR_Y, 150, 3) == idle);
+
+	// A full second does.
+	uint8_t want = settings()->dshotPin;
+	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
+	for (int i = 0; i < 60; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	checkTrue("a one-second hold commits", !settingsDirty());
+	checkTrue("and reports a stored block", settingsStored());
+
+	// Keeping the finger down must not save again a second later: each save is
+	// a flash erase, and a long press is not a request for several.
+	settings()->poles = (uint8_t)(settings()->poles == 12 ? 14 : 12);
+	for (int i = 0; i < 120; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	checkTrue("holding on does not save again", settingsDirty());
+	fakeRelease(); frames(2);
+
+	// Survives a reload, which is the only thing the user cares about.
+	settings()->dshotPin = 0;
+	settingsLoad();
+	checkInt("the pin came back after a reload", settings()->dshotPin, want);
+
+	// RESET restores compiled defaults into the live copy without touching flash.
+	Settings def;
+	settingsDefaults(&def);
+	tap(SET_RESET_X, SET_SAVE_Y);
+	checkInt("RESET restores the compiled ESC pin", settings()->dshotPin, def.dshotPin);
+	checkTrue("RESET alone leaves flash as it was", settingsStored());
+
+	// BACK returns to the settings screen.
+	tap(SET_BACK_X, SET_BACK_Y);
+	frames(2);
+	checkTrue("BACK leaves SETUP", true);
+	fakeDumpFrame("shot_settings_unsaved.ppm");
+}
+
 void runUiTests() {
 	// Off zero before anything is stamped. Virtual time starts at 0, and 0 is
 	// reserved for "this frame type has never arrived" -- so telemetry stamped
@@ -601,4 +855,15 @@ void runUiTests() {
 	testKissDisplay();
 	testTelemetryExpires();
 	testSettingsCommandRow();
+
+	testSetupWiring();
+	testSetupKiss();
+	testSetupDisplay();
+	testSetupSave();
+
+	// Back to a known state for anything that runs after this.
+	fakeFlashClear();
+	settingsLoad();
+	themeSet(Theme::Dark);
+
 }

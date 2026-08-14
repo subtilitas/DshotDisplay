@@ -52,6 +52,19 @@ PREVIEWS = {
         "shot_log_ready",
         "shot_log_screen",
     ],
+    # The SETUP screen, and the same screen in high contrast beside it. The
+    # pair is the point: a palette that reads well on its own tells you nothing
+    # about whether the two are actually different enough to matter outdoors.
+    "setup-preview": [
+        "shot_setup",
+        "shot_setup_contrast",
+        "shot_settings_unsaved",
+    ],
+    # The screen that actually has to survive daylight.
+    "contrast-preview": [
+        "shot_tester_disarmed",
+        "shot_tester_contrast",
+    ],
     "am32-preview": [
         "shot_am32_list",
         "shot_am32_edit",

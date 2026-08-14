@@ -61,6 +61,24 @@
 #define BOARD_LABEL "RP2350-TOUCH-LCD-2"
 
 /**
+ * @brief GPIOs a user may assign to the ESC or telemetry wire, as a bitmask.
+ *
+ * The camera bus and nothing else: GP0..GP11 on the two 14-pin headers, plus
+ * GP21..GP23. All are unconnected with no camera fitted, which is how every one
+ * of these boards ships.
+ *
+ * This is the table above encoded as data. Every GPIO left out drives something
+ * — the panel, the touch bus, the card, the battery divider — and the setup
+ * screen steps through this mask precisely so that assigning one is not a
+ * mistake a user can make. The alternative is a pin picker that will happily
+ * send DShot out of a backlight transistor.
+ *
+ * @note GP20 and GP29 look free on the headers and are not: GP20 is LCD_RST and
+ *       GP29 is the touch controller's interrupt output. Both are absent here.
+ */
+#define BOARD_FREE_GPIO_MASK 0x00E00FFFu
+
+/**
  * @defgroup lcd2_pins_lcd LCD — ST7789T3, 240x320, SPI0
  * @{
  */

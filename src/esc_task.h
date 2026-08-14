@@ -117,7 +117,14 @@ struct EscTelemetry {
 void escTaskInit();
 
 /**
- * @brief Claim the PIO state machine and start the frame pump. Call from core1.
+ * @brief Start the frame pump. Call from core1.
+ *
+ * Does not itself claim the PIO state machine: the driver is constructed on the
+ * first escTaskPoll(), from whatever configuration escTaskConfigure() last
+ * supplied, and that same path rebuilds it after a suspend or a pin change. One
+ * construction site rather than two is the point — the version of this function
+ * that also built a driver read `initError` off a pointer that was still null,
+ * which on RP2350 reads low flash and reports whatever happens to be there.
  *
  * @pre escTaskInit() has been called on core0.
  */
@@ -227,5 +234,31 @@ void escTaskResume();
 
 /** @brief True once the driver is torn down and the pin is free. */
 bool escTaskSuspended();
+
+/**
+ * @brief Set the pins and bitrate the DShot pump uses, and rebuild it.
+ *
+ * Core0 hands the values across rather than core1 reading the settings
+ * struct directly: core0 owns that struct and edits it a field at a time while the
+ * setup screen is open, so core1 reading it would see half-applied
+ * combinations — a new pin against an old bitrate, for one frame.
+ *
+ * Takes effect on the next escTaskPoll(): the driver is destroyed and rebuilt,
+ * which releases the old pin and claims the new one. Forces a disarm, because
+ * the ESC on the old pin stops hearing frames the moment it is released.
+ *
+ * Safe to call with unchanged values; it is a no-op if nothing differs, so the
+ * setup screen can call it freely rather than tracking what it changed.
+ *
+ * @param dshotPin   GPIO for the ESC signal wire.
+ * @param dshotKbaud DShot bitrate.
+ * @param kissEnable Claim a UART for KISS telemetry.
+ * @param kissPin    GPIO for the telemetry wire. Ignored unless @p kissEnable.
+ */
+void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
+                      bool kissEnable, uint8_t kissPin);
+
+/** @brief GPIO the pump is currently driving. @return The live ESC pin. */
+uint8_t escTaskDshotPin();
 
 /** @} */

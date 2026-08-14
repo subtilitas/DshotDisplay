@@ -74,8 +74,10 @@ Two wires. That's it.
 | Signal | **GP4** — P2 header, pin 11 |
 | Ground | **GND** — P2 header, pin 13 |
 
-Change `DSHOT_PIN` in `config.h` to use a different GPIO. Any camera-bus pin (GP0–GP11,
-GP21–GP23) is free.
+Change it from **CFG → SETUP** on the board itself, and it is remembered across
+power cycles. `DSHOT_PIN` in `config.h` is only what a board with blank flash
+starts on. Any camera-bus pin (GP0–GP11, GP21–GP23) is free, and the picker
+offers those and nothing else.
 
 Header pinout for reference:
 
@@ -202,8 +204,8 @@ no-OS-FatFS-SD-SDIO-SPI-RPi-Pico **v3.6.2**.
 
 Two notes on those dependencies, both of which cost an afternoon to work out:
 
-- Both keep their `CMakeLists.txt` one directory below the repo root, so both need
-  `SOURCE_SUBDIR`. Without it `FetchContent` downloads the source, defines no targets,
+- The FatFs driver keeps its `CMakeLists.txt` one directory below the repo root,
+  so it needs `SOURCE_SUBDIR`. Without it `FetchContent` downloads the source, defines no targets,
   and the failure surfaces much later as a missing header.
 - The SD driver is the **SDIO-SPI** repo, not the older SPI-only one. That one's
   `rtc.c` includes `hardware/rtc.h` — a peripheral the RP2040 has and the RP2350 does
@@ -251,7 +253,7 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
   between them. `SWIPE = THROTTLE` under the RPM readout lights cyan when the pad is live.
 - **HOLD** — off is the safe mode. Turn it on only when you actually need a steady-state
   run; turning it off zeroes the throttle immediately.
-- **CFG** — settings. Entering it force-disarms.
+- **CFG** — settings, and the way to **SETUP**. Entering it force-disarms.
 
 **Settings screen**
 
@@ -271,6 +273,11 @@ Two notes on those dependencies, both of which cost an afternoon to work out:
 - **BEEP** — `DSHOT_CMD_BEACON1`, handy for finding which ESC you're actually plugged into.
 - **AM32 CFG** — the ESC settings editor. See [AM32 ESC configuration](#am32-esc-configuration).
 - **SD LOG** — blackbox logging status and manual start/stop. See below.
+- **SETUP** — which pins the ESC and telemetry wire are on, the DShot bitrate,
+  high contrast, backlight, and the one button that writes all of it to flash.
+  See [Setup: wiring and display](#setup-wiring-and-display).
+- **UNSAVED** in the title bar means something on this screen or SETUP differs
+  from what is stored. The button that stores it is on SETUP.
 
 BEEP flashes for a moment when pressed. The command itself lasts about six milliseconds
 against a 40 Hz repaint, so without that the button looks like it does nothing — and an
@@ -289,6 +296,59 @@ ESC answering from the next room is not feedback.
 - **WORST FLUSH** — the longest single write to the card, in milliseconds. This is the
   stall the buffer has to absorb.
 
+**SETUP screen**
+
+![Setup screen](docs/setup-preview.png)
+
+*SETUP, the same screen in high contrast, and the UNSAVED marker it puts on the
+settings screen.*
+
+| Row | What it does |
+|---|---|
+| **ESC PIN** | Which GPIO carries the DShot signal. Steps through the GPIOs this board leaves free and nothing else, so there is no wrong pin to pick — only pins you have not wired to yet |
+| **DSHOT KBAUD** | 150 / 300 / 600 / 1200. Applies immediately: the driver is torn down and rebuilt on the new pin and rate before the next frame |
+| **KISS TELEM** | Whether to claim a UART for the telemetry wire |
+| **KISS PIN** | Steps only through free GPIOs that can actually *receive*. On RP2350 that is GP1, GP5, GP9, GP13, GP17, GP21, GP25 and GP29, and no others |
+| **CONTRAST** | `NORMAL` or `HIGH`. See below |
+| **BACKLIGHT** | 0–255. High contrast overrides it to full while it is on |
+| **LINK** | Live. Packets per second and the checksum error rate, on the same screen as the pin selector |
+
+`LINK` being here is the point of the screen. Getting the ESC pin wrong is
+otherwise completely silent — nothing errors, nothing warns, the ESC just never
+hears a frame — so the fix is to put the evidence next to the control. Change
+the pin, watch the rate come off zero.
+
+**HOLD TO SAVE** writes everything to flash: both rows above, plus the pole
+count and throttle ceiling from the settings screen. It needs a full second,
+same as the AM32 write, and for a reason beyond caution — erasing flash parks
+core1 for tens of milliseconds, which stops the DShot pump. It is refused while
+armed. **RESET** puts the compiled defaults back into the live settings and
+touches flash only when you then save.
+
+Everything applies the moment you change it; only persistence waits for the
+hold. So a value can be tried and walked away from.
+
+**High contrast**
+
+![High contrast](docs/contrast-preview.png)
+
+*The tester screen indoors and in the sunlight palette.*
+
+Black on white, every accent darkened until it will carry white text, one pixel
+of extra weight on every glyph stroke, two-pixel frames, a fatter
+seven-segment stroke, and the backlight forced to full. A dark palette is the
+right choice on a bench and close to unreadable on a transmissive IPS panel in
+direct sun.
+
+The greys collapse on purpose. Three distinguishable greys is an indoor luxury;
+outdoors a mid-grey label is simply gone, so the label tier gives up its
+distinctness and keeps its legibility.
+
+The extra glyph weight is a one-pixel vertical smear, never horizontal: the 5x7
+font sits in a 6 px cell, so thickening sideways would close the gap between
+glyphs and run words together. Downward costs no advance width, so not one
+label moves and every layout assert still holds.
+
 **Reading the telemetry**
 
 `--` means neither source has ever supplied that field. Plain eRPM always works on
@@ -297,8 +357,8 @@ the ESC firmware (BLHeli_32, Bluejay, AM32). The **LINK** tile shows good packet
 second and the checksum error rate — at 1 kHz you should see close to 1000/s and 0 % err.
 A rising error rate points at signal integrity, not at the ESC.
 
-The voltage, current and temperature tiles carry a small **KISS** (cyan) or **EDT**
-(dimmed) tag saying where the number came from. It matters: `12.25 V` from EDT means
+The voltage and current tiles carry a small **KISS** (cyan) or **EDT** (dimmed)
+tag saying where the number came from. It matters: `12.25 V` from EDT means
 "somewhere in a 0.25 V bucket", the same reading from KISS means "within 0.01 V". If the
 tag drops from KISS back to EDT the telemetry wire has gone quiet, and the readout is
 suddenly 25x coarser without the digits obviously changing. Consumption in mAh appears on
@@ -342,7 +402,7 @@ consumption figure EDT has no room for at all.
 That is the only extra connection; the line is transmit-only from the ESC.
 Requests go out at 50 Hz by default (`KISS_REQUEST_EVERY_N`).
 
-The voltage, current and temperature tiles show which source they are using —
+The voltage and current tiles show which source they are using —
 **KISS** in cyan, **EDT** dimmed. That tag is not decoration: 12.25 V from EDT
 means "somewhere in a 0.25 V bucket" and the same reading from KISS means
 "within 0.01 V", so a readout quietly dropping back to coarse values is worth
@@ -398,11 +458,18 @@ recoverable; a stalled UI with a live motor is not.
 All in `config.h`. The defaults are chosen to be safe rather than optimal, since
 none of this has been measured against real hardware yet.
 
+Six of these are only *defaults* now — the ESC pin, the DShot bitrate, the KISS
+wire, the pole count, the throttle ceiling and the backlight are all changeable
+on the board from **CFG → SETUP** and stored in flash. Editing them here and
+reflashing will look like it did nothing on a board that has saved settings,
+because the stored value wins. The SETUP screen says which one you are looking
+at.
+
 | Setting | Default | What it does |
 |---|---|---|
 | `KISS_TELEM_ENABLE` | `1` | Compile the KISS path in at all |
-| `KISS_TELEM_PIN` | `5` | GPIO the telemetry wire lands on, receive only |
-| `KISS_UART` | `uart1` | Must match the pin — the SDK will not catch a mismatch, it simply never receives |
+| `DEFAULT_KISS_ENABLE` | `1` / `0` | Whether the KISS wire is expected. **Off on the 2.8"**: its only free UART RX pin is GP29, which is also where the ESC signal goes by default |
+| `DEFAULT_KISS_PIN` | `5` / `29` | GPIO the telemetry wire lands on, receive only. Runtime-adjustable |
 | `KISS_REQUEST_EVERY_N` | `20` | Request every Nth DShot frame; 20 at 1 kHz is 50 Hz. Must be ≥ 2 or replies overlap, and there is an `#error` that says so |
 | `KISS_STALE_MS` | `500` | How long a KISS frame stays authoritative before the display falls back to EDT |
 | `EDT_STALE_MS` | `1000` | How long an EDT field stays valid after its last frame. Past this the tile blanks to `--` rather than holding a reading from an ESC that may no longer be attached |
@@ -572,7 +639,11 @@ Built into the firmware:
 - Configurable throttle ceiling, default 20 %.
 - Auto-disarm after 30 s with no touch input (`IDLE_DISARM_MS`).
 - Core1 zeroes the throttle if core0 stops sending heartbeats.
-- Entering the settings screen force-disarms.
+- Entering the settings screen force-disarms, and so does changing any wiring.
+- A settings save is refused while armed: writing flash stops the DShot pump.
+- A stored settings block that fails its CRC, version or size check is discarded
+  whole and the compiled defaults are used — never merged field by field, so a
+  corrupted byte cannot become a raised throttle ceiling.
 
 Not built into the firmware, and up to you:
 
@@ -594,13 +665,17 @@ pico_sdk_import.cmake   locates the SDK via PICO_SDK_PATH
 src/
   main.cpp              core0 main(), core1 launch, @page architecture
   plat.h                millis/micros/delay over the SDK timebase
-  config.h              everything you'd want to tune
+  config.h              defaults for everything you'd want to tune
+  settings.{h,cpp}      the persisted subset: rules, validation, fallback (pure)
+  settings_flash.cpp    the one flash sector those live in
+  theme.{h,cpp}         the two palettes and the stroke weights
   board.h               which board this build targets
   board_pins.h          dispatches to the per-board pin map
   board_rp2350_touch_lcd_2{,_8}.h   the pin maps themselves
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
+  ui_setup.{h,cpp}      SETUP screen: pins, bitrate, contrast, hold-to-save
   am32_bl.{h,cpp}       one-wire bootloader transport (reused for FW flashing)
   am32_eeprom.{h,cpp}   AM32 settings layout, decoding and presentation
   gfx.{h,cpp}           RGB565 framebuffer, dirty bands, 5x7 font, 7-seg digits
@@ -719,8 +794,8 @@ The source is annotated in Doxygen style, and a `Doxyfile` is checked in:
 doxygen            # writes docs/html/index.html
 ```
 
-`EXTRACT_ALL` is deliberately `NO` and `WARN_NO_PARAMDOC` is `YES`, so anything you add
-without documentation shows up as a warning rather than silently producing an empty page:
+`EXTRACT_ALL` is deliberately `NO`, so anything you add without documentation
+shows up as a warning rather than silently producing an empty page:
 
 ```sh
 doxygen 2>&1 | grep -i warning

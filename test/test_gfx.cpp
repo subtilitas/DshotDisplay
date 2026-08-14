@@ -12,6 +12,16 @@
 
 #include <string.h>
 
+/**
+ * @brief A fixed foreground colour for the renderer tests.
+ *
+ * Deliberately a literal rather than a palette name. These checks assert the
+ * exact word written into specific framebuffer cells, so they must not move
+ * when a theme does -- the renderer is what is under test here, not the
+ * palette. @see test_settings.cpp for the theme-dependent side.
+ */
+static const uint16_t TEST_FG = 0xFFFF;
+
 /** @brief Reset the framebuffer and band list to a clean, undirty slate. */
 static void resetGfx() {
 	gfxInit();
@@ -101,20 +111,20 @@ static void testGlyphs() {
 
 	// A fully off-screen character must not draw or dirty anything.
 	resetGfx();
-	gfxText(10, GFX_H + 20, "X", C_WHITE, 1);
+	gfxText(10, GFX_H + 20, "X", TEST_FG, 1);
 	checkInt("off-screen text dirties nothing", gfxDirtyCount(), 0);
-	gfxText(-6, 10, "X", C_WHITE, 1);   // entirely left of the framebuffer
+	gfxText(-6, 10, "X", TEST_FG, 1);   // entirely left of the framebuffer
 	checkInt("off-left text dirties nothing", gfxDirtyCount(), 0);
 
 	// ' ' at scale 1 is five empty columns: no pixels, no dirty band.
 	resetGfx();
-	gfxText(10, 10, " ", C_WHITE, 1);
+	gfxText(10, 10, " ", TEST_FG, 1);
 	checkInt("space dirties nothing", gfxDirtyCount(), 0);
 
 	// '0' at scale 1 lights rows 1..5 in every column, so its band starts one
 	// row below the glyph top and ends on the glyph's last row.
 	resetGfx();
-	gfxText(10, 10, "0", C_WHITE, 1);
+	gfxText(10, 10, "0", TEST_FG, 1);
 	checkInt("glyph creates one band", gfxDirtyCount(), 1);
 	int y0, y1;
 	gfxDirtyBand(0, &y0, &y1);
@@ -123,23 +133,23 @@ static void testGlyphs() {
 
 	// Partially visible at the bottom edge: clipped, not dropped.
 	resetGfx();
-	gfxText(10, GFX_H - 3, "0", C_WHITE, 1);
+	gfxText(10, GFX_H - 3, "0", TEST_FG, 1);
 	checkInt("bottom-clipped glyph still draws", gfxDirtyCount(), 1);
 	gfxDirtyBand(0, &y0, &y1);
 	checkInt("clipped band stops at the edge", y1, GFX_H - 1);
 
 	// A lit pixel actually lands in the framebuffer, an unlit one stays clear.
 	resetGfx();
-	gfxText(0, 0, "0", C_WHITE, 1);
+	gfxText(0, 0, "0", TEST_FG, 1);
 	// '0' = {0x3E,0x51,0x49,0x45,0x3E}: column 0 rows 1..5 lit, row 0 clear.
-	checkInt("lit pixel written", gfxBuffer()[1 * GFX_W + 0], C_WHITE);
+	checkInt("lit pixel written", gfxBuffer()[1 * GFX_W + 0], TEST_FG);
 	checkInt("unlit pixel untouched", gfxBuffer()[0 * GFX_W + 0], 0);
 
 	// Scale 2: one glyph pixel is a 2x2 block.
 	resetGfx();
-	gfxText(0, 0, "0", C_WHITE, 2);
-	checkInt("scaled pixel block, top-left", gfxBuffer()[2 * GFX_W + 0], C_WHITE);
-	checkInt("scaled pixel block, bottom-right", gfxBuffer()[3 * GFX_W + 1], C_WHITE);
+	gfxText(0, 0, "0", TEST_FG, 2);
+	checkInt("scaled pixel block, top-left", gfxBuffer()[2 * GFX_W + 0], TEST_FG);
+	checkInt("scaled pixel block, bottom-right", gfxBuffer()[3 * GFX_W + 1], TEST_FG);
 	gfxDirtyBand(0, &y0, &y1);
 	checkInt("scaled band starts on its first lit row", y0, 2);
 	checkInt("scaled band ends on its last row", y1, 13);
@@ -147,28 +157,28 @@ static void testGlyphs() {
 	// Left edge: '0' at x = -2 drops its first two columns, so screen
 	// column 0 shows glyph column 2 (0x49: rows 0, 3 and 6 lit).
 	resetGfx();
-	gfxText(-2, 0, "0", C_WHITE, 1);
-	checkInt("clipped-left glyph column, row 0", gfxBuffer()[0 * GFX_W + 0], C_WHITE);
-	checkInt("clipped-left glyph column, row 6", gfxBuffer()[6 * GFX_W + 0], C_WHITE);
+	gfxText(-2, 0, "0", TEST_FG, 1);
+	checkInt("clipped-left glyph column, row 0", gfxBuffer()[0 * GFX_W + 0], TEST_FG);
+	checkInt("clipped-left glyph column, row 6", gfxBuffer()[6 * GFX_W + 0], TEST_FG);
 	checkInt("clipped-left glyph column, row 1", gfxBuffer()[1 * GFX_W + 0], 0);
 	checkInt("clipped-left glyph still dirties", gfxDirtyCount(), 1);
 
 	// Left clip at scale 2: '0' at x = -2 drops its first column, so screen
 	// column 0 shows glyph column 1 (0x51: rows 0, 4 and 6 lit) as a 2x2 block.
 	resetGfx();
-	gfxText(-2, 0, "0", C_WHITE, 2);
+	gfxText(-2, 0, "0", TEST_FG, 2);
 	checkInt("scaled left-clip dirties", gfxDirtyCount(), 1);
-	checkInt("scaled left-clip column, row 0", gfxBuffer()[0 * GFX_W + 0], C_WHITE);
-	checkInt("scaled left-clip column, row 8", gfxBuffer()[8 * GFX_W + 0], C_WHITE);
-	checkInt("scaled left-clip column, row 12", gfxBuffer()[12 * GFX_W + 0], C_WHITE);
+	checkInt("scaled left-clip column, row 0", gfxBuffer()[0 * GFX_W + 0], TEST_FG);
+	checkInt("scaled left-clip column, row 8", gfxBuffer()[8 * GFX_W + 0], TEST_FG);
+	checkInt("scaled left-clip column, row 12", gfxBuffer()[12 * GFX_W + 0], TEST_FG);
 	checkInt("scaled left-clip column, row 2", gfxBuffer()[2 * GFX_W + 0], 0);
 
 	// Lowercase folds to uppercase, unknown characters render as space.
 	resetGfx();
-	gfxText(0, 0, "a", C_WHITE, 1);            // 'A' has lit pixels
+	gfxText(0, 0, "a", TEST_FG, 1);            // 'A' has lit pixels
 	checkInt("lowercase draws as uppercase", gfxDirtyCount(), 1);
 	resetGfx();
-	gfxText(0, 0, "\x7F", C_WHITE, 1);          // DEL -> space
+	gfxText(0, 0, "\x7F", TEST_FG, 1);          // DEL -> space
 	checkInt("unknown char draws nothing", gfxDirtyCount(), 0);
 }
 
