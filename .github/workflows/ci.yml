@@ -85,7 +85,13 @@ jobs:
           # of thing this firmware has already been bitten by -- was printed
           # here and ignored. The permutation job below cannot catch those: it
           # is a different compiler.
+          # CMAKE_BUILD_TYPE=Release is explicit even though CMakeLists.txt
+          # defaults an empty build type to Release: the flag documents the
+          # intent, and the DWARF-based board-identity assert below depends on
+          # debug info being present (the SDK's PICO_DEBUG_INFO_IN_RELEASE
+          # keeps -g in Release builds).
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
+                -DCMAKE_BUILD_TYPE=Release \
                 -DBOARD=${{ matrix.board.id }} -DSTRICT=ON .
           ninja -C build DshotDisplay
           # sdtest too. It is not released -- an unlabelled second .uf2 beside
@@ -93,7 +99,13 @@ jobs:
           # README tells people a plain `ninja` produces both, and nothing was
           # compiling it, so a change to sd_hw_config.c or either pin map could
           # break it with every job green.
-          ninja -C build sdtest
+          #
+          # Single-board legs only: board_pins.h deliberately has no unified
+          # pin map, so sdtest cannot compile for BOARD_UNIFIED and CMake does
+          # not define the target there.
+          if [ "${{ matrix.board.slug }}" != "unified" ]; then
+            ninja -C build sdtest
+          fi
           arm-none-eabi-size build/DshotDisplay-${{ matrix.board.slug }}.elf
 
       # A ceiling, not a printout. The framebuffer alone is 150 kB of the
@@ -107,8 +119,10 @@ jobs:
           flash=$((text + data))
           ram=$((data + bss))
           echo "flash=${flash}B ram=${ram}B"
-          # 1 MB of the 4 MB the linker script declares, and the settings sector
-          # lives at the top of that -- see settings_flash.cpp.
+          # 1 MB of the 4 MB the linker script declares. The settings sector is
+          # the last 4 kB of the full 4 MB (PICO_FLASH_SIZE_BYTES -
+          # FLASH_SECTOR_SIZE -- see settings_flash.cpp), so a 1 MB image can
+          # never collide with it; this ceiling is purely a growth budget.
           [ "$flash" -lt 1048576 ] || { echo "::error::flash budget exceeded"; exit 1; }
           [ "$ram"   -lt 400000  ] || { echo "::error::RAM budget exceeded"; exit 1; }
 
@@ -164,12 +178,20 @@ jobs:
       # CMake's if() treats the string "0" as false.
       - name: DSHOT_PIN override is honoured
         run: |
-          set -e
+          # pipefail matters: cmake is piped through tee, and without it a
+          # failed configure still exits 0 and only the grep below would
+          # notice -- or not, if the cached output happened to match.
+          set -eo pipefail
           export PICO_SDK_PATH="$HOME/pico-sdk"
           for pin in 0 ${{ matrix.board.altpin }}; do
             rm -rf build-pin
+            # FETCHCONTENT_BASE_DIR points at the main build's _deps so the
+            # dependencies fetched (and cached) there are reused instead of
+            # being downloaded again for every pin permutation.
             cmake -B build-pin -G Ninja -DPICO_BOARD=pico2 \
                   -DPICO_PLATFORM=rp2350-arm-s -DBOARD=${{ matrix.board.id }} \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DFETCHCONTENT_BASE_DIR="$PWD/build/_deps" \
                   -DDSHOT_PIN=$pin . 2>&1 | tee /tmp/cfg.txt
             grep -q "DShot default GP$pin" /tmp/cfg.txt \
               || { echo "::error::-DDSHOT_PIN=$pin was ignored"; exit 1; }
@@ -322,7 +344,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: actionlint
         run: |
-          bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          # Pinned release tarball, verified by checksum -- not a script
+          # curl'd from the repo's main branch, which could change under us
+          # (or be tampered with) at any time. actionlint v1.7.7, linux/amd64;
+          # bump the version and checksum together.
+          set -euo pipefail
+          version="1.7.7"
+          sha256="023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+          curl -sSfL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz"
+          echo "${sha256}  actionlint.tar.gz" | sha256sum -c -
+          tar xzf actionlint.tar.gz actionlint
           ./actionlint -color
       - name: Reject duplicate keys
         run: |
