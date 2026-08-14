@@ -210,6 +210,61 @@ static inline EdtAutoAction edtAutoAction(bool linkUp, bool sent) {
 	return sent ? EdtAutoAction::None : EdtAutoAction::Send;
 }
 
+/** @brief What core1 should put on the wire in one frame slot. */
+struct EscFrame {
+	bool     sendCommand;  /**< Send @ref command instead of a throttle value. */
+	uint8_t  command;      /**< DShot command, meaningful when @ref sendCommand. */
+	uint16_t throttle;     /**< Throttle to send, when not sending a command. */
+	bool     requestKiss;  /**< Set the frame's telemetry-request bit. */
+};
+
+/**
+ * @brief Decide what one DShot frame carries. Pure; host-testable.
+ *
+ * Extracted for the same reason edtAutoAction() was: esc_task.cpp pulls in the
+ * PIO library and the SDK's UART and cannot be linked into the host suite, so
+ * any rule left inside it is a rule no test can reach. Three of the rules here
+ * are safety interlocks, and all three were untested — a mutation deleting the
+ * heartbeat check, the disarm-zeroing, or the refusal to send commands while
+ * armed passed the entire suite.
+ *
+ * The rules, in the order they matter:
+ *
+ * - **A dead UI means zero throttle.** If core0 has stopped calling
+ *   escHeartbeat(), core1 stops believing the throttle it was last given. This
+ *   is the backstop against a hung display leaving a motor running, and it is
+ *   the only one that does not depend on core0 being well enough to act.
+ * - **Disarmed means zero throttle**, regardless of what was last commanded.
+ * - **Commands only go out while disarmed.** An ESC ignores them while armed
+ *   anyway, so sending one is at best noise in the frame stream; and a queued
+ *   command must not be consumed by a frame that cannot deliver it, or it is
+ *   silently lost.
+ *
+ * @param armed       Arm state.
+ * @param uiAlive     Core0 has checked in within @ref UI_HEARTBEAT_TIMEOUT_MS.
+ * @param throttle    Throttle core0 last commanded, 0..2000.
+ * @param pendingCmd  Queued DShot command.
+ * @param pendingReps Repeats still owed for @p pendingCmd; 0 means none queued.
+ * @param kissWanted  This slot is due to request KISS telemetry.
+ * @return What to send.
+ */
+static inline EscFrame escFrameAction(bool armed, bool uiAlive, uint16_t throttle,
+                                      uint8_t pendingCmd, uint8_t pendingReps,
+                                      bool kissWanted) {
+	EscFrame f = {false, 0, 0, false};
+	if (pendingReps > 0 && !armed) {
+		f.sendCommand = true;
+		f.command = pendingCmd;
+		return f;
+	}
+	f.throttle = (!armed || !uiAlive) ? 0 : throttle;
+	// Never alongside a command: sendRaw11Bit() forces the request bit set
+	// anyway, and a reply arriving mid-sequence is noise the decoder cannot
+	// distinguish from a real one.
+	f.requestKiss = kissWanted && pendingReps == 0;
+	return f;
+}
+
 /**
  * @brief Copy the current telemetry block.
  * @param[out] out Destination. Filled under the critical section.
