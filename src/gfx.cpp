@@ -120,10 +120,17 @@ void gfxHLine(int x, int y, int w, uint16_t c) { gfxRect(x, y, w, 1, c); }
 void gfxVLine(int x, int y, int h, uint16_t c) { gfxRect(x, y, 1, h, c); }
 
 void gfxFrame(int x, int y, int w, int h, uint16_t c) {
-	gfxRect(x, y, w, 1, c);
-	gfxRect(x, y + h - 1, w, 1, c);
-	gfxRect(x, y, 1, h, c);
-	gfxRect(x + w - 1, y, 1, h, c);
+	// Thickness grows inward, never outward: the layout static_asserts in ui.cpp
+	// and ui_am32.cpp bound every region by its outer edge, and a frame that
+	// grew outward in high contrast would silently overrun them.
+	int t = themeStroke();
+	if (t > w / 2) t = w / 2;
+	if (t > h / 2) t = h / 2;
+	if (t < 1) t = 1;
+	gfxRect(x, y, w, t, c);
+	gfxRect(x, y + h - t, w, t, c);
+	gfxRect(x, y, t, h, c);
+	gfxRect(x + w - t, y, t, h, c);
 }
 
 /**
@@ -153,7 +160,12 @@ void gfxRoundRect(int x, int y, int w, int h, int r, uint16_t c) {
 	}
 }
 
-void gfxRoundFrame(int x, int y, int w, int h, int r, uint16_t c) {
+/** @brief One-pixel rounded outline. @see gfxRoundFrame() for the themed one. */
+static void roundFrame1px(int x, int y, int w, int h, int r, uint16_t c) {
+	if (w <= 0 || h <= 0) return;
+	if (r > w / 2) r = w / 2;
+	if (r > h / 2) r = h / 2;
+	if (r < 0) r = 0;
 	gfxRect(x + r, y, w - 2 * r, 1, c);
 	gfxRect(x + r, y + h - 1, w - 2 * r, 1, c);
 	gfxRect(x, y + r, 1, h - 2 * r, c);
@@ -170,6 +182,19 @@ void gfxRoundFrame(int x, int y, int w, int h, int r, uint16_t c) {
 		gfxRect(x + w - 1 - inset, y + dy, 1, 1, c);
 		gfxRect(x + inset, y + h - 1 - dy, 1, 1, c);
 		gfxRect(x + w - 1 - inset, y + h - 1 - dy, 1, 1, c);
+	}
+}
+
+void gfxRoundFrame(int x, int y, int w, int h, int r, uint16_t c) {
+	// Concentric one-pixel rings rather than a thicker stroke primitive: the
+	// corner solver above is written for a single pixel, and nesting it is both
+	// less code and geometrically exact at every radius.
+	int t = themeStroke();
+	for (int i = 0; i < t; i++) {
+		if (w - 2 * i < 2 || h - 2 * i < 2) break;
+		int ri = r - i;
+		if (ri < 0) ri = 0;
+		roundFrame1px(x + i, y + i, w - 2 * i, h - 2 * i, ri, c);
 	}
 }
 
@@ -271,20 +296,33 @@ static void gfxChar(int x, int y, char ch, uint16_t fg, int scale) {
 	int rowEnd = (y + h > GFX_H) ? (GFX_H - y + scale - 1) / scale : 7;
 	int rowDrawn = -1;   // first row with a lit pixel
 
+	// One extra pixel row per lit pixel in high contrast. Vertical only: the
+	// glyph cell is 6 px wide for a 5 px glyph, so smearing sideways would close
+	// the inter-character gap and run words together. Downward costs no advance
+	// width, so not one label moves.
+	int extra = themeBold() ? 1 : 0;
+
 	for (int col = colOff; col < colOff + colEnd; col++) {
 		uint8_t bits = g[col];
 		for (int row = 0; row < rowEnd; row++) {
 			if (!(bits & (1 << row))) continue;
 			if (rowDrawn < 0) rowDrawn = row;
-			uint16_t *p = &s_fb[(y + row * scale) * GFX_W + x + (col - colOff) * scale];
-			for (int sy = 0; sy < scale; sy++) {
+			int px = x + (col - colOff) * scale;
+			// rowEnd is a ceiling division, so the last scaled row can still run
+			// past the panel by up to scale-1. Checking each row is what makes
+			// that safe -- and it was already reachable before the smear, for
+			// any text drawn at scale 2 within 13 px of the bottom edge.
+			for (int sy = 0; sy < scale + extra; sy++) {
+				int yy = y + row * scale + sy;
+				if (yy < 0) continue;
+				if (yy >= GFX_H) break;
+				uint16_t *p = &s_fb[yy * GFX_W + px];
 				for (int sx = 0; sx < scale; sx++) p[sx] = fg;
-				p += GFX_W;
 			}
 		}
 	}
 	if (rowDrawn < 0) return;   // nothing visible was drawn
-	gfxMarkDirty(y + rowDrawn * scale, y + rowEnd * scale - 1);
+	gfxMarkDirty(y + rowDrawn * scale, y + rowEnd * scale - 1 + extra);
 }
 
 void gfxText(int x, int y, const char *s, uint16_t fg, int scale) {

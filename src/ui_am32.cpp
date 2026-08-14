@@ -230,8 +230,8 @@ static void drawList() {
 	                           ? &AM32_FIELDS[s_selected] : nullptr;
 
 	if (sel && !s_hexView) {
-		button(BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H, "-", C_GRID, C_WHITE);
-		button(BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H, "+", C_GRID, C_WHITE);
+		button(BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H, "-", C_GRID, C_ONACCENT);
+		button(BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H, "+", C_GRID, C_ONACCENT);
 		// The label is worth the space: the buttons are far from the row they
 		// act on, so the bar has to say what it is editing.
 		int cx = BTN_MINUS_X + EDIT_BTN_W;
@@ -253,17 +253,21 @@ static void drawList() {
 
 	// ---- footer ----
 	bool dirty = anyDirty();
-	uint16_t writeFill = C_PANEL;
+	// C_RED while holding rather than C_REDDARK: that colour's other job is the
+	// dead-telemetry digit, which has to read as "off" and therefore inverts
+	// direction between the two palettes. A fill that carries white text needs
+	// to be dark in both, and C_RED is.
+	uint16_t writeFill = s_writeHolding ? C_RED : C_PANEL;
 	if (s_writeHolding) {
 		uint32_t held = millis() - s_writeHoldStart;
 		int pct = (int)(held * 100 / WRITE_HOLD_MS);
 		if (pct > 100) pct = 100;
-		writeFill = C_REDDARK;
 		gfxRect(6, FOOT_Y - 4, 110 * pct / 100, 3, C_LIME);
 	}
 	button(6, FOOT_Y, 110, FOOT_H,
 	       dirty ? "HOLD TO WRITE" : "NO CHANGES",
-	       dirty ? writeFill : C_PANEL, dirty ? C_WHITE : C_GRID);
+	       dirty ? writeFill : C_PANEL,
+	       dirty ? (s_writeHolding ? C_ONACCENT : C_TEXT) : C_GRID);
 	button(122, FOOT_Y, 52, FOOT_H, "REVERT", C_PANEL, dirty ? C_AMBER : C_GRID);
 	button(180, FOOT_Y, 54, FOOT_H, s_hexView ? "FIELDS" : "HEX", C_PANEL, C_CYAN);
 }
@@ -601,7 +605,9 @@ bool uiAm32Tick(const TouchState *t) {
 	switch (s_state) {
 		case S_HANDOVER:
 			if (escTaskSuspended()) {
-				am32BlBegin(DSHOT_PIN);
+				// Whichever pin the pump was driving, not the compiled default:
+				// the two part company the moment the user changes it on SETUP.
+				am32BlBegin(escTaskDshotPin());
 				s_state = S_CONNECT;
 				snprintf(s_status, sizeof(s_status), "SEARCHING...");
 			}

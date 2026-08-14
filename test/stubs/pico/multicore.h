@@ -7,3 +7,10 @@
 #pragma once
 void multicore_launch_core1(void (*entry)(void));
 void multicore_reset_core1(void);
+
+// The lockout API, used by settings_flash.cpp to park core1 across a flash
+// erase. Declared so that file typechecks; never called, because it is not
+// linked here.
+void multicore_lockout_victim_init(void);
+void multicore_lockout_start_blocking(void);
+void multicore_lockout_end_blocking(void);

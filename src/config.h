@@ -6,6 +6,19 @@
  * firmware. Anything that describes the board itself rather than a preference
  * lives in @ref board_pins.h instead, and which board you are building for is
  * @ref board.h.
+ *
+ * @section config_defaults Some of these are only defaults now
+ *
+ * The ESC pin, the DShot bitrate, the KISS wire, the pole count, the throttle
+ * ceiling and the backlight are all changeable on the board itself and stored
+ * in flash — see @ref settings.h and the **CFG -> SETUP** screen. What is
+ * written here is the value a board starts with when its flash is blank, or
+ * when a stored block fails to validate.
+ *
+ * The practical consequence: editing one of those values and reflashing will
+ * appear to do nothing on a board that has saved settings, because the stored
+ * value wins. The SETUP screen marks each row `SAVED` or `DEFAULT` so it is
+ * visible which one you are looking at.
  */
 
 #pragma once
@@ -19,7 +32,10 @@
  */
 
 /**
- * @brief GPIO the ESC signal wire goes to. Board-dependent default.
+ * @brief Default GPIO for the ESC signal wire. Board-dependent.
+ *
+ * Runtime-adjustable from **CFG -> SETUP**, which is the intended way to change
+ * it; this is what a board with blank flash starts on. @see settings.h
  *
  * On the **RP2350-Touch-LCD-2** this is **GP4**: P2 header pin 11, two
  * positions from GND on P2 pin 13, so a 3-pin servo plug lands
@@ -52,11 +68,13 @@
 #endif
 
 /**
- * @brief DShot bitrate in kBaud. 300 / 600 / 1200 are the common ones.
+ * @brief Default DShot bitrate in kBaud. 150 / 300 / 600 / 1200 are legal.
  *
- * Bidirectional DShot is more timing-sensitive than normal DShot. If telemetry
- * is flaky on a long or unshielded signal wire, drop to 300 before suspecting
- * the firmware.
+ * Runtime-adjustable from **CFG -> SETUP**. That matters more than it sounds:
+ * bidirectional DShot is more timing-sensitive than normal DShot, and "drop to
+ * 300 before suspecting the firmware" is advice you want to be able to take on
+ * the bench with the flaky wire still connected, not after a toolchain
+ * round-trip.
  */
 #define DSHOT_SPEED_KBAUD      600
 
@@ -114,33 +132,54 @@
 #endif
 
 /**
- * @brief GPIO the ESC's telemetry pad connects to. Receive only.
+ * @brief Default GPIO for the ESC's telemetry pad. Receive only.
  *
- * GP5 is UART1 RX and lands on P1 header pin 10. UART1 is chosen over UART0 so
- * the USB-serial debug path is left alone. @see KISS_UART
+ * Runtime-adjustable; this is the starting value. @see settings.h
  *
- * Other candidates, all free and broken out: GP9 (UART1 RX, P1 pin 2), GP21
- * (UART1 RX, P1 pin 5), GP1 (UART0 RX, P2 pin 8).
+ * On the **2.0"** this is **GP5**: UART1 RX, P1 header pin 10, and a free
+ * camera-bus pin. The other candidates there are GP9 (P1 pin 2), GP21 (P1
+ * pin 5) and GP1 (P2 pin 8) — on RP2350 only a GPIO whose number is one more
+ * than a multiple of four is a UART RX function at all.
+ *
+ * On the **2.8"** it is **GP29**, because that is the only free pin on the
+ * board that can receive. Note that GP29 is also the default @ref DSHOT_PIN
+ * there, which is why @ref DEFAULT_KISS_ENABLE is 0 on that board: the two
+ * cannot share a pin, and moving the ESC to GP28 is a decision for whoever
+ * soldered the pigtail, not for a default.
  *
  * @warning The KISS spec puts this line at 3.6 V, which is exactly the RP2350's
  *          absolute-maximum GPIO voltage — no margin at all. Most BLHeli_32 and
  *          AM32 ESCs actually drive 3.3 V and are fine, but measure yours
  *          before connecting it, and consider a 1 k series resistor.
  */
-#define KISS_TELEM_PIN         5
+#ifndef DEFAULT_KISS_PIN
+  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
+    #define DEFAULT_KISS_PIN   5
+  #else
+    #define DEFAULT_KISS_PIN   29
+  #endif
+#endif
 
 /**
- * @brief UART instance for @ref KISS_TELEM_PIN.
+ * @brief Whether the KISS wire is expected by default.
  *
- * Must agree with the pin: on RP2350, GP1/5/9/21/25/29 are UART1 RX and
- * GP1/13/17/29 are UART0 RX. GP5 is UART1, so `uart1`. Moving
- * @ref KISS_TELEM_PIN to a UART0 pin means changing this too — the SDK will not
- * catch the mismatch, it will simply never receive anything.
+ * Off on the 2.8". That board's only free UART RX pin is GP29, which is also
+ * where the ESC signal goes by default, so a default of "on" would have the
+ * firmware claim a UART on the pin it is already driving DShot out of.
  *
- * UART0 is deliberately left alone; stdio can have it if a build ever wants a
- * debug UART instead of USB CDC.
+ * This used to be worse and silent: @ref DEFAULT_KISS_PIN was fixed at GP5 for
+ * both boards, and on the 2.8" GP5 is `PIN_RTC_INT` — the PCF85063 alarm
+ * output. The firmware duly configured the RTC's interrupt line as a UART
+ * receiver and fed whatever it did to the KISS decoder. Nothing errored,
+ * because nothing could.
  */
-#define KISS_UART              uart1
+#ifndef DEFAULT_KISS_ENABLE
+  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
+    #define DEFAULT_KISS_ENABLE 1
+  #else
+    #define DEFAULT_KISS_ENABLE 0
+  #endif
+#endif
 
 /**
  * @brief Request telemetry on every Nth DShot frame.

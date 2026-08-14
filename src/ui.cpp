@@ -10,6 +10,8 @@
 
 #include "ui.h"
 #include "ui_am32.h"
+#include "ui_setup.h"
+#include "settings.h"
 #include "gfx.h"
 #include "touch.h"
 #include "st7789.h"
@@ -93,11 +95,18 @@ static const Btn BTN_MAXT_P  = { 180, CFG_MAXT_Y, 46, 40 };
 // button was a control for something already handled. What is left of EDT here
 // is the read-only chip in the title bar.
 static const Btn BTN_BEEP    = { 14, CFG_CMD_Y, 212, CFG_ROW_H };
-// The AM32 row is split in two so LOG has somewhere to live. The settings
-// screen was already full to the bottom edge, and the asserts below keep it
-// honest rather than trusting that it still fits.
-static const Btn BTN_AM32    = { 14, CFG_AM32_Y, 104, 38 };
-static const Btn BTN_LOG     = { 122, CFG_AM32_Y, 104, 38 };
+// One row, three destinations. The settings screen was already full to the
+// bottom edge before SETUP needed a home, so the row splits rather than the
+// screen growing -- 3 x 68 plus two 4 px gaps is exactly the 212 px between the
+// margins, and the asserts below keep it that way.
+#define CFG_NAV_W    68
+#define CFG_NAV_GAP  4
+static const Btn BTN_AM32  = { 14, CFG_AM32_Y, CFG_NAV_W, 38 };
+static const Btn BTN_LOG   = { 14 + CFG_NAV_W + CFG_NAV_GAP, CFG_AM32_Y, CFG_NAV_W, 38 };
+static const Btn BTN_SETUP = { 14 + 2 * (CFG_NAV_W + CFG_NAV_GAP), CFG_AM32_Y, CFG_NAV_W, 38 };
+
+static_assert(14 + 3 * CFG_NAV_W + 2 * CFG_NAV_GAP <= 226,
+              "the AM32/LOG/SETUP row is too wide");
 static const Btn BTN_BACK    = { 14, CFG_BACK_Y, 212, 18 };
 
 /**
@@ -146,10 +155,15 @@ static bool     s_armed = false;
 static bool     s_hold = false;
 static bool     s_config = false;
 static bool     s_am32 = false;   /**< AM32 config mode owns the screen. */
+static bool     s_setup = false;  /**< SETUP screen owns the screen. */
 static bool     s_logScreen = false; /**< Logging status screen is up. */
 static uint16_t s_throttle = 0;
-static uint16_t s_maxThrottle = DEFAULT_MAX_THROTTLE;
-static uint8_t  s_poles = DEFAULT_MOTOR_POLES;
+
+// Pole count and throttle ceiling live in the persisted settings rather than in
+// file statics here, so the -/+ buttons on the settings screen and the SAVE on
+// the setup screen act on one value. These two read through to it.
+#define s_maxThrottle (settings()->maxThrottle)
+#define s_poles       (settings()->poles)
 
 static bool     s_armPressing = false;
 static uint32_t s_armPressStart = 0;
@@ -225,7 +239,7 @@ static struct {
 	int  voltsSrc, ampsSrc, mah;
 	int  throttleRaw, maxPct, thrArmed, thrHold;
 	int  config, poles;
-	int  cmdFlash, edtActive;
+	int  cmdFlash, edtActive, dirty;
 	int  logState, logFile, logDrops;
 	uint32_t logBytes, logFrames, logPeak, logWorstMs;
 } s_shown;
@@ -346,7 +360,7 @@ static void drawStatusBar() {
 	uint16_t badge = s_armed ? C_RED : C_GREEN;
 	gfxRoundRect(4, 3, 92, 20, 4, badge);
 	const char *txt = s_armed ? "ARMED" : "SAFE";
-	gfxText(4 + (92 - gfxTextW(txt, 2)) / 2, 7, txt, C_WHITE, 2);
+	gfxText(4 + (92 - gfxTextW(txt, 2)) / 2, 7, txt, C_ONACCENT, 2);
 
 	if (!s_armed && progress > 0) {
 		gfxRect(4, 21, 92 * progress / 100, 2, C_LIME);
@@ -392,7 +406,7 @@ static void drawRpm() {
 	gfxRect(0, Z_RPM_Y0, GFX_W, Z_RPM_Y1 - Z_RPM_Y0 + 1, C_BG);
 
 	uint16_t on = alive ? C_LIME : C_REDDARK;
-	gfxSegNumber(226, 32, 36, 62, 8, 6, rpm, 5, on, 0x1082);
+	gfxSegNumber(226, 32, 36, 62, themeSegStroke(8), 6, rpm, 5, on, C_GHOST);
 
 	gfxText(226 - gfxTextW("RPM", 2), 100, "RPM", C_DIM, 2);
 
@@ -542,7 +556,7 @@ static void drawThrottle() {
 		int hx = THR_TRACK_X + fillW - 3;
 		if (hx < THR_TRACK_X) hx = THR_TRACK_X;
 		if (hx > THR_TRACK_X + THR_TRACK_W - 6) hx = THR_TRACK_X + THR_TRACK_W - 6;
-		gfxRect(hx, THR_TRACK_Y - 3, 6, THR_TRACK_H + 6, C_WHITE);
+		gfxRect(hx, THR_TRACK_Y - 3, 6, THR_TRACK_H + 6, C_INK);
 	}
 
 	gfxRoundFrame(THR_TRACK_X, THR_TRACK_Y, THR_TRACK_W, THR_TRACK_H, 5, C_GRID);
@@ -560,11 +574,15 @@ static void drawButtons() {
 	s_shown.btnArmed = s_armed;
 	s_shown.config = s_config;
 
-	gfxRect(0, Z_BTN_Y0, GFX_W, Z_BTN_Y1 - Z_BTN_Y0 + 1, C_BG);
+	// From Z_THR_Y1 + 1 rather than Z_BTN_Y0: the row between the two regions
+	// belongs to neither, so nothing ever repaints it, and a glyph descender or
+	// a bold smear landing there would persist for the rest of the session.
+	gfxRect(0, Z_THR_Y1 + 1, GFX_W, Z_BTN_Y1 - Z_THR_Y1, C_BG);
 	drawBtn(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
-	        s_armed ? C_RED : C_PANEL, C_WHITE, s_armed ? 2 : 1);
+	        s_armed ? C_RED : C_PANEL, s_armed ? C_ONACCENT : C_TEXT,
+	        s_armed ? 2 : 1);
 	drawBtn(BTN_HOLD, "HOLD", s_hold ? C_BLUE : C_PANEL,
-	        s_hold ? C_WHITE : C_DIM, 1);
+	        s_hold ? C_ONACCENT : C_DIM, 1);
 	drawBtn(BTN_CFG, "CFG", C_PANEL, C_DIM, 1);
 }
 
@@ -586,8 +604,10 @@ static void drawConfig() {
 
 	if (s_shown.config == 1 && s_shown.poles == s_poles &&
 	    s_shown.maxPct == (int)((uint32_t)s_maxThrottle * 100 / 2000) &&
-	    s_shown.cmdFlash == flashKey && s_shown.edtActive == edtActive)
+	    s_shown.cmdFlash == flashKey && s_shown.edtActive == edtActive &&
+	    s_shown.dirty == (int)settingsDirty())
 		return;
+	s_shown.dirty = settingsDirty();
 	s_shown.config = 1;
 	s_shown.poles = s_poles;
 	s_shown.maxPct = (int)((uint32_t)s_maxThrottle * 100 / 2000);
@@ -598,6 +618,11 @@ static void drawConfig() {
 	gfxRect(0, 0, GFX_W, 26, C_PANEL);
 	gfxText(8, 9, "SETTINGS", C_TEXT, 2);
 
+	// Poles and the throttle ceiling are persisted, but the button that persists
+	// them is on SETUP. Saying so here is the difference between "my settings
+	// reset themselves" and "I did not press save".
+	if (settingsDirty()) gfxText(112, 12, "UNSAVED", C_AMBER, 1);
+
 	// Read-only: EDT needs no button any more, since the firmware enables it
 	// for each ESC as it appears. It is still worth showing, because "green"
 	// and "all four telemetry tiles read --" are the same fact and one of them
@@ -606,7 +631,7 @@ static void drawConfig() {
 	int chipW = gfxTextW(edtTxt, 1) + 12;
 	gfxRoundRect(GFX_W - 6 - chipW, 5, chipW, 16, 4,
 	             edtActive ? C_GREEN : C_RED);
-	gfxText(GFX_W - 6 - chipW + 6, 9, edtTxt, C_WHITE, 1);
+	gfxText(GFX_W - 6 - chipW + 6, 9, edtTxt, C_ONACCENT, 1);
 
 
 	char buf[24];
@@ -626,9 +651,11 @@ static void drawConfig() {
 	bool beepLit = cmdFlashActive();
 
 	// White for an accepted press, amber for a refused one.
-	drawBtn(BTN_BEEP, "BEEP", beepLit ? (s_cmdFlashOk ? C_WHITE : C_AMBER)
+	// C_INK / C_PAPER rather than white / background: both of those flip with
+	// the theme, so an inverted button stays inverted in either palette.
+	drawBtn(BTN_BEEP, "BEEP", beepLit ? (s_cmdFlashOk ? C_INK : C_AMBER)
 	                                  : C_PANEL,
-	        beepLit ? C_BG : C_CYAN, 1);
+	        beepLit ? C_PAPER : C_CYAN, 1);
 
 	// The hint turns into the reason when a press is refused, so the amber
 	// flash is explained rather than just noticed.
@@ -638,8 +665,9 @@ static void drawConfig() {
 	                      : "BEEP NEEDS THE ESC DISARMED",
 	              refused ? C_RED : C_DIM, 1);
 
-	drawBtn(BTN_AM32, "AM32 CFG", C_PANEL, C_CYAN, 1);
+	drawBtn(BTN_AM32, "AM32", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1);
+	drawBtn(BTN_SETUP, "SETUP", C_PANEL, C_CYAN, 1);
 	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1);
 }
 
@@ -760,7 +788,7 @@ static void drawLogScreen() {
 	bool usable = (st.state != SdLogState::NoCard);
 	drawBtn(BTN_LOG_TOGGLE, active ? "STOP" : "START",
 	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
-	        usable ? (active ? C_WHITE : C_LIME) : C_GRID, 2);
+	        usable ? (active ? C_ONACCENT : C_LIME) : C_GRID, 2);
 
 	// The card is only mounted once, at boot, so one inserted afterwards needs
 	// this. Without it, "insert card, nothing happens" is indistinguishable
@@ -818,6 +846,10 @@ static void handleConfigTouch() {
 		s_config = false;
 		s_shown.config = -1;
 		gfxFill(C_BG);
+	} else if (hit(BTN_SETUP, x, y)) {
+		s_setup = true;
+		gfxFill(C_BG);
+		uiSetupEnter();
 	} else if (hit(BTN_BACK, x, y)) {
 		s_config = false;
 		invalidateAll();
@@ -965,6 +997,12 @@ void uiInit() {
 	adc_init();
 	adc_gpio_init(PIN_BAT_ADC);
 
+	// The palette and backlight follow the stored preference before the first
+	// frame, so a board saved in high contrast never flashes a dark screen on
+	// the way up.
+	themeSet(settings()->highContrast ? Theme::HighContrast : Theme::Dark);
+	st7789SetBacklight(themeBacklight(settings()->backlight));
+
 	escSetPoles(s_poles);
 	escSetArmed(false);
 
@@ -985,6 +1023,21 @@ void uiTick() {
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 
 	if (s_touch.down) s_lastTouchMs = millis();
+
+	// SETUP owns the whole screen while it runs. It can change the pin the pump
+	// drives and the palette everything is rendered in, so leaving it has to
+	// invalidate every cached region -- a theme swap is invisible to caches that
+	// only remember values.
+	if (s_setup) {
+		if (!uiSetupTick(&s_touch)) {
+			s_setup = false;
+			invalidateAll();
+			gfxFill(C_BG);
+			s_shown.config = -1;
+		}
+		st7789FlushDirty();
+		return;
+	}
 
 	// AM32 config owns the whole screen and the signal pin while it runs.
 	if (s_am32) {
@@ -1007,12 +1060,18 @@ void uiTick() {
 	// so a test covering it could pass against a broken rule.
 	sdLogSetArmed(s_armed);
 
+	// Each handler can navigate away, so each draw is conditional on still being
+	// on that screen. Painting it anyway is not merely wasted work: the press
+	// that leaves also calls gfxFill(), so the extra paint puts the old screen
+	// back over a cleared frame, and whatever it leaves on a row the incoming
+	// screen's regions do not cover stays there. The residue was invisible for
+	// as long as the palette was dark on black; it is not in high contrast.
 	if (s_logScreen) {
 		handleLogTouch();
-		drawLogScreen();
+		if (s_logScreen) drawLogScreen();
 	} else if (s_config) {
 		handleConfigTouch();
-		drawConfig();
+		if (s_config && !s_am32 && !s_setup) drawConfig();
 	} else {
 		handleMainTouch();
 

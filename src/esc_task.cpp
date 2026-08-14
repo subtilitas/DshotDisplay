@@ -1,6 +1,7 @@
 #include "esc_task.h"
 #include "config.h"
 #include "kiss_telem.h"
+#include "settings.h"
 
 #include "plat.h"
 #include <string.h>
@@ -32,6 +33,22 @@ static volatile uint8_t  s_pendingReps = 0;   /**< Repeats left for that command
 static volatile bool     s_edtRequested = false; /**< EDT enable has been issued. */
 /** @} */
 
+/**
+ * @defgroup esc_wiring Live wiring (core0 writes, core1 latches on rebuild)
+ * @brief What escTaskConfigure() last set. Read only while building the driver.
+ *
+ * Latched at construction rather than read per frame, so a pin change cannot
+ * take effect halfway: the driver is destroyed, these are read once, and the
+ * new driver is built from a consistent set.
+ * @{
+ */
+static volatile uint8_t  s_dshotPin   = DSHOT_PIN;              /**< ESC signal GPIO. */
+static volatile uint16_t s_dshotKbaud = DSHOT_SPEED_KBAUD;      /**< DShot bitrate. */
+static volatile uint8_t  s_kissEnable = DEFAULT_KISS_ENABLE;    /**< KISS wire expected. */
+static volatile uint8_t  s_kissPin    = DEFAULT_KISS_PIN;       /**< KISS RX GPIO. */
+static volatile bool     s_rebuildReq = false;                  /**< Rebuild pending. */
+/** @} */
+
 /** @brief Telemetry block. Core1 writes, core0 reads via escSnapshot(). */
 static EscTelemetry s_tel;
 
@@ -57,6 +74,48 @@ static bool        s_kissPending = false; /**< A reply is outstanding. */
 static uint32_t    s_kissReqMs = 0;     /**< millis() of the outstanding request. */
 
 /**
+ * @brief The UART instance currently receiving KISS, or nullptr if none.
+ *
+ * Derived from the pin rather than configured beside it. The two used to be
+ * separate settings that had to agree, and a mismatch was undetectable: the SDK
+ * accepts `uart_init()` on either instance and the wrong one simply never
+ * receives a byte. There is exactly one correct answer for any given pin, so
+ * asking is the bug.
+ *
+ * @see settingsUartForPin()
+ */
+static uart_inst_t *s_kissUart = nullptr;
+
+/**
+ * @brief Claim @p pin as a KISS receiver, or release the UART if it cannot be.
+ *
+ * Receive only: the ESC talks and we never answer, so no TX pin is claimed.
+ * Driving one would fight a line the ESC is already driving.
+ *
+ * @param pin GPIO to receive on.
+ */
+static void kissUartBegin(uint8_t pin) {
+	int idx = settingsUartForPin(pin);
+	s_kissUart = (idx == 0) ? uart0 : (idx == 1) ? uart1 : nullptr;
+	if (!s_kissUart) return;
+	memset(&s_kiss, 0, sizeof(s_kiss));
+	s_kissCountdown = 0;
+	s_kissPending = false;
+	uart_init(s_kissUart, KISS_BAUD);
+	gpio_set_function(pin, GPIO_FUNC_UART);
+	uart_set_format(s_kissUart, 8, 1, UART_PARITY_NONE);
+	uart_set_fifo_enabled(s_kissUart, true);
+}
+
+/** @brief Release the KISS UART, if one is claimed. */
+static void kissUartEnd() {
+	if (!s_kissUart) return;
+	uart_deinit(s_kissUart);
+	s_kissUart = nullptr;
+	s_kissPending = false;
+}
+
+/**
  * @brief Drain whatever the UART has and fold any complete frame into @ref s_tel.
  *
  * Called from escTaskPoll() on core1. Bounded work: the RP2350 UART FIFO holds
@@ -66,9 +125,10 @@ static uint32_t    s_kissReqMs = 0;     /**< millis() of the outstanding request
  */
 static void kissDrain(uint32_t ms) {
 	KissFrame f;
+	if (!s_kissUart) return;
 
-	while (uart_is_readable(KISS_UART)) {
-		uint8_t c = uart_getc(KISS_UART);
+	while (uart_is_readable(s_kissUart)) {
+		uint8_t c = uart_getc(s_kissUart);
 		if (kissFeed(&s_kiss, c, &f)) {
 			s_kissPending = false;
 			critical_section_enter_blocking(&s_cs);
@@ -163,23 +223,41 @@ void escTaskInit() {
 	// critical section, and it will get there long before core1 has booted.
 	critical_section_init(&s_cs);
 	memset((void *)&s_tel, 0, sizeof(s_tel));
+
+	// Seed the wiring from the stored settings, so core1's very first build uses
+	// the user's pins rather than the compiled defaults followed by a rebuild.
+	const Settings *cfg = settings();
+	s_dshotPin   = cfg->dshotPin;
+	s_dshotKbaud = cfg->dshotKbaud;
+	s_kissEnable = cfg->kissEnable;
+	s_kissPin    = cfg->kissPin;
+	s_rebuildReq = false;
 }
 
+void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
+                      bool kissEnable, uint8_t kissPin) {
+	if (s_dshotPin == dshotPin && s_dshotKbaud == dshotKbaud &&
+	    s_kissEnable == (kissEnable ? 1u : 0u) && s_kissPin == kissPin)
+		return;
+
+	// Disarm first, and through escSetArmed() so the throttle is zeroed too. The
+	// ESC on the old pin is about to stop hearing frames; leaving a non-zero
+	// throttle latched for whatever gets built next is not a state to pass
+	// through.
+	escSetArmed(false);
+	s_dshotPin   = dshotPin;
+	s_dshotKbaud = dshotKbaud;
+	s_kissEnable = kissEnable ? 1u : 0u;
+	s_kissPin    = kissPin;
+	s_rebuildReq = true;
+}
+
+uint8_t escTaskDshotPin() { return s_dshotPin; }
+
 void escTaskBegin() {
-	critical_section_enter_blocking(&s_cs);
-	s_tel.initError = s_esc->initError();
-	critical_section_exit(&s_cs);
-
-#if KISS_TELEM_ENABLE
-	memset(&s_kiss, 0, sizeof(s_kiss));
-	// RX only: the ESC talks, we never answer. Claiming a TX pin would drive a
-	// line the ESC is already driving.
-	uart_init(KISS_UART, KISS_BAUD);
-	gpio_set_function(KISS_TELEM_PIN, GPIO_FUNC_UART);
-	uart_set_format(KISS_UART, 8, 1, UART_PARITY_NONE);
-	uart_set_fifo_enabled(KISS_UART, true);
-#endif
-
+	// Nothing is claimed here. The driver and the UART are built by the first
+	// escTaskPoll(), which is also the path a suspend or a reconfigure returns
+	// through -- one construction site, so the two cannot drift apart.
 	s_nextSendUs = time_us_32();
 	s_lastRateMs = millis();
 }
@@ -249,36 +327,43 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 }
 
 void escTaskPoll() {
-	// Handle a pin handover request before anything touches the driver. Both
-	// the teardown and the rebuild happen here so the PIO state machine is
-	// released and re-claimed by the core that owns it.
-	if (s_suspendReq && s_esc) {
-		delete s_esc;
-		s_esc = nullptr;
+	// Handle a handover or a reconfigure before anything touches the driver.
+	// Teardown and rebuild both happen here so the PIO state machine is released
+	// and re-claimed by the core that owns it.
+	//
+	// The teardown runs on the *request* rather than on `s_esc` being non-null.
+	// Gating it on the driver existing left a hole: a suspend arriving before
+	// core1 had ever built one satisfied neither branch, so `s_suspended` never
+	// became true and the AM32 screen waited on a handover that could not
+	// complete.
+	if (s_suspendReq || s_rebuildReq) {
+		if (s_esc) {
+			delete s_esc;
+			s_esc = nullptr;
+		}
 #if KISS_TELEM_ENABLE
-		// The AM32 bootloader owns the signal pin from here. Nothing will be
-		// requesting telemetry, so a UART left running would only accumulate
-		// noise into a decoder that has no way to tell it from a reply.
-		uart_deinit(KISS_UART);
-		s_kissPending = false;
+		// Whoever owns the pin next, it is not us. A UART left running would
+		// accumulate noise into a decoder with no way to tell it from a reply.
+		kissUartEnd();
 #endif
-		s_suspended = true;
-		return;
+		s_rebuildReq = false;
+		if (s_suspendReq) {
+			s_suspended = true;
+			return;
+		}
 	}
 	if (!s_suspendReq && !s_esc) {
-		s_esc = new BidirDShotX1(DSHOT_PIN, DSHOT_SPEED_KBAUD);
+		// Latch the wiring once, here, so a pin change cannot be observed
+		// half-applied. @see esc_wiring
+		uint8_t  pin   = s_dshotPin;
+		uint16_t kbaud = s_dshotKbaud;
+		s_esc = new BidirDShotX1(pin, kbaud);
 		s_armed = false;
 		s_throttle = 0;
 		s_edtAutoDone = false;
 		s_nextSendUs = time_us_32();
 #if KISS_TELEM_ENABLE
-		memset(&s_kiss, 0, sizeof(s_kiss));
-		s_kissCountdown = 0;
-		s_kissPending = false;
-		uart_init(KISS_UART, KISS_BAUD);
-		gpio_set_function(KISS_TELEM_PIN, GPIO_FUNC_UART);
-		uart_set_format(KISS_UART, 8, 1, UART_PARITY_NONE);
-		uart_set_fifo_enabled(KISS_UART, true);
+		if (s_kissEnable && s_kissPin != pin) kissUartBegin(s_kissPin);
 #endif
 		critical_section_enter_blocking(&s_cs);
 		s_tel.initError = s_esc->initError();
@@ -339,7 +424,7 @@ void escTaskPoll() {
 	// telemetry bit set anyway, and a reply arriving mid-command sequence would
 	// just be noise.
 	bool wantKiss = false;
-	if (s_pendingReps == 0) {
+	if (s_kissUart && s_pendingReps == 0) {
 		if (s_kissCountdown) {
 			s_kissCountdown--;
 		} else {

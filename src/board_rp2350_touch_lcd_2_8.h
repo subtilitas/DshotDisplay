@@ -68,6 +68,21 @@
 #define BOARD_LABEL "RP2350-TOUCH-LCD-2.8"
 
 /**
+ * @brief GPIOs a user may assign to the ESC or telemetry wire, as a bitmask.
+ *
+ * Two of them: GP28 (J4 pin 11) and GP29 (J4 pin 12). Between the panel, the
+ * touch bus, the IMU, the RTC, the codec and a six-line SD interface, this
+ * board has nothing else left.
+ *
+ * That scarcity has a consequence worth knowing before the setup screen tells
+ * you about it: of the two, only **GP29** is a UART RX function (GP28 is UART0
+ * *TX*). So the ESC and a KISS telemetry wire cannot both be connected here
+ * unless the ESC moves to GP28 and KISS takes GP29 — and @ref settingsValidate
+ * switches KISS off rather than let the two share a pin.
+ */
+#define BOARD_FREE_GPIO_MASK 0x30000000u
+
+/**
  * @defgroup lcd28_pins_lcd LCD — ST7789T3, 240x320, SPI1
  * @{
  */

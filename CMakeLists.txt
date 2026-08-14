@@ -87,6 +87,10 @@ add_executable(DshotDisplay
     src/main.cpp
     src/ui.cpp
     src/ui_am32.cpp
+    src/ui_setup.cpp
+    src/theme.cpp
+    src/settings.cpp
+    src/settings_flash.cpp
     src/gfx.cpp
     src/st7789.cpp
     src/cst816.cpp
@@ -104,11 +108,16 @@ add_executable(DshotDisplay
 
 target_include_directories(DshotDisplay PRIVATE src)
 target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})
-if(DSHOT_PIN)
+# STREQUAL against the empty string, not if(DSHOT_PIN): CMake's if() tests the
+# *value*, and "0" is one of its false constants -- so -DDSHOT_PIN=0 took the
+# else branch and silently built for the board default instead. GP0 is a real
+# pin on both boards, and the symptom of getting it is an ESC that never
+# answers with nothing reported anywhere.
+if(NOT DSHOT_PIN STREQUAL "")
     target_compile_definitions(DshotDisplay PRIVATE DSHOT_PIN=${DSHOT_PIN})
-    message(STATUS "Board: ${BOARD}, DShot on GP${DSHOT_PIN}")
+    message(STATUS "Board: ${BOARD}, DShot default GP${DSHOT_PIN}")
 else()
-    message(STATUS "Board: ${BOARD}, DShot on the board default")
+    message(STATUS "Board: ${BOARD}, DShot default from board_pins.h")
 endif()
 
 target_link_libraries(DshotDisplay
@@ -121,6 +130,8 @@ target_link_libraries(DshotDisplay
     hardware_pwm
     hardware_adc
     hardware_clocks
+    hardware_flash
+    hardware_sync
     Pico_Bidir_DShot
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )

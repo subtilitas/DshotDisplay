@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include "config.h"
+#include "theme.h"
 
 #if (LCD_ROTATION == 1) || (LCD_ROTATION == 3)
 #define GFX_W 320 /**< Framebuffer width in pixels, after @ref LCD_ROTATION. */
@@ -24,35 +25,35 @@
 #endif
 
 /**
- * @brief Pack 8-bit RGB into an RGB565 word.
- * @param r Red, 0..255 (top 5 bits kept).
- * @param g Green, 0..255 (top 6 bits kept).
- * @param b Blue, 0..255 (top 5 bits kept).
- * @return Packed RGB565 colour.
- */
-static inline uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
-	return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-}
-
-/**
  * @defgroup gfx_palette Palette
+ * @brief Names for the active theme's colours. @see theme.h
+ *
+ * Each expands to a subscript of @ref g_theme, so a call site written against
+ * these follows a runtime theme change with no edit. `rgb()` lives in theme.h.
+ *
+ * `C_INK`, `C_PAPER` and `C_ONACCENT` are the ones to reach for when
+ * adding UI: they name the *role* a colour plays in a fill/foreground pair,
+ * which is the part a palette inversion would otherwise break. See the table in
+ * theme.h.
  * @{
  */
-#define C_BLACK   0x0000 /**< Pure black. */
-#define C_WHITE   0xFFFF /**< Pure white. */
-#define C_BG      0x0000 /**< Screen background. */
-#define C_PANEL   0x18E3 /**< Dark grey card / tile fill. */
-#define C_GRID    0x39E7 /**< Separator and outline grey. */
-#define C_DIM     0x8410 /**< Label grey. */
-#define C_TEXT    0xE71C /**< Primary text, near-white. */
-#define C_GREEN   0x2665 /**< Muted green (SAFE badge). */
-#define C_LIME    0x07E0 /**< Bright green (live values, throttle fill). */
-#define C_AMBER   0xFD20 /**< Warning amber. */
-#define C_RED     0xF9E7 /**< Error / ARMED red. */
-#define C_REDDARK 0x6000 /**< Dead-telemetry digit colour. */
-#define C_BLUE    0x2D7F /**< HOLD button active. */
-#define C_CYAN    0x07FF /**< Informational accent. */
-#define C_MAGENTA 0xF81F /**< ESC alert state. */
+#define C_BG       (g_theme[TC_BG])       /**< Screen background. */
+#define C_PANEL    (g_theme[TC_PANEL])    /**< Card / tile fill. */
+#define C_GRID     (g_theme[TC_GRID])     /**< Separator and outline. */
+#define C_DIM      (g_theme[TC_DIM])      /**< Label text. */
+#define C_TEXT     (g_theme[TC_TEXT])     /**< Primary text. */
+#define C_INK      (g_theme[TC_INK])      /**< Strongest mark against the background. */
+#define C_PAPER    (g_theme[TC_PAPER])    /**< Text drawn on a bright fill. */
+#define C_ONACCENT (g_theme[TC_ONACCENT]) /**< Text drawn on a saturated fill. */
+#define C_GREEN    (g_theme[TC_GREEN])    /**< Muted green (SAFE badge). */
+#define C_LIME     (g_theme[TC_LIME])     /**< Live values, throttle fill. */
+#define C_AMBER    (g_theme[TC_AMBER])    /**< Warning. */
+#define C_RED      (g_theme[TC_RED])      /**< Error / ARMED. */
+#define C_REDDARK  (g_theme[TC_REDDARK])  /**< Dead-telemetry digit. */
+#define C_GHOST    (g_theme[TC_GHOST])    /**< Unlit leading seven-segment digits. */
+#define C_BLUE     (g_theme[TC_BLUE])     /**< HOLD button active. */
+#define C_CYAN     (g_theme[TC_CYAN])     /**< Informational accent. */
+#define C_MAGENTA  (g_theme[TC_MAGENTA])  /**< ESC alert state. */
 /** @} */
 
 /** @brief Clear the framebuffer and mark the whole screen dirty. */
