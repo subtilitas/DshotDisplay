@@ -287,6 +287,77 @@ static void testSaveValidatesFirst() {
 	         settings()->maxThrottle, MAX_THROTTLE_CEILING);
 }
 
+static void testCrcKnownAnswer() {
+	section("Settings: the CRC is CRC-32, not merely self-consistent");
+
+	// The reflected-0xEDB88320 check value for "123456789". Every other test
+	// here only proves the implementation agrees with itself; a wrong init or
+	// final XOR would pass all of them and surface later as a forced format
+	// break, because fixing the CRC would orphan every stored block in the
+	// field.
+	checkTrue("CRC-32(\"123456789\") == 0xCBF43926",
+	          settingsCrc32("123456789", 9) == 0xCBF43926u);
+	checkTrue("CRC-32 of nothing is 0", settingsCrc32("", 0) == 0u);
+}
+
+static void testForeignBoardBlock() {
+	section("Settings: a valid block naming a board this image is not");
+
+	// Magic, version, size and CRC all correct -- only the *content* is
+	// foreign: a board id no build recognises, carrying a pin that every
+	// board's mask refuses. The load-path validate call is the sole interlock
+	// between this block and the pump being seeded with an occupied GPIO;
+	// delete it and these checks are what fails.
+	Settings evil;
+	settingsDefaults(&evil);
+	evil.boardId = 99;
+	evil.dshotPin = 18;                    // LCD clock / touch INT territory
+	fakeFlashClear();
+	storeValid(&evil);
+	settingsLoad();
+	checkInt("the alien board id is repaired to this board's",
+	         settings()->boardId, boardId());
+	checkTrue("the ESC pin was re-judged against this board",
+	          settingsPinFree(settings()->dshotPin));
+	checkInt("and fell back to this board's default",
+	         settings()->dshotPin, g_board->defaultDshotPin);
+}
+
+static void testNoOpSaveWritesNothing() {
+	section("Settings: saving what is already stored writes nothing");
+
+	fakeFlashClear();
+	settingsLoad();
+	settings()->poles = 10;
+	checkTrue("the first save lands", settingsSave());
+
+	// On the device every write attempt is an erase first: wear, core1 parked,
+	// and a torn-write window in the only copy of the block. A save of exactly
+	// what is stored must therefore not touch flash at all.
+	int before = fakeFlashWrites();
+	checkTrue("saving again unchanged still reports success", settingsSave());
+	checkInt("but attempts no write", fakeFlashWrites() - before, 0);
+
+	settings()->poles = 12;
+	checkTrue("a real change saves again", settingsSave());
+	checkInt("with exactly one write", fakeFlashWrites() - before, 1);
+}
+
+static void testUnifiedBlankIsUnset() {
+	if (boardCount() < 2) return;
+	section("Settings: a unified image with blank flash admits it");
+
+	// The first descriptor is a coherent value for early code to read, not an
+	// answer. Pretending otherwise is how 2.8" hardware used to boot with the
+	// 2.0" pin map: black screen, dead touch, and the power latch released.
+	fakeFlashClear();
+	settingsLoad();
+	checkInt("the board id is UNSET, not the first descriptor",
+	         settings()->boardId, BOARD_ID_UNSET);
+	// Who answers: the boot probe (device-only, see board_probe.h) or the
+	// SETUP picker -- and nothing else may guess.
+}
+
 void runSettingsTests() {
 	testBlankFlash();
 	testRoundTrip();
@@ -296,6 +367,10 @@ void runSettingsTests() {
 	testKissNeedsItsOwnPin();
 	testSaveIsVerified();
 	testSaveValidatesFirst();
+	testCrcKnownAnswer();
+	testForeignBoardBlock();
+	testNoOpSaveWritesNothing();
+	testUnifiedBlankIsUnset();
 
 	// Leave the module in a known state: test_ui.cpp runs after this and reads
 	// settings() for the pole count and throttle ceiling.

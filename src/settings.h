@@ -52,9 +52,12 @@ struct Settings {
 	/**
 	 * @brief Which board this is, one of @ref board_desc_ids.
 	 *
-	 * @ref BOARD_ID_UNSET until the user has been asked. A unified image asks
-	 * once, on its first boot, and never again; a single-board image fills this
-	 * in for itself, because there is nothing to ask.
+	 * @ref BOARD_ID_UNSET until a choice exists. On a unified image with blank
+	 * flash the first boot finds the board by probing for its always-on I2C
+	 * devices — see boardProbe() — runs on that answer, and shows it on the
+	 * SETUP screen for the user to confirm with a save (or override with the
+	 * picker). A single-board image fills this in for itself, because there is
+	 * nothing to ask.
 	 */
 	uint8_t  boardId;
 	uint8_t  dshotPin;     /**< GPIO carrying the ESC signal wire. */
@@ -129,6 +132,31 @@ int settingsUartForPin(uint8_t pin);
  * @return The next candidate, or @p from if the board offers no other.
  */
 uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly);
+
+/**
+ * @brief settingsPinFree(), judged against a specific board.
+ *
+ * The SETUP screen can hold a board choice that has not been applied yet — the
+ * hardware only changes on reboot — and its pin rules must follow the choice,
+ * not the live board. An id this image cannot drive falls back to the live
+ * board's mask.
+ *
+ * @param boardIdArg One of @ref board_desc_ids.
+ * @param pin        GPIO number.
+ * @return true if the pin is unclaimed on that board.
+ */
+bool settingsPinFreeOn(uint8_t boardIdArg, uint8_t pin);
+
+/**
+ * @brief settingsNextPin(), stepping through a specific board's free pins.
+ *
+ * @param boardIdArg One of @ref board_desc_ids.
+ * @param from       Current pin.
+ * @param dir        +1 or -1.
+ * @param uartOnly   Restrict to pins that can also receive on a UART.
+ * @return The next candidate, or @p from if that board offers no other.
+ */
+uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir, bool uartOnly);
 
 /** @} */
 
