@@ -93,8 +93,11 @@ const TouchDriver *touchActiveDriver();
 /**
  * @brief Poll the controller and update @p t.
  *
- * Safe to call at any rate; ~60 Hz is plenty. On a failed I2C transaction the
- * position is left unchanged and the finger is reported as up.
+ * Safe to call at any rate; ~60 Hz is plenty. A single failed I2C transaction
+ * holds the previous contact state with the position unchanged — a one-poll
+ * glitch mid-press must not synthesise a release, because taps fire on
+ * release and a synthetic release *commits* whatever the finger is resting
+ * on. Only consecutive failures report the finger up.
  *
  * @param[in,out] t State to update. Must persist between calls.
  */

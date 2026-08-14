@@ -99,6 +99,12 @@ static bool cst816Init() {
 	return ok;
 }
 
+/** @brief Consecutive failed polls before a glitch counts as a release. */
+#define POLL_FAIL_LIMIT 2
+
+/** @brief How many polls in a row the controller has failed to answer. */
+static uint8_t s_pollFails = 0;
+
 /** @brief Sample the CST816D. @param[in,out] t State to update. */
 static void cst816Poll(TouchState *t) {
 	uint8_t b[6];
@@ -107,6 +113,7 @@ static void cst816Poll(TouchState *t) {
 	uint8_t gesture = 0;
 
 	if (rdRegs(REG_GESTURE, b, 6)) {
+		s_pollFails = 0;
 		gesture = b[0];
 		uint8_t fingers = b[1] & 0x0F;
 		if (fingers > 0) {
@@ -117,6 +124,14 @@ static void cst816Poll(TouchState *t) {
 				down = true;
 			}
 		}
+	} else {
+		// One failed read mid-press is a bus glitch, not a lift-off. Treating
+		// it as a release used to *complete a tap* at wherever the finger was
+		// resting -- under the fire-on-release rule that is a commit, not a
+		// repeat -- so a single failure holds the previous state, and only
+		// POLL_FAIL_LIMIT consecutive ones report the finger up.
+		if (s_pollFails < POLL_FAIL_LIMIT) s_pollFails++;
+		if (s_pollFails < POLL_FAIL_LIMIT) down = s_prevDown;
 	}
 
 	if (x < 0) x = 0; else if (x >= GFX_W) x = GFX_W - 1;
