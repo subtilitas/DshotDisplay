@@ -14,7 +14,12 @@
 # matches a build anywhere. That pinning is the whole point: an unpinned
 # FetchContent is a lock file that silently rewrites itself.
 
-cmake_minimum_required(VERSION 3.13)
+# 3.18, not 3.13: SOURCE_SUBDIR inside FetchContent_Declare is only honoured by
+# FetchContent_MakeAvailable from 3.18 onwards. On 3.13-3.17 it is silently
+# ignored, add_subdirectory runs against the dependency's repo root, no targets
+# are defined, and the failure surfaces much later as a missing ff.h -- which is
+# precisely the confusion the SOURCE_SUBDIR comment below exists to prevent.
+cmake_minimum_required(VERSION 3.18)
 
 # SD_DEBUG=ON turns on the FatFs driver's own tracing, which prints to USB
 # serial. Off by default: it is noisy and costs flash, but when a card is not
@@ -46,16 +51,35 @@ set_property(CACHE BOARD PROPERTY STRINGS
 set(DSHOT_PIN "" CACHE STRING "GPIO for the ESC signal wire; blank = board default")
 
 
-set(PICO_SDK_FETCH_FROM_GIT_TAG 2.1.1)
+# Pinned by commit, not by tag. A tag is a movable reference, and README.md
+# calls an unpinned FetchContent "a lock file that silently rewrites itself" --
+# which is just as true of one that pins to something upstream can move.
+# The comment records which tag each SHA was, so a bump is still readable.
+set(PICO_SDK_FETCH_FROM_GIT_TAG bddd20f928ce76142793bef434d4f75f4af6e433)  # 2.1.1
 include(pico_sdk_import.cmake)
 
 project(DshotDisplay C CXX ASM)
+
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 pico_sdk_init()
+
+# RP2350 only: the pin maps, the powman-era SD driver choice and the SDIO PIO
+# constraints all assume it. Without this a bare `cmake -B build .` takes the
+# SDK's defaults -- pico / rp2040 -- and builds something that cannot work, with
+# no diagnostic anywhere until it fails on hardware.
+#
+# After pico_sdk_init() rather than before: PICO_RP2350 is one of the variables
+# that call defines, so checking earlier fails for every configuration.
+if(NOT PICO_RP2350)
+    message(FATAL_ERROR
+        "DshotDisplay targets RP2350 only, and this build is configured for "
+        "'${PICO_PLATFORM}'. Configure with:\n"
+        "  cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .")
+endif()
 
 include(FetchContent)
 
@@ -64,7 +88,7 @@ include(FetchContent)
 # and takes the SDK path. GPL-3.0; see the licence note in README.
 FetchContent_Declare(pico_bidir_dshot
     GIT_REPOSITORY https://github.com/bastian2001/pico-bidir-dshot.git
-    GIT_TAG        1.0.2
+    GIT_TAG        b46f54333abc30712d3ed6d0fd29ed1e686d7165  # 1.0.2
 )
 FetchContent_MakeAvailable(pico_bidir_dshot)
 
@@ -75,7 +99,7 @@ FetchContent_MakeAvailable(pico_bidir_dshot)
 # by powman. It builds fine for RP2040 and fails outright here.
 FetchContent_Declare(no_os_fatfs
     GIT_REPOSITORY https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico.git
-    GIT_TAG        v3.6.2
+    GIT_TAG        6c644cfc3ab03c161fee2dd7be4877e5b832fa71  # v3.6.2
     # No CMakeLists.txt at the repo root -- the build lives in src/. Without
     # this, FetchContent downloads the source and defines no targets at all,
     # and the failure surfaces much later as a missing ff.h.
@@ -141,6 +165,18 @@ target_link_libraries(DshotDisplay
 # for a debug UART, and the USB port is already there for flashing.
 pico_enable_stdio_usb(DshotDisplay 1)
 pico_enable_stdio_uart(DshotDisplay 0)
+
+# The board goes in the filename. Both builds used to produce
+# build/DshotDisplay.uf2, so the artifact from one board was indistinguishable
+# from the other's after the fact -- and the 2.8" image carries a power latch
+# the 2.0" does not, so flashing the wrong one is a real outcome. CI and the
+# release workflow were already renaming these by hand, which was the tell.
+if(BOARD STREQUAL "BOARD_RP2350_TOUCH_LCD_2_8")
+    set(BOARD_SLUG "touch-lcd-2.8")
+else()
+    set(BOARD_SLUG "touch-lcd-2")
+endif()
+set_target_properties(DshotDisplay PROPERTIES OUTPUT_NAME "DshotDisplay-${BOARD_SLUG}")
 
 # .uf2 for drag-and-drop flashing, plus .elf/.map/.dis for debugging.
 pico_add_extra_outputs(DshotDisplay)

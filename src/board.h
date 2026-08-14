@@ -59,10 +59,11 @@
 /**
  * @brief The board this build targets. One of @ref board_ids.
  *
- * @note `test/select_board.sh` rewrites the line below with `sed`, so keep the
- *       `#define BOARD ` prefix at the start of a line and the value on the
- *       same line.
+ * @note This default must match the one in `CMakeLists.txt`. The two disagreed
+ *       for a while -- CMake said the 2.0", this file said the 2.8" -- which
+ *       was invisible through CMake, since it always passes `-DBOARD`, and
+ *       wrong for every other consumer including the generated documentation.
  */
 #ifndef BOARD
-#define BOARD BOARD_RP2350_TOUCH_LCD_2_8
+#define BOARD BOARD_RP2350_TOUCH_LCD_2
 #endif

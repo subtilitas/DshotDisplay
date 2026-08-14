@@ -16,9 +16,6 @@ on:
         description: "Existing tag to build and release"
         required: true
 
-permissions:
-  contents: write   # required to create the release and upload assets
-
 env:
   PICO_SDK_VERSION: "2.1.1"
 
@@ -137,6 +134,11 @@ jobs:
     name: Publish release
     needs: [version, build]
     runs-on: ubuntu-latest
+    # Scoped to the job that needs it. Workflow-scoped, this token was also
+    # handed to the build matrix, which runs third-party actions and clones over
+    # the network.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
