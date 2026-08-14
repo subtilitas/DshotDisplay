@@ -433,19 +433,24 @@ void escTaskPoll() {
 		}
 	}
 #else
-	const bool wantKiss = false;
+	// Not const: escFrameAction() decides the final value below, and this branch
+	// still has to hold it even though nothing reads it afterwards.
+	bool wantKiss = false;
 #endif
 
-	if (s_pendingReps > 0 && !s_armed) {
-		s_esc->sendRaw11Bit(s_pendingCmd);
+	// The decision itself is escFrameAction(), which is pure and lives in the
+	// header so the host suite can reach it. This function only does the I/O.
+	EscFrame f = escFrameAction(s_armed, uiAlive, s_throttle,
+	                            s_pendingCmd, s_pendingReps, wantKiss);
+	if (f.sendCommand) {
+		s_esc->sendRaw11Bit(f.command);
 		s_pendingReps--;
 	} else {
-		// Zero throttle whenever disarmed or the UI has stopped talking to us.
-		uint16_t t = (!s_armed || !uiAlive) ? 0 : s_throttle;
 		// Built by hand rather than via sendThrottle(), which cannot set the
 		// telemetry-request bit. @see kissBuildDshotPayload()
-		s_esc->sendRaw12Bit(kissBuildDshotPayload(t, wantKiss));
+		s_esc->sendRaw12Bit(kissBuildDshotPayload(f.throttle, f.requestKiss));
 	}
+	wantKiss = f.requestKiss;
 
 #if KISS_TELEM_ENABLE
 	if (wantKiss) {

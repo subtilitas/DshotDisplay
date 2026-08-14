@@ -293,8 +293,52 @@ static void testKissDisplay() {
 	frames(2);
 	fakeDumpFrame("shot_tester_kiss.ppm");
 
-	// Merge is per-field and time-based, so let KISS go stale and confirm the
-	// screen falls back rather than freezing the fine values.
+	// --- what the screen shows, not what escMerge() returns ---
+	//
+	// This test used to call escMerge() itself and assert on the struct, which
+	// is a pure-function test already covered in test_kiss.cpp, and is not what
+	// the docstring above claims. It proved nothing about the screen: making
+	// drawTelemetry() read the raw EDT field instead of the merged one passed
+	// it, and would have put a coarse 0.25 V value on screen wearing a KISS tag.
+	//
+	// Tying it to pixels is what closes that. The two sources carry deliberately
+	// different values, so the voltage tile must render differently depending on
+	// which one won.
+	// The *value* rows only, not the whole tile. The KISS/EDT tag sits on the
+	// label row at the top, and it changes with the source all by itself -- so
+	// hashing the whole tile passes even when the number below it came from the
+	// wrong place, which is exactly the regression being guarded against.
+	// drawLabelled() puts the label at y+4 and the value at y+15, scale 2.
+	auto voltTile = []() { return fakeRegionHash(1, 143, 118, 18); };
+	auto ampTile  = []() { return fakeRegionHash(121, 143, 118, 18); };
+
+	uint32_t voltsFromKiss = voltTile();
+	uint32_t ampsFromKiss  = ampTile();
+
+	// Let KISS expire while EDT stays fresh. Same ESC, same tile, coarser
+	// number -- and a different tag beside it.
+	fakeAdvance(KISS_STALE_MS + 50);
+	tel.edtVoltsMs = millis();
+	tel.edtAmpsMs  = millis();
+	tel.edtTempMs  = millis();
+	tel.edtStressMs = millis();
+	tel.edtStatusMs = millis();
+	tel.lastRpmMs = millis();
+	fakeSetTelemetry(&tel);
+	frames(2);
+	checkTrue("the voltage tile changes when KISS expires", voltTile() != voltsFromKiss);
+	checkTrue("and so does the current tile", ampTile() != ampsFromKiss);
+
+	// Bring KISS back and the fine values must return -- the same pixels as
+	// before, not merely different ones.
+	tel.kissLastMs = millis();
+	fakeSetTelemetry(&tel);
+	frames(2);
+	checkTrue("fresh KISS restores the fine reading exactly", voltTile() == voltsFromKiss);
+	checkTrue("for current too", ampTile() == ampsFromKiss);
+
+	// The merge policy itself, for completeness. These are the assertions the
+	// test used to consist of.
 	EscReading r;
 	escMerge(&tel, tel.kissLastMs + KISS_STALE_MS, KISS_STALE_MS, EDT_STALE_MS, &r);
 	checkTrue("stale KISS falls back to EDT", r.voltsFrom == EscSource::Edt);
@@ -368,6 +412,43 @@ static void testTelemetryExpires() {
 	checkTrue("expired telemetry is cleared", stale != live);
 	checkTrue("and is indistinguishable from never-seen", stale == blank);
 	fakeDumpFrame("shot_tester_stale.ppm");
+
+	// The two checks above compare rendered states of the same code path, so a
+	// change that corrupts both identically satisfies them. It did: mapping an
+	// expired status block to "OK" rather than "--" kept stale == blank and
+	// live != blank, and made an ESC that had stopped talking read as all-clear
+	// -- the one direction a warning indicator may not fail.
+	//
+	// Comparing against a *known-good* render instead is what closes that. An
+	// ESC reporting OK and an ESC reporting nothing must not look the same.
+	auto statusTile = []() { return fakeRegionHash(0, 199, 120, 34); };
+
+	EscTelemetry ok;
+	memset(&ok, 0, sizeof(ok));
+	ok.erpm = 84210; ok.rpm = 12030;
+	ok.lastRpmMs = millis();
+	ok.packetRate = 998;
+	ok.edtStatusMs = millis();     // a status block arrived, and it is all clear
+	fakeSetTelemetry(&ok);
+	frames(2);
+	uint32_t statusOk = statusTile();
+
+	fakeAdvance(EDT_STALE_MS + 100);
+	frames(2);
+	checkTrue("an expired status never renders as OK", statusTile() != statusOk);
+
+	// And the same for a warning: expiring must not silently clear it either.
+	EscTelemetry warn = ok;
+	warn.warning = true;
+	warn.edtStatusMs = millis();
+	warn.lastRpmMs = millis();
+	fakeSetTelemetry(&warn);
+	frames(2);
+	uint32_t statusWarn = statusTile();
+	checkTrue("a warning looks different from all-clear", statusWarn != statusOk);
+	fakeAdvance(EDT_STALE_MS + 100);
+	frames(2);
+	checkTrue("an expired warning does not become OK", statusTile() != statusOk);
 }
 
 /**
@@ -852,6 +933,430 @@ static void testArmBacklightDip() {
 	checkInt("and comes back again", fakeBacklight(), resting);
 }
 
+
+/**
+ * @brief The interlocks that stand between a tap and a spinning motor.
+ *
+ * Every check here corresponds to a mutation that used to survive the entire
+ * suite: shortening ARM_HOLD_MS to a millisecond, forcing the zero-throttle
+ * precondition true, dropping the check that the press began on the button, and
+ * deleting the disarmed-throttle backstop outright.
+ */
+static void testArmInterlocks() {
+	section("Safety: arming takes a deliberate hold");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+
+	// A tap is not a hold. Nothing in the suite asserted this, which is how
+	// ARM_HOLD_MS could be reduced to 1 ms without a single check noticing.
+	tap(BTN_ARM_X, BTN_ARM_Y);
+	checkTrue("a tap does not arm", !uiArmed());
+	checkTrue("nor does the ESC think so", !fakeArmed());
+
+	// Nor is most of a hold.
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	for (int i = 0; i < 30; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	checkTrue("750 ms of holding does not arm", !uiArmed());
+	fakeRelease(); frames(2);
+	checkTrue("and releasing early does not either", !uiArmed());
+
+	// Sliding onto the button from elsewhere must not arm, however long it is
+	// then held: the press has to have begun on it.
+	fakePress(BTN_CFG_X - 40, BTN_ARM_Y - 60); frames(1);
+	for (int i = 0; i < 80; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	checkTrue("sliding onto ARM and holding does not arm", !uiArmed());
+	fakeRelease(); frames(2);
+
+	// The real thing does.
+	holdToArm();
+	checkTrue("a full hold arms", uiArmed());
+	checkTrue("and the ESC is told", fakeArmed());
+}
+
+/**
+ * @brief DISARM. Never once pressed by the suite before.
+ *
+ * Every path out of the armed state went through CFG, so the incidental disarm
+ * was covered and the deliberate one was not: replacing the button's body with
+ * nothing, or inverting it so that pressing DISARM re-armed, both passed.
+ */
+static void testDisarmButton() {
+	section("Safety: the DISARM button");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+	checkTrue("armed to begin with", uiArmed());
+
+	// Put some throttle on and make it stay, so the zeroing is observable.
+	// HOLD latches it; in spring mode the release at the end of a swipe would
+	// have already returned it to zero and the check below would prove nothing.
+	tap(BTN_HOLD_X, BTN_ARM_Y);
+	swipe(20, 120, THR_Y, 8);
+	frames(2);
+	checkTrue("throttle is latched up", fakeThrottle() > 0);
+
+	// Disarm fires on press, not release: this is the one control that must not
+	// wait for a lift.
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	checkTrue("disarms on press, without waiting for release", !uiArmed());
+	fakeRelease(); frames(2);
+
+	checkTrue("the ESC is told", !fakeArmed());
+	checkInt("and the commanded throttle is zeroed", fakeThrottle(), 0);
+	checkInt("the UI agrees", uiThrottle(), 0);
+
+	// HOLD is dropped too, so re-arming cannot resume a latched throttle.
+	holdToArm();
+	swipe(20, 120, THR_Y, 8);
+	frames(2);
+	checkInt("re-arming does not restore a latched throttle", fakeThrottle(), 0);
+}
+
+/**
+ * @brief The throttle ceiling binds in relative mode, not just absolute.
+ *
+ * Deleting the upper clamp in relativeThrottle() outright used to pass: only
+ * the lower rail was tested, and only absolute mode's ceiling.
+ */
+static void testCeilingBindsInRelativeMode() {
+	section("Safety: the ceiling binds however the throttle is driven");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+
+	uint16_t ceiling = settings()->maxThrottle;
+
+	// HOLD mode: the gauge is relative. Swipe far past the right-hand end,
+	// several times, and it must sit exactly on the ceiling.
+	tap(BTN_HOLD_X, BTN_ARM_Y);
+	for (int i = 0; i < 4; i++) swipe(10, 235, THR_Y, 6);
+	frames(2);
+	checkTrue("HOLD mode never exceeds the ceiling", fakeThrottle() <= ceiling);
+	checkInt("and reaches it", fakeThrottle(), ceiling);
+
+	// The pad: always relative, in either mode. Swipe up the full height
+	// repeatedly.
+	for (int i = 0; i < 6; i++) {
+		fakePress(120, 220); frames(1);
+		for (int y = 220; y >= 40; y -= 10) { fakeHold(120, y); frames(1); }
+		fakeRelease(); frames(1);
+	}
+	checkTrue("the pad never exceeds it either", fakeThrottle() <= ceiling);
+	checkInt("and reaches it too", fakeThrottle(), ceiling);
+
+	// Lowering the ceiling while a latched throttle is above it must not leave
+	// the motor above the new limit.
+	tap(BTN_CFG_X, BTN_ARM_Y);
+	checkTrue("entering settings disarmed", !uiArmed());
+	checkInt("which zeroed the throttle", fakeThrottle(), 0);
+}
+
+/** @brief The disarmed-throttle backstop, independent of every other rule. */
+static void testDisarmedThrottleBackstop() {
+	section("Safety: no throttle while disarmed, by any route");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+
+	// Never armed: every throttle surface must be inert.
+	swipe(20, 200, THR_Y, 8);
+	frames(2);
+	checkInt("the gauge does nothing while disarmed", fakeThrottle(), 0);
+
+	fakePress(120, 220); frames(1);
+	for (int y = 220; y >= 40; y -= 10) { fakeHold(120, y); frames(1); }
+	fakeRelease(); frames(2);
+	checkInt("nor does the pad", fakeThrottle(), 0);
+	checkInt("nor is one commanded", uiThrottle(), 0);
+}
+
+/**
+ * @brief What core1 puts on the wire, including the interlocks core0 cannot see.
+ *
+ * escFrameAction() is pure precisely so these can be reached: esc_task.cpp
+ * cannot be linked here, and the heartbeat timeout in particular had no
+ * coverage of any kind -- deleting escHeartbeat()'s call site passed the suite.
+ */
+static void testFrameAction() {
+	section("Safety: core1's frame decision");
+
+	// Armed, alive, throttle commanded: it goes out.
+	EscFrame f = escFrameAction(true, true, 1500, 0, 0, false);
+	checkTrue("armed and alive sends the throttle", !f.sendCommand);
+	checkInt("at the commanded value", f.throttle, 1500);
+
+	// The heartbeat backstop. This is the interlock that does not need core0 to
+	// be well enough to act, and it was untested.
+	f = escFrameAction(true, false, 1500, 0, 0, false);
+	checkInt("a dead UI forces the throttle to zero", f.throttle, 0);
+	checkTrue("still a throttle frame, not silence", !f.sendCommand);
+
+	// Disarmed means zero whatever was last commanded.
+	f = escFrameAction(false, true, 1500, 0, 0, false);
+	checkInt("disarmed forces zero", f.throttle, 0);
+
+	// Commands go out only while disarmed, and are not consumed while armed --
+	// a queued command must not be eaten by a frame that cannot carry it.
+	f = escFrameAction(false, true, 0, 42, 6, false);
+	checkTrue("a queued command is sent while disarmed", f.sendCommand);
+	checkInt("and it is the queued one", f.command, 42);
+
+	f = escFrameAction(true, true, 800, 42, 6, false);
+	checkTrue("armed, the command waits rather than going out", !f.sendCommand);
+	checkInt("and the throttle goes instead", f.throttle, 800);
+
+	// KISS requests never ride alongside a command.
+	f = escFrameAction(false, true, 0, 0, 0, true);
+	checkTrue("a due KISS request is made", f.requestKiss);
+	f = escFrameAction(false, true, 0, 42, 6, true);
+	checkTrue("but never during a command sequence", !f.requestKiss);
+}
+
+/** @brief The automatic EDT enable, at the boundaries the UI cares about. */
+static void testEdtAutoRule() {
+	section("Safety: the automatic EDT enable");
+
+	checkTrue("an ESC that just appeared is sent one",
+	          edtAutoAction(true, false) == EdtAutoAction::Send);
+	checkTrue("and only once",
+	          edtAutoAction(true, true) == EdtAutoAction::None);
+	checkTrue("losing the link re-arms it for the next ESC",
+	          edtAutoAction(false, true) == EdtAutoAction::Rearm);
+	checkTrue("no link and nothing sent is nothing to do",
+	          edtAutoAction(false, false) == EdtAutoAction::None);
+}
+
+
+/** @brief The idle interlock actually fires, and says so first. */
+static void testIdleAutoDisarm() {
+	section("Safety: idle auto-disarm");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+	checkTrue("armed", uiArmed());
+
+	// Not yet: well inside the window, with no touches at all.
+	fakeAdvance(IDLE_DISARM_MS / 2);
+	frames(2);
+	checkTrue("still armed halfway through the window", uiArmed());
+
+	// The countdown appears before it acts. A motor stopping unannounced is
+	// indistinguishable from a fault.
+	auto statusBar = []() { return fakeRegionHash(120, 0, 120, 26); };
+	uint32_t quiet = statusBar();
+	fakeAdvance(IDLE_DISARM_MS / 2 - 3000);
+	frames(2);
+	checkTrue("the status bar warns before it disarms", statusBar() != quiet);
+	checkTrue("and is still armed while warning", uiArmed());
+
+	// Past the window: disarmed, and the ESC told.
+	fakeAdvance(4000);
+	frames(2);
+	checkTrue("idle disarms", !uiArmed());
+	checkTrue("and the ESC is told", !fakeArmed());
+	checkInt("throttle zeroed", fakeThrottle(), 0);
+
+	// Touching resets the timer, so an operator who is present is not disarmed.
+	holdToArm();
+	for (int i = 0; i < 3; i++) {
+		fakeAdvance(IDLE_DISARM_MS - 2000);
+		frames(2);
+		tap(BTN_HOLD_X, BTN_ARM_Y);      // any touch counts
+		tap(BTN_HOLD_X, BTN_ARM_Y);      // and back off
+	}
+	checkTrue("touching keeps it armed", uiArmed());
+}
+
+/** @brief The pole count is clamped at both ends, and reaches the ESC. */
+static void testPoleCountReachesEsc() {
+	section("Safety: pole count");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	tap(BTN_CFG_X, BTN_ARM_Y);
+
+	checkInt("the ESC starts with the stored count", fakePoles(), settings()->poles);
+
+	tap(CFG_POLES_P_X, CFG_POLES_Y);
+	checkInt("a step reaches the ESC", fakePoles(), settings()->poles);
+
+	// All the way down: the lower clamp is the one nothing tested, and the
+	// eRPM conversion divides by poles/2.
+	fakePress(CFG_POLES_M_X, CFG_POLES_Y); frames(1);
+	for (int i = 0; i < 200; i++) { fakeHold(CFG_POLES_M_X, CFG_POLES_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkInt("never below the minimum", settings()->poles, MIN_MOTOR_POLES);
+	checkInt("and the ESC has that too", fakePoles(), MIN_MOTOR_POLES);
+
+	fakePress(CFG_POLES_P_X, CFG_POLES_Y); frames(1);
+	for (int i = 0; i < 200; i++) { fakeHold(CFG_POLES_P_X, CFG_POLES_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkInt("never above the maximum", settings()->poles, MAX_MOTOR_POLES);
+	checkInt("and the ESC has that too", fakePoles(), MAX_MOTOR_POLES);
+}
+
+/**
+ * @brief The RPM readout goes dead when the ESC stops answering.
+ *
+ * Deliberately its own test: testTelemetryExpires() excludes the RPM band from
+ * every comparison, because the fake serves a fixed packet rate that would mask
+ * the tiles. So nothing looked at the readout, and hardcoding telemetryAlive()
+ * to true -- which removes NO TELEMETRY and the dead-digit colour entirely --
+ * passed the suite.
+ */
+static void testRpmGoesDead() {
+	section("Safety: the RPM readout reports a dead link");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+
+	auto rpmBand = []() { return fakeRegionHash(0, 27, 240, 100); };
+
+	feedLiveTelemetry();
+	frames(2);
+	uint32_t live = rpmBand();
+
+	// Past ESC_LINK_STALE_MS with nothing new arriving.
+	fakeAdvance(ESC_LINK_STALE_MS + 200);
+	frames(2);
+	checkTrue("a dead link changes the RPM readout", rpmBand() != live);
+
+	// And it comes back.
+	feedLiveTelemetry();
+	frames(2);
+	checkTrue("and a live one restores it exactly", rpmBand() == live);
+}
+
+/** @brief Arming starts a log by itself, which is the shipped default. */
+static void testAutoLogOnArm() {
+	section("Safety: logging follows the arm state");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+
+	SdLogStatus st;
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Idle;          // a card is present and mounted
+	fakeSdLogSet(&st);
+	frames(2);
+	checkTrue("not logging before arming", !sdLogActive());
+
+	holdToArm();
+	frames(2);
+	// The existing manual-log test always hand-starts a log first, so
+	// SD_LOG_AUTO_ON_ARM -- the default -- had no positive test at all.
+	checkTrue("arming starts a log by itself", sdLogActive());
+
+	tap(BTN_ARM_X, BTN_ARM_Y);            // DISARM
+	frames(2);
+	checkTrue("and disarming stops it", !sdLogActive());
+}
+
+/** @brief Hit-testing is half-open: a button's far edge belongs to its neighbour. */
+static void testHitBoundaries() {
+	section("Safety: button edges");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	tap(BTN_CFG_X, BTN_ARM_Y);
+
+	// BTN_AM32 spans x 14..81; BTN_LOG starts at 86. x=82 is in the gap between
+	// them and must hit neither -- an inclusive far edge would make adjacent
+	// buttons overlap, and this row has three of them.
+	int beeps = fakeBeepRequests();
+	uint16_t polesBefore = settings()->poles;
+	tap(82, BTN_AM32_Y);
+	frames(2);
+	checkInt("a tap in the gap changes nothing", settings()->poles, polesBefore);
+	checkInt("and sends nothing", fakeBeepRequests(), beeps);
+
+	// BTN_POLES_M spans x 14..59, y 72..111. One past each far edge is outside.
+	tap(60, CFG_POLES_Y);
+	checkInt("one past the right edge misses", settings()->poles, polesBefore);
+	tap(CFG_POLES_M_X, 112);
+	checkInt("one past the bottom edge misses", settings()->poles, polesBefore);
+
+	// And the last pixel inside still hits.
+	tap(59, 111);
+	checkTrue("the last pixel inside still hits", settings()->poles != polesBefore);
+}
+
+/**
+ * @brief Reversing a relative drag at a rail responds immediately.
+ *
+ * The classic relative-control failure: without re-anchoring, travel past an
+ * end keeps accumulating and reversing does nothing until all of that phantom
+ * distance has been unwound.
+ */
+static void testRailReAnchor() {
+	section("Safety: relative drags re-anchor at the rails");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+	tap(BTN_HOLD_X, BTN_ARM_Y);           // HOLD: the gauge is relative
+
+	uint16_t ceiling = settings()->maxThrottle;
+
+	// Get to the ceiling first, and let go. One track width is exactly one
+	// ceiling of travel at 100 % sensitivity, so this leaves the throttle
+	// pinned with no overshoot yet.
+	fakePress(5, THR_Y); frames(1);
+	for (int x = 5; x <= 235; x += 5) { fakeHold(x, THR_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkInt("pinned at the ceiling", fakeThrottle(), ceiling);
+
+	// Now a second full-width drag from a throttle that is *already* at the
+	// rail. That is what generates real overshoot: without re-anchoring, the
+	// anchor keeps a whole ceiling of phantom travel, and reversing has to
+	// unwind all of it before anything moves. Starting from below the rail --
+	// which is what this test did at first -- overshoots by a single unit and
+	// proves nothing.
+	fakePress(5, THR_Y); frames(1);
+	for (int x = 5; x <= 235; x += 5) { fakeHold(x, THR_Y); frames(1); }
+	checkInt("still exactly at the ceiling", fakeThrottle(), ceiling);
+	for (int x = 235; x >= 205; x -= 5) { fakeHold(x, THR_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkTrue("a small reverse responds at once", fakeThrottle() < ceiling);
+	checkTrue("and not by collapsing to zero", fakeThrottle() > 0);
+
+	// Same at the bottom rail. The full width of the track, because at 100 %
+	// sensitivity that is exactly one ceiling of travel -- a shorter drag from a
+	// high starting throttle never reaches the rail at all, and would be testing
+	// nothing.
+	fakePress(235, THR_Y); frames(1);
+	for (int x = 235; x >= 5; x -= 5) { fakeHold(x, THR_Y); frames(1); }
+	for (int i = 0; i < 4; i++) { fakeHold(5, THR_Y); frames(1); }
+	checkInt("pinned at zero", fakeThrottle(), 0);
+	for (int x = 5; x <= 40; x += 5) { fakeHold(x, THR_Y); frames(1); }
+	fakeRelease(); frames(1);
+	checkTrue("a small push off the bottom responds at once", fakeThrottle() > 0);
+}
+
 void runUiTests() {
 	// Off zero before anything is stamped. Virtual time starts at 0, and 0 is
 	// reserved for "this frame type has never arrived" -- so telemetry stamped
@@ -1022,6 +1527,19 @@ void runUiTests() {
 	testKissDisplay();
 	testTelemetryExpires();
 	testSettingsCommandRow();
+
+	testArmInterlocks();
+	testIdleAutoDisarm();
+	testPoleCountReachesEsc();
+	testRpmGoesDead();
+	testAutoLogOnArm();
+	testHitBoundaries();
+	testRailReAnchor();
+	testDisarmButton();
+	testCeilingBindsInRelativeMode();
+	testDisarmedThrottleBackstop();
+	testFrameAction();
+	testEdtAutoRule();
 
 	testTapCancels();
 	testStepperRepeat();

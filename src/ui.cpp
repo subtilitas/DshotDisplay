@@ -1057,6 +1057,10 @@ static void handleMainTouch() {
 	} else if (!s_hold) {
 		s_throttle = 0;
 	}
+	// Unconditional backstop. Also unreachable today: every drag surface above
+	// is gated on s_armed, and every path that clears it zeroes the throttle on
+	// the way. It exists so that adding a surface which forgets to check cannot
+	// leave a throttle standing.
 	if (!s_armed) s_throttle = 0;
 
 	// --- arm button: press and hold ---
@@ -1079,6 +1083,13 @@ static void handleMainTouch() {
 				s_armPressing = true;
 				s_armPressStart = millis();
 			}
+			// Belt and braces, and currently unreachable: arming already
+			// requires ARM_HOLD_MS of holding, throughout which the throttle is
+			// necessarily zero, and ARM_HOLD_MS (1000) is longer than
+			// ARM_ZERO_THROTTLE_MS (250). It binds only if the hold is ever
+			// shortened below the window. Kept deliberately -- a mutation test
+			// confirms no test can reach it, which is a property of the
+			// constants rather than a gap in coverage.
 			bool zeroLongEnough =
 			    (uint32_t)(millis() - s_zeroSince) >= ARM_ZERO_THROTTLE_MS;
 			if (zeroLongEnough &&

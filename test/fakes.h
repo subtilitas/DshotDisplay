@@ -55,6 +55,12 @@ int fakeBeepRequests();
 /** @brief Write the current framebuffer to a binary PPM, for eyeballing. */
 void fakeDumpFrame(const char *name);
 
+/** @brief Pole count most recently pushed to the fake pump. */
+uint8_t fakePoles();
+
+/** @brief Set what escEdtRequested() reports. */
+void fakeSetEdtRequested(bool on);
+
 /** @brief Backlight level most recently driven. */
 uint8_t fakeBacklight();
 

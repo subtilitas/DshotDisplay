@@ -369,6 +369,9 @@ static void testEdtStaleness() {
 	t.stress = 77;
 	t.edtStressMs = 1;
 	t.warning = true;
+	t.alert   = true;
+	t.error   = true;
+	t.maxStress = 9;
 	t.edtStatusMs = 1;
 
 	escMerge(&t, 1 + 999, 500, 1000, &r);
@@ -378,6 +381,9 @@ static void testEdtStaleness() {
 	checkInt("stress value", r.stress, 77);
 	checkTrue("status fresh", r.statusFrom == EscSource::Edt);
 	checkTrue("warning flag survives", r.warning);
+	checkTrue("alert flag survives", r.alert);
+	checkTrue("error flag survives", r.error);
+	checkInt("max stress survives", r.maxStress, 9);
 	checkTrue("edtFresh set", r.edtFresh);
 
 	escMerge(&t, 1 + 1000, 500, 1000, &r);
@@ -394,6 +400,15 @@ static void testEdtStaleness() {
 	// indicator at all.
 	checkTrue("status source gone", r.statusFrom == EscSource::None);
 	checkTrue("warning not silently cleared to OK", !r.warning);
+	// All three status bits, not just the one. `warning` was the only flag any
+	// test asserted, so `alert` and `error` could each be made to survive expiry
+	// without a single check noticing -- and of the three, alert is the one that
+	// most matters to leave stuck on a screen after the ESC has gone.
+	checkTrue("nor is alert left set after expiry", !r.alert);
+	checkTrue("nor error", !r.error);
+	checkTrue("and the status source reads as absent",
+	          r.statusFrom == EscSource::None);
+	checkInt("with max stress cleared too", r.maxStress, 0);
 
 	// Expiry is per field: one frame type stopping does not blank the rest.
 	edtOnly(&t);

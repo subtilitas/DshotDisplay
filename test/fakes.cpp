@@ -186,18 +186,40 @@ bool fakeArmed() { return g_armed; }
 bool fakePinReturned() { return !g_suspended; }
 void fakeSetTelemetry(const EscTelemetry *t) { g_tel = *t; }
 
-void escSetThrottle(uint16_t t) { g_throttle = t; }
-void escSetArmed(bool a) { g_armed = a; }
-void escSetPoles(uint8_t) {}
+// These three mirror esc_task.cpp deliberately, clamp for clamp. They used not
+// to: escSetArmed() only set a flag, so "disarming zeroes the commanded
+// throttle" -- a rule production does enforce -- could not be observed by any
+// test, and escSetThrottle() had no clamp, so nothing checked the one in
+// production either.
+void escSetThrottle(uint16_t t) { g_throttle = t > 2000 ? 2000 : t; }
+void escSetArmed(bool a) {
+	if (!a) g_throttle = 0;
+	g_armed = a;
+}
+static uint8_t g_poles = 14;
+uint8_t fakePoles() { return g_poles; }
+void escSetPoles(uint8_t p) { g_poles = p < 2 ? 2 : p; }
 void escHeartbeat() {}
 // Mirrors the two-line rule in esc_task.cpp: the command is refused while
 // armed. esc_task.cpp cannot be linked here (PIO, UART), so this is a copy --
 // but the thing under test is what the UI does with the answer, and that is
 // the shipped code.
+// The counter now increments only when the command is actually queued, as
+// production does. Counting refused requests too meant a test asserting "the
+// button sent the command" passed for a request the ESC never saw.
 static int g_beepRequests = 0;
 int  fakeBeepRequests() { return g_beepRequests; }
-bool escRequestBeep(uint8_t) { g_beepRequests++; return !g_armed; }
-bool escEdtRequested() { return true; }
+bool escRequestBeep(uint8_t) {
+	if (g_armed) return false;
+	g_beepRequests++;
+	return true;
+}
+// Settable, because production only reports true once an ESC has answered and
+// been sent an enable -- so a hardcoded true made the DS600 chip's two states
+// indistinguishable and the settings screen's EDT indicator untestable.
+static bool g_edtRequested = true;
+void fakeSetEdtRequested(bool on) { g_edtRequested = on; }
+bool escEdtRequested() { return g_edtRequested; }
 // Verbatim, with no helpful stamping of arrival times. That stamping used to
 // be here, and it meant every test saw permanently fresh telemetry -- so the
 // bug where readings never expired could not have been caught by any of them.
