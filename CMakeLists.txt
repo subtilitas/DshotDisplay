@@ -172,6 +172,7 @@ target_link_libraries(DshotDisplay
     hardware_clocks
     hardware_flash
     hardware_sync
+    hardware_watchdog
     Pico_Bidir_DShot
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
