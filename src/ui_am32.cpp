@@ -12,6 +12,7 @@
 #include "am32_eeprom.h"
 #include "esc_task.h"
 #include "touch.h"
+#include "ui_input.h"
 #include "gfx.h"
 #include "config.h"
 
@@ -85,6 +86,15 @@ static bool     s_jumped = false;  /**< Optional low-hold jump already tried. */
 #endif
 static int      s_attempt = 0;     /**< Init strings sent since entering. */
 
+/**
+ * @brief Held-button repeat state for the editor bar.
+ *
+ * The rule itself lives in ui_input.h now, shared with the settings screen,
+ * which had no repeat at all until it was factored out -- getting the throttle
+ * ceiling from 20 % to 100 % was eight separate taps.
+ */
+static Repeat s_editRepeat;
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -109,12 +119,31 @@ static bool hit(int x, int y, int bx, int by, int bw, int bh) {
 	return x >= bx && x < bx + bw && y >= by && y < by + bh;
 }
 
+/**
+ * @brief Draw a button, optionally in its pressed state.
+ *
+ * Additive, exactly as on the main screens: a brighter frame and the label
+ * nudged, never a swapped fill, so no fill/foreground pairing can be broken by
+ * it. @see drawBtn() in ui.cpp
+ */
 static void button(int x, int y, int w, int h, const char *label,
-                   uint16_t fill, uint16_t fg) {
+                   uint16_t fill, uint16_t fg, bool pressed = false) {
 	gfxRoundRect(x, y, w, h, 5, fill);
-	gfxRoundFrame(x, y, w, h, 5, C_GRID);
-	gfxText(x + (w - gfxTextW(label, 1)) / 2, y + (h - 7) / 2, label, fg, 1);
+	gfxRoundFrame(x, y, w, h, 5, pressed ? C_INK : C_GRID);
+	if (pressed && w > 6 && h > 6)
+		gfxRoundFrame(x + 2, y + 2, w - 4, h - 4, 3, C_INK);
+	int d = pressed ? 1 : 0;
+	gfxText(x + d + (w - gfxTextW(label, 1)) / 2, y + d + (h - 7) / 2, label, fg, 1);
 }
+
+/** @brief True while a press that began inside this rectangle is still on it. */
+static bool pressingBtn(const TouchState *t, int x, int y, int w, int h) {
+	return t && t->down && hit(t->x, t->y, x, y, w, h) &&
+	       hit(t->downX, t->downY, x, y, w, h);
+}
+
+/** @brief Touch state for the frame being drawn. Set at the top of uiAm32Tick(). */
+static const TouchState *s_frameTouch = nullptr;
 
 // ---------------------------------------------------------------------------
 // drawing
@@ -140,7 +169,8 @@ static void drawHeader() {
 		gfxText(6, 26, s_status, C_DIM, 1);
 	}
 
-	button(GFX_W - 54, 8, 48, 30, "BACK", C_PANEL, C_TEXT);
+	button(GFX_W - 54, 8, 48, 30, "BACK", C_PANEL, C_TEXT,
+	       pressingBtn(s_frameTouch, GFX_W - 54, 8, 48, 30));
 }
 
 static void drawConnect() {
@@ -230,8 +260,10 @@ static void drawList() {
 	                           ? &AM32_FIELDS[s_selected] : nullptr;
 
 	if (sel && !s_hexView) {
-		button(BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H, "-", C_GRID, C_ONACCENT);
-		button(BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H, "+", C_GRID, C_ONACCENT);
+		button(BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H, "-", C_GRID, C_ONACCENT,
+		       pressingBtn(s_frameTouch, BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H));
+		button(BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H, "+", C_GRID, C_ONACCENT,
+		       pressingBtn(s_frameTouch, BTN_PLUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H));
 		// The label is worth the space: the buttons are far from the row they
 		// act on, so the bar has to say what it is editing.
 		int cx = BTN_MINUS_X + EDIT_BTN_W;
@@ -268,8 +300,10 @@ static void drawList() {
 	       dirty ? "HOLD TO WRITE" : "NO CHANGES",
 	       dirty ? writeFill : C_PANEL,
 	       dirty ? (s_writeHolding ? C_ONACCENT : C_TEXT) : C_GRID);
-	button(122, FOOT_Y, 52, FOOT_H, "REVERT", C_PANEL, dirty ? C_AMBER : C_GRID);
-	button(180, FOOT_Y, 54, FOOT_H, s_hexView ? "FIELDS" : "HEX", C_PANEL, C_CYAN);
+	button(122, FOOT_Y, 52, FOOT_H, "REVERT", C_PANEL, dirty ? C_AMBER : C_GRID,
+	       pressingBtn(s_frameTouch, 122, FOOT_Y, 52, FOOT_H));
+	button(180, FOOT_Y, 54, FOOT_H, s_hexView ? "FIELDS" : "HEX", C_PANEL, C_CYAN,
+	       pressingBtn(s_frameTouch, 180, FOOT_Y, 54, FOOT_H));
 }
 
 static void drawWriting() {
@@ -294,6 +328,7 @@ void uiAm32Enter() {
 	s_jumped = false;
 #endif
 	s_attempt = 0;
+	s_editRepeat = Repeat{};
 	am32BlSetBaud(AM32_LINK_BAUD);
 	snprintf(s_status, sizeof(s_status), "RELEASING DSHOT PIN");
 	memset(s_eeprom, 0, sizeof(s_eeprom));
@@ -399,22 +434,6 @@ static void doWrite() {
 	snprintf(s_status, sizeof(s_status), "WRITE VERIFIED");
 }
 
-/** @brief Held-button repeat state for the editor bar. */
-static int      s_repeatDir = 0;
-static uint32_t s_repeatStart = 0;
-static uint32_t s_repeatLast = 0;
-
-/**
- * @brief Repeat interval for a button held @p heldMs, in milliseconds.
- *
- * Accelerates, because the useful ranges are wide: PWM frequency spans 8..144
- * and motor KV 1..255, which is far too many presses at one step per tap.
- */
-static uint32_t repeatInterval(uint32_t heldMs) {
-	if (heldMs > 2500) return 25;
-	if (heldMs > 1200) return 60;
-	return 120;
-}
 
 static void handleListTouch(const TouchState *t) {
 	int x = t->x, y = t->y;
@@ -446,22 +465,13 @@ static void handleListTouch(const TouchState *t) {
 
 	if (t->down && sel && (onMinus || onPlus)) {
 		int dir = onMinus ? -1 : +1;
-		uint32_t now = millis();
-		if (t->pressed || s_repeatDir != dir) {
+		if (repeatFires(&s_editRepeat, dir, millis())) {
 			am32Adjust(sel, s_eeprom, dir);
-			s_repeatDir = dir;
-			s_repeatStart = now;
-			s_repeatLast = now;
-			s_redraw = true;
-		} else if (now - s_repeatStart > 400 &&
-		           now - s_repeatLast >= repeatInterval(now - s_repeatStart)) {
-			am32Adjust(sel, s_eeprom, dir);
-			s_repeatLast = now;
 			s_redraw = true;
 		}
 		return;
 	}
-	if (!t->down) s_repeatDir = 0;
+	if (!t->down) repeatFires(&s_editRepeat, 0, millis());
 
 	if (!t->pressed) return;
 
@@ -593,6 +603,11 @@ static void handleListGesture(const TouchState *t) {
 }
 
 bool uiAm32Tick(const TouchState *t) {
+	s_frameTouch = t;
+	// A pressed button has to repaint while it is held, and this screen only
+	// repaints when something asks it to.
+	if (t && t->down) s_redraw = true;
+
 	// BACK is drawn by drawHeader() in every state, so it has to be handled in
 	// every state. Doing it here rather than per-state stops it being a button
 	// that is visible but inert on whichever screen forgot to check for it.

@@ -88,6 +88,7 @@ add_executable(DshotDisplay
     src/ui.cpp
     src/ui_am32.cpp
     src/ui_setup.cpp
+    src/ui_input.cpp
     src/theme.cpp
     src/settings.cpp
     src/settings_flash.cpp
@@ -150,6 +151,21 @@ pico_add_extra_outputs(DshotDisplay)
 target_compile_options(DshotDisplay PRIVATE
     -Wall -Wextra -Wshadow -Wno-unused-parameter
 )
+
+# STRICT=ON adds -Werror, to this target only.
+#
+# Worth having as a switch rather than always-on: the only build that uses the
+# real arm-none-eabi toolchain had no -Werror at all, so any warning that only
+# the cross compiler produces -- the newlib %lu/uint32_t class of thing this
+# firmware has already been bitten by once -- was printed by CI and ignored.
+# The host permutation job cannot see those; it is a different compiler.
+#
+# Not the default, because a toolchain bump turning a new warning on should be
+# something you read, not something that breaks everyone's build.
+option(STRICT "Treat warnings as errors in this project's own sources" OFF)
+if(STRICT)
+    target_compile_options(DshotDisplay PRIVATE -Werror)
+endif()
 
 # Standalone SD bring-up test: nothing but the card, sweeping the SPI clock.
 # Built alongside the firmware because the whole value of it is being able to

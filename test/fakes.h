@@ -55,6 +55,15 @@ int fakeBeepRequests();
 /** @brief Write the current framebuffer to a binary PPM, for eyeballing. */
 void fakeDumpFrame(const char *name);
 
+/** @brief Backlight level most recently driven. */
+uint8_t fakeBacklight();
+
+/** @brief Lowest backlight level seen since fakeBacklightResetMin(). */
+uint8_t fakeBacklightMin();
+
+/** @brief Start watching for a new backlight minimum. */
+void fakeBacklightResetMin();
+
 /** @brief Erase the fake settings flash to 0xFF, as a blank part reads. */
 void fakeFlashClear();
 
