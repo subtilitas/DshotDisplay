@@ -173,8 +173,14 @@ brings out only GP28 (J4 pin 11) and GP29 (J4 pin 12), so those are the two
 choices there — and an ESC on the wrong one is simply silent, with no error
 anywhere, because nothing is listening on the pin you wired.
 
-That produces `build/DshotDisplay.uf2`. Hold **BOOT**, tap **RESET**, release **BOOT**,
-and copy it onto the drive that appears.
+That produces `build/DshotDisplay-touch-lcd-2.uf2`, or `-touch-lcd-2.8.uf2` for
+the other board — the board is in the filename because both builds used to
+produce the same one, and the two are not interchangeable. Hold **BOOT**, tap
+**RESET**, release **BOOT**, and copy it onto the drive that appears.
+
+Add `-DSTRICT=ON` to make warnings fatal for this project's own sources. CI
+does; it is off by default so that a toolchain bump turning on a new warning is
+something you read rather than something that breaks the build.
 
 Only the Cortex-M33 build is supported. The RP2350's Hazard3 RISC-V cores would work —
 the DShot library supports both — but nothing here is built or tested for them.
@@ -200,7 +206,10 @@ pinning is the point: an unpinned `FetchContent` is a lock file that silently re
 itself.
 
 Currently pinned: pico-sdk **2.1.1**, Pico_Bidir_DShot **1.0.2**,
-no-OS-FatFS-SD-SDIO-SPI-RPi-Pico **v3.6.2**.
+no-OS-FatFS-SD-SDIO-SPI-RPi-Pico **v3.6.2** — by commit SHA rather than by tag,
+with the tag in a comment beside each. A tag is a movable reference, and a
+pinned-by-tag dependency is the same silently-rewriting lock file as an unpinned
+one, just slower about it.
 
 Two notes on those dependencies, both of which cost an afternoon to work out:
 
@@ -293,7 +302,7 @@ and the badge changing colour in a corner is not.
 - **SD LOG** — blackbox logging status and manual start/stop. See below.
 - **SETUP** — which pins the ESC and telemetry wire are on, the DShot bitrate,
   high contrast, backlight, and the one button that writes all of it to flash.
-  See [Setup: wiring and display](#setup-wiring-and-display).
+  See below.
 - **UNSAVED** in the title bar means something on this screen or SETUP differs
   from what is stored. The button that stores it is on SETUP.
 
@@ -772,6 +781,13 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 | **Blackbox round-trip** | Encodes a log and decodes it with Betaflight's own `blackbox_decode`, comparing every value |
 | **Config permutations** | All 64 combinations of board, `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP`, `LCD_ROTATION`, `KISS_TELEM_ENABLE` and `SD_LOG_ENABLE`, warnings fatal |
 | **Doxygen** | Undocumented additions |
+| **Workflow lint** | `actionlint`, plus a duplicate-key check that PyYAML would otherwise let through and GitHub would not |
+
+The firmware job also asserts the image belongs to the board it claims: which
+touch driver was compiled in, read out of the DWARF line table because both
+drivers export exactly `touchInit` and `touchPoll` and the symbol table cannot
+tell them apart. It checks the size against a ceiling, and that `-DDSHOT_PIN`
+is honoured — a documented option CI had never once passed.
 
 The permutation job exists because those options are exactly the ones nobody compiles by
 hand. `check_docs.py` enforces documentation precisely — public API documented, `@param`
