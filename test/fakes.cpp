@@ -274,10 +274,12 @@ uint8_t escTaskDshotPin() { return g_dshotPin; }
 // ---------------------------------------------------------------------------
 static uint8_t g_flash[256];
 static bool    g_flashWritable = true;
+static int     g_flashWrites = 0;
 
 void fakeFlashClear() { memset(g_flash, 0xFF, sizeof(g_flash)); }
 void fakeFlashSetWritable(bool on) { g_flashWritable = on; }
 uint8_t *fakeFlashBytes() { return g_flash; }
+int fakeFlashWrites() { return g_flashWrites; }
 
 bool settingsStorageRead(void *dst, uint32_t len) {
 	if (len > sizeof(g_flash)) return false;
@@ -286,11 +288,29 @@ bool settingsStorageRead(void *dst, uint32_t len) {
 }
 
 bool settingsStorageWrite(const void *src, uint32_t len) {
+	// Counted even when refused: on the device the sector is erased before the
+	// program, so a write *attempt* is already wear and already the torn
+	// window. "How many attempts" is the number the no-op-save test cares
+	// about.
+	g_flashWrites++;
 	if (!g_flashWritable) return false;
 	if (len > sizeof(g_flash)) return false;
 	memcpy(g_flash, src, len);
 	return true;
 }
+
+// ---------------------------------------------------------------------------
+// Reboot
+//
+// platReboot() is how a saved board change takes effect. The tests assert both
+// directions -- a board change reboots, any other save must not -- so the fake
+// only counts.
+// ---------------------------------------------------------------------------
+static int g_reboots = 0;
+
+int fakeRebootCount() { return g_reboots; }
+
+extern "C" void watchdog_reboot(uint32_t, uint32_t, uint32_t) { g_reboots++; }
 
 // ---------------------------------------------------------------------------
 // Region fingerprint
@@ -309,6 +329,14 @@ uint32_t fakeRegionHash(int x, int y, int w, int h) {
 		}
 	}
 	return hash;
+}
+
+/** @brief Count framebuffer pixels of an exact colour. @see fakes.h */
+int fakeCountColour(uint16_t c) {
+	const uint16_t *fb = gfxBuffer();
+	int n = 0;
+	for (int i = 0; i < GFX_W * GFX_H; i++) if (fb[i] == c) n++;
+	return n;
 }
 
 // ---------------------------------------------------------------------------

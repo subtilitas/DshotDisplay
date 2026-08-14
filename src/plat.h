@@ -26,6 +26,20 @@
 
 #include "pico/stdlib.h"
 #include "pico/time.h"
+#include "hardware/watchdog.h"
+
+/**
+ * @brief Reboot the chip, now.
+ *
+ * A settings save that changes the stored *board* is applied by rebooting:
+ * display, touch and the DShot pump are all built from the board descriptor
+ * during setup(), and re-pointing them live has no non-hazardous
+ * implementation — the old board's hardware is still the hardware.
+ * The host suite fakes this and counts the calls.
+ */
+static inline void platReboot() {
+	watchdog_reboot(0, 0, 0);
+}
 
 /**
  * @brief Milliseconds since boot.

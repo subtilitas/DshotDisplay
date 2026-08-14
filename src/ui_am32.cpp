@@ -436,12 +436,14 @@ static void doWrite() {
 
 
 static void handleListTouch(const TouchState *t) {
-	int x = t->x, y = t->y;
-
 	// --- write button: needs every frame, including finger-off, to time the
-	//     hold and to cancel it the moment the finger moves away ---
+	//     hold and to cancel it the moment the finger moves away. Press-origin
+	//     gated (inputPressing), so a drag that strays in from the list cannot
+	//     start a hold it never announced -- the drawn pressed state already
+	//     required the press to begin on the button, and firing has to agree
+	//     with feedback ---
 	bool dirty = anyDirty();
-	if (dirty && t->down && hit(x, y, 6, FOOT_Y, 110, FOOT_H)) {
+	if (dirty && inputPressing(t, 6, FOOT_Y, 110, FOOT_H)) {
 		if (!s_writeHolding) { s_writeHolding = true; s_writeHoldStart = millis(); }
 		if (millis() - s_writeHoldStart >= WRITE_HOLD_MS) {
 			s_writeHolding = false;
@@ -456,14 +458,17 @@ static void handleListTouch(const TouchState *t) {
 		s_writeHolding = false;
 	}
 
-	// --- editor bar: also needs every frame, to drive hold-to-repeat ---
+	// --- editor bar: also needs every frame, to drive hold-to-repeat.
+	//     Same press-origin rule: a swipe on the bottom list row that slid
+	//     less than one row height used to keep the selection *and* step it
+	//     the moment the finger crossed into the bar ---
 	const Am32Field *sel = (!s_hexView && s_selected >= 0 &&
 	                        s_selected < (int)AM32_FIELD_COUNT)
 	                           ? &AM32_FIELDS[s_selected] : nullptr;
-	bool onMinus = hit(x, y, BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H);
-	bool onPlus  = hit(x, y, BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H);
+	bool onMinus = inputPressing(t, BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H);
+	bool onPlus  = inputPressing(t, BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H);
 
-	if (t->down && sel && (onMinus || onPlus)) {
+	if (sel && (onMinus || onPlus)) {
 		int dir = onMinus ? -1 : +1;
 		if (repeatFires(&s_editRepeat, dir, millis())) {
 			am32Adjust(sel, s_eeprom, dir);
@@ -473,34 +478,32 @@ static void handleListTouch(const TouchState *t) {
 	}
 	if (!t->down) repeatFires(&s_editRepeat, 0, millis());
 
-	if (!t->pressed) return;
-
-	// --- discrete taps, dispatched strictly by band ---
-	//
-	// Each band returns. A press in the editor bar must never fall through to
-	// the row-selection code beneath it: that is what made the buttons select
-	// whichever list entry happened to sit behind them.
-	if (y >= FOOT_Y) {
-		if (hit(x, y, 122, FOOT_Y, 52, FOOT_H)) {
-			memcpy(s_eeprom, s_original, sizeof(s_eeprom));
-			s_redraw = true;
-		} else if (hit(x, y, 180, FOOT_Y, 54, FOOT_H)) {
-			s_hexView = !s_hexView;
-			s_scroll = 0;
+	// --- row selection stays on touch-down, deliberately: it is the one
+	//     non-destructive action here, and the gesture handler anchors on the
+	//     selected field at press time so press-and-swipe adjusts the row the
+	//     finger actually landed on ---
+	if (t->pressed && !s_hexView &&
+	    t->y >= LIST_Y0 && t->y <= LIST_Y1) {
+		int slot = (t->y - LIST_Y0) / ROW_H;
+		int idx = s_scroll + slot;
+		if (idx < (int)s_visibleCount) {
+			// Tapping a row only selects it; the value changes from the bar.
+			s_selected = (int)s_visible[idx];
 			s_redraw = true;
 		}
-		return;
 	}
-	if (y >= EDIT_Y) return;                       // editor bar, handled above
-	if (s_hexView || y < LIST_Y0 || y > LIST_Y1) return;
 
-	int slot = (y - LIST_Y0) / ROW_H;
-	int idx = s_scroll + slot;
-	if (idx >= (int)s_visibleCount) return;
-
-	// Tapping a row only selects it; the value changes from the editor bar.
-	s_selected = (int)s_visible[idx];
-	s_redraw = true;
+	// --- destructive taps fire on release, inside, having started inside, so
+	//     a mis-tap can slide off. REVERT throws away every unsaved edit; it
+	//     used to do so on touch-down ---
+	if (inputTapped(t, 122, FOOT_Y, 52, FOOT_H)) {
+		memcpy(s_eeprom, s_original, sizeof(s_eeprom));
+		s_redraw = true;
+	} else if (inputTapped(t, 180, FOOT_Y, 54, FOOT_H)) {
+		s_hexView = !s_hexView;
+		s_scroll = 0;
+		s_redraw = true;
+	}
 }
 
 /**
@@ -604,14 +607,16 @@ static void handleListGesture(const TouchState *t) {
 
 bool uiAm32Tick(const TouchState *t) {
 	s_frameTouch = t;
-	// A pressed button has to repaint while it is held, and this screen only
-	// repaints when something asks it to.
-	if (t && t->down) s_redraw = true;
+	// A pressed button has to repaint while it is held -- and once more on the
+	// release frame, or the pressed look outlives the finger -- and this
+	// screen only repaints when something asks it to.
+	if (t && (t->down || t->released)) s_redraw = true;
 
 	// BACK is drawn by drawHeader() in every state, so it has to be handled in
 	// every state. Doing it here rather than per-state stops it being a button
 	// that is visible but inert on whichever screen forgot to check for it.
-	if (t->pressed && hit(t->x, t->y, GFX_W - 54, 8, 48, 30)) {
+	// On release, like every navigation tap.
+	if (inputTapped(t, GFX_W - 54, 8, 48, 30)) {
 		s_leaving = true;
 		uiAm32Exit();
 		return false;
@@ -651,7 +656,7 @@ bool uiAm32Tick(const TouchState *t) {
 				drawWriting();
 				doWrite();
 				s_redraw = true;
-			} else if (t->pressed && hit(t->x, t->y, 70, 200, 100, 36)) {
+			} else if (inputTapped(t, 70, 200, 100, 36)) {
 				s_state = S_LIST;
 				s_redraw = true;
 			}

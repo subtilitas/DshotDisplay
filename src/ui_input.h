@@ -39,6 +39,35 @@ struct Repeat {
 };
 
 /**
+ * @brief True while a rectangle is being touched by a press that began in it.
+ *
+ * Both halves matter. Without the current position a finger that slid off
+ * still looks held; without the start position a finger that slid *on* from
+ * elsewhere looks pressed and would fire on release. Shared here because each
+ * screen having its own version is how the setup and AM32 screens quietly
+ * kept firing on touch-down after the main screen stopped.
+ *
+ * @param t       This frame's touch snapshot.
+ * @param x,y,w,h The rectangle.
+ * @return true while pressed, for pressed-state drawing and held repeats.
+ */
+bool inputPressing(const TouchState *t, int x, int y, int w, int h);
+
+/**
+ * @brief True on the frame a tap of a rectangle completes.
+ *
+ * Released inside, having started inside. This is the escape hatch: firing on
+ * touch-down means a mis-tap has already happened by the time you notice it;
+ * firing on release means sliding a finger off the button cancels, which is
+ * what every touch UI does and therefore what nobody has to be told.
+ *
+ * @param t       This frame's touch snapshot.
+ * @param x,y,w,h The rectangle.
+ * @return true exactly once per completed tap.
+ */
+bool inputTapped(const TouchState *t, int x, int y, int w, int h);
+
+/**
  * @brief Whether a held stepper should apply a step this frame.
  *
  * Fires once immediately on press, then pauses, then repeats at an accelerating
