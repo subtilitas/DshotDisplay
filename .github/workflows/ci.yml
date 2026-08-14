@@ -32,6 +32,12 @@ jobs:
           - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8,
               touch: cst328, other_touch: cst816, label: "RP2350-TOUCH-LCD-2.8",
               altpin: 28 }
+          # The image that drives either board. Both touch drivers and both
+          # descriptors are compiled in, so the "other driver must be absent"
+          # assertion below is skipped for it -- other_touch is empty.
+          - { slug: "unified", id: BOARD_UNIFIED,
+              touch: cst816, other_touch: "", label: "RP2350-TOUCH-LCD-2",
+              altpin: 10 }
     steps:
       - uses: actions/checkout@v4
 
@@ -127,9 +133,22 @@ jobs:
             echo "::error::$want was not compiled into this image (found: $files)"
             exit 1
           fi
-          if printf '%s\n' "$files" | grep -qx "$other"; then
+          if [ -n "$other" ] && printf '%s\n' "$files" | grep -qx "$other"; then
             echo "::error::$other is in this image too"
             exit 1
+          fi
+          # The unified image is the one that must contain *both*, and both
+          # board labels with it -- that is the whole claim it makes.
+          if [ "${{ matrix.board.slug }}" = "unified" ]; then
+            for f in cst816.cpp cst328.cpp; do
+              printf '%s\n' "$files" | grep -qx "$f" || {
+                echo "::error::unified image is missing $f"; exit 1; }
+            done
+            for l in RP2350-TOUCH-LCD-2 RP2350-TOUCH-LCD-2.8; do
+              strings "$elf" | grep -qx "$l" || {
+                echo "::error::unified image is missing the $l label"; exit 1; }
+            done
+            echo "unified: both drivers and both labels present"
           fi
 
           # Exact match. "RP2350-TOUCH-LCD-2" is a prefix of the 2.8" label, so

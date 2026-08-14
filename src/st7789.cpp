@@ -4,7 +4,7 @@
  */
 
 #include "st7789.h"
-#include "board_pins.h"
+#include "board_desc.h"
 #include "config.h"
 #include "gfx.h"
 
@@ -15,7 +15,14 @@
 #include <hardware/dma.h>
 #include <hardware/gpio.h>
 
-#define LCD_SPI LCD_SPI_PORT
+/**
+ * @brief The panel's SPI instance, from the active board descriptor.
+ *
+ * spi0 on the 2.0", spi1 on the 2.8". A macro rather than a cached pointer so
+ * that selecting a board before st7789Init() is all it takes -- there is no
+ * second place to remember to update.
+ */
+#define LCD_SPI ((spi_inst_t *)g_board->lcdSpi)
 
 static int s_dma = -1; /**< DMA channel claimed for pixel transfers. */
 
@@ -44,22 +51,22 @@ static inline void spiFormat16() {
 /** @brief Send a single command byte with DC low. */
 static void cmd(uint8_t c) {
 	spiFormat8();
-	gpio_put(PIN_LCD_DC, 0);
-	gpio_put(PIN_LCD_CS, 0);
+	gpio_put(g_board->lcdDc, 0);
+	gpio_put(g_board->lcdCs, 0);
 	spi_write_blocking(LCD_SPI, &c, 1);
 	spiWait();
-	gpio_put(PIN_LCD_CS, 1);
+	gpio_put(g_board->lcdCs, 1);
 }
 
 /** @brief Send @p n parameter bytes with DC high. */
 static void data(const uint8_t *d, size_t n) {
 	if (!n) return;
 	spiFormat8();
-	gpio_put(PIN_LCD_DC, 1);
-	gpio_put(PIN_LCD_CS, 0);
+	gpio_put(g_board->lcdDc, 1);
+	gpio_put(g_board->lcdCs, 0);
 	spi_write_blocking(LCD_SPI, d, n);
 	spiWait();
-	gpio_put(PIN_LCD_CS, 1);
+	gpio_put(g_board->lcdCs, 1);
 }
 
 /** @brief Send a command followed by its parameters. */
@@ -88,24 +95,25 @@ static uint8_t madctlFor(int rotation) {
 
 void st7789Init() {
 	// --- GPIO ---
-	gpio_init(PIN_LCD_DC);  gpio_set_dir(PIN_LCD_DC, GPIO_OUT);  gpio_put(PIN_LCD_DC, 1);
-	gpio_init(PIN_LCD_CS);  gpio_set_dir(PIN_LCD_CS, GPIO_OUT);  gpio_put(PIN_LCD_CS, 1);
-	gpio_init(PIN_LCD_RST); gpio_set_dir(PIN_LCD_RST, GPIO_OUT); gpio_put(PIN_LCD_RST, 1);
+	gpio_init(g_board->lcdDc);  gpio_set_dir(g_board->lcdDc, GPIO_OUT);  gpio_put(g_board->lcdDc, 1);
+	gpio_init(g_board->lcdCs);  gpio_set_dir(g_board->lcdCs, GPIO_OUT);  gpio_put(g_board->lcdCs, 1);
+	gpio_init(g_board->lcdRst); gpio_set_dir(g_board->lcdRst, GPIO_OUT); gpio_put(g_board->lcdRst, 1);
 
-	// --- SPI0 ---
+	// --- panel SPI, whichever instance this board uses ---
 	spi_init(LCD_SPI, LCD_SPI_HZ);
 	spi_set_format(LCD_SPI, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-	gpio_set_function(PIN_LCD_SCK,  GPIO_FUNC_SPI);
-	gpio_set_function(PIN_LCD_MOSI, GPIO_FUNC_SPI);
+	gpio_set_function(g_board->lcdSck,  GPIO_FUNC_SPI);
+	gpio_set_function(g_board->lcdMosi, GPIO_FUNC_SPI);
 
 	// --- DMA ---
 	if (s_dma < 0) s_dma = dma_claim_unused_channel(true);
 
-	// --- hardware reset (note: this also resets the CST816D touch chip,
-	//     the two RESET lines are the same net on this board) ---
-	gpio_put(PIN_LCD_RST, 1); delay(20);
-	gpio_put(PIN_LCD_RST, 0); delay(20);
-	gpio_put(PIN_LCD_RST, 1); delay(120);
+	// --- hardware reset. On the 2.0" this is the same net as the touch chip's
+	//     reset, which is why touchInit() must follow this; the 2.8" separates
+	//     them and its driver pulses its own. @see BoardDesc::tpRstSharedWithLcd
+	gpio_put(g_board->lcdRst, 1); delay(20);
+	gpio_put(g_board->lcdRst, 0); delay(20);
+	gpio_put(g_board->lcdRst, 1); delay(120);
 
 	cmd(0x01);            // SWRESET
 	delay(150);
@@ -150,8 +158,8 @@ void st7789Init() {
 	//
 	// clk_sys is 150 MHz. Wrap 255 gives an 8-bit duty range to match the
 	// existing API, so the divider is 150e6 / (20e3 * 256) = 29.3.
-	gpio_set_function(PIN_LCD_BL, GPIO_FUNC_PWM);
-	unsigned slice = pwm_gpio_to_slice_num(PIN_LCD_BL);
+	gpio_set_function(g_board->lcdBl, GPIO_FUNC_PWM);
+	unsigned slice = pwm_gpio_to_slice_num(g_board->lcdBl);
 	pwm_config cfg = pwm_get_default_config();
 	pwm_config_set_clkdiv(&cfg, (float)clock_get_hz(clk_sys) / (20000.0f * 256.0f));
 	pwm_config_set_wrap(&cfg, 255);
@@ -161,7 +169,7 @@ void st7789Init() {
 }
 
 void st7789SetBacklight(uint8_t level) {
-	pwm_set_gpio_level(PIN_LCD_BL, level);
+	pwm_set_gpio_level(g_board->lcdBl, level);
 }
 
 void st7789Sleep(bool on) {
@@ -188,8 +196,8 @@ void st7789Blit(int x0, int y0, int x1, int y1, const uint16_t *pixels) {
 	cmd(0x2C);                                         // RAMWR
 
 	spiFormat16();
-	gpio_put(PIN_LCD_DC, 1);
-	gpio_put(PIN_LCD_CS, 0);
+	gpio_put(g_board->lcdDc, 1);
+	gpio_put(g_board->lcdCs, 0);
 
 	dma_channel_config c = dma_channel_get_default_config(s_dma);
 	channel_config_set_transfer_data_size(&c, DMA_SIZE_16);
@@ -202,7 +210,7 @@ void st7789Blit(int x0, int y0, int x1, int y1, const uint16_t *pixels) {
 	dma_channel_wait_for_finish_blocking(s_dma);
 
 	spiWait();
-	gpio_put(PIN_LCD_CS, 1);
+	gpio_put(g_board->lcdCs, 1);
 	spiFormat8();
 }
 

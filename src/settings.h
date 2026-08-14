@@ -33,6 +33,8 @@
 
 #include <stdint.h>
 
+#include "board_desc.h"
+
 /** @brief Identifies a settings block. ASCII "DSHT". */
 #define SETTINGS_MAGIC   0x44534854u
 
@@ -43,10 +45,18 @@
  * discarded entirely rather than migrated — see @ref settingsLoad() for why
  * that is the safe direction here.
  */
-#define SETTINGS_VERSION 1
+#define SETTINGS_VERSION 2
 
 /** @brief The persisted settings. */
 struct Settings {
+	/**
+	 * @brief Which board this is, one of @ref board_desc_ids.
+	 *
+	 * @ref BOARD_ID_UNSET until the user has been asked. A unified image asks
+	 * once, on its first boot, and never again; a single-board image fills this
+	 * in for itself, because there is nothing to ask.
+	 */
+	uint8_t  boardId;
 	uint8_t  dshotPin;     /**< GPIO carrying the ESC signal wire. */
 	uint16_t dshotKbaud;   /**< DShot bitrate: 150, 300, 600 or 1200. */
 	uint8_t  kissEnable;   /**< Non-zero to claim a UART for KISS telemetry. */

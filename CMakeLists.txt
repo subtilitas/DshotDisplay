@@ -38,7 +38,7 @@ option(SD_DEBUG "Enable verbose SD driver logging over USB serial" OFF)
 # entirely -- SPI on the 2.0", PIO SDIO on the 2.8".
 set(BOARD "BOARD_RP2350_TOUCH_LCD_2" CACHE STRING "Target board")
 set_property(CACHE BOARD PROPERTY STRINGS
-    BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8)
+    BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8 BOARD_UNIFIED)
 
 # Which GPIO the ESC signal wire lands on. Empty means "whatever board_pins.h
 # defaults to" -- GP4 on the 2.0", GP29 on the 2.8". Set it when the wire is
@@ -120,6 +120,10 @@ add_executable(DshotDisplay
     src/st7789.cpp
     src/cst816.cpp
     src/cst328.cpp
+    src/touch.cpp
+    src/board_desc.cpp
+    src/board_desc_lcd2.cpp
+    src/board_desc_lcd2_8.cpp
     src/esc_task.cpp
     src/am32_bl.cpp
     src/am32_eeprom.cpp
@@ -173,6 +177,8 @@ pico_enable_stdio_uart(DshotDisplay 0)
 # release workflow were already renaming these by hand, which was the tell.
 if(BOARD STREQUAL "BOARD_RP2350_TOUCH_LCD_2_8")
     set(BOARD_SLUG "touch-lcd-2.8")
+elseif(BOARD STREQUAL "BOARD_UNIFIED")
+    set(BOARD_SLUG "unified")
 else()
     set(BOARD_SLUG "touch-lcd-2")
 endif()

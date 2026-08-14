@@ -52,6 +52,7 @@ jobs:
         board:
           - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
           - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
+          - { slug: "unified",       id: BOARD_UNIFIED }
     steps:
       # ref: is load-bearing for workflow_dispatch. Without it a manual run
       # checks out the branch it was launched from and attaches binaries built
@@ -178,6 +179,19 @@ jobs:
              USB drive.
           2. Copy the `.uf2` onto it. The board reboots into the new firmware.
 
+          ## Which image
+
+          | File | Use it when |
+          |---|---|
+          | `DshotDisplay-VERSION-unified.uf2` | **Start here.** Runs on either board; the first boot asks which one you have and remembers the answer, under **CFG → SETUP** |
+          | `DshotDisplay-VERSION-touch-lcd-2.uf2` | The 2.0" board only. A few kB smaller, and never asks |
+          | `DshotDisplay-VERSION-touch-lcd-2.8.uf2` | The 2.8" board only |
+
+          The unified image costs about 3 kB of flash over a single-board one,
+          against 4 MB available. Take it unless you have a reason not to: the
+          single-board images are indistinguishable once flashed, and the 2.8"
+          one asserts a power latch the 2.0" does not.
+
           ## Wiring
 
           | ESC | 2.0" board | 2.8" board |
@@ -238,6 +252,7 @@ jobs:
           # the guard would have passed a release with no firmware in it.
           for want in "DshotDisplay-${TAG}-touch-lcd-2.uf2" \
                       "DshotDisplay-${TAG}-touch-lcd-2.8.uf2" \
+                      "DshotDisplay-${TAG}-unified.uf2" \
                       "SHA256SUMS.txt"; do
             echo "$assets" | grep -qxF "$want" || {
               echo "::error::no asset named '$want' on $TAG"; exit 1; }

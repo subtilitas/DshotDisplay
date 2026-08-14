@@ -9,7 +9,7 @@
 #include "log_ring.h"
 #include "esc_task.h"
 #include "esc_merge.h"
-#include "board_pins.h"
+#include "board_desc.h"
 
 #include "plat.h"
 #include "ff.h"
@@ -84,6 +84,11 @@ static const char *drivePrefix() {
 }
 
 bool sdLogBegin() {
+	// Push this board's SD wiring into the driver's structs first. They are
+	// filled at run time now, because the two boards use different interfaces
+	// entirely and a unified image carries both.
+	sdHwConfigApply();
+
 	// Pins come from sd_hw_config.c, which the driver reads at link time.
 	// Mounting is the only way to find out whether a card is fitted: this board
 	// brings no card-detect line out.

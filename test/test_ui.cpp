@@ -12,6 +12,7 @@
 #include "fakes.h"
 #include "settings.h"
 #include "ui_input.h"
+#include "board_desc.h"
 #include "gfx.h"
 #include "ui.h"
 #include "touch.h"
@@ -533,17 +534,19 @@ static void testSettingsCommandRow() {
 #define SET_MINUS_X 168   // BTN_M_X 148 + BTN_W 40 -> centre 168
 #define SET_PLUS_X  212   // BTN_P_X 192 + BTN_W 40 -> centre 212
 #define SET_TOGGLE_X 190  // the wide toggle spans 148..231
-#define SET_R_PIN     57  // R_PIN 44, ROW_H 26
-#define SET_R_SPEED   87
-#define SET_R_KISS   117
-#define SET_R_KISSPIN 147
-#define SET_R_CONTRAST 191
-#define SET_R_BACKLIGHT 221
-#define SET_SAVE_X    83  // SAVE_X 8, SAVE_W 150
-#define SET_SAVE_Y   286  // FOOT_Y 266, FOOT_H 40
-#define SET_RESET_X  198
+// One fixed layout: seven rows from R_BOARD 36 at a 26 px pitch, ROW_H 24.
+#define SET_R_BOARD    48
+#define SET_R_PIN      74
+#define SET_R_SPEED   100
+#define SET_R_KISS    126
+#define SET_R_KISSPIN 152
+#define SET_R_CONTRAST 178
+#define SET_R_BACKLIGHT 204
+#define SET_SAVE_X     83  // SAVE_X 8, SAVE_W 150
+#define SET_SAVE_Y    274  // FOOT_Y 254, FOOT_H 40
+#define SET_RESET_X   198
 #define SAVE_BAR_X     8   // progress bar spans SAVE_X..+SAVE_W
-#define SAVE_BAR_Y   262   // FOOT_Y - 4
+#define SAVE_BAR_Y   250   // FOOT_Y - 4
 
 /** @brief Walk from the main screen into CFG, then into SETUP. */
 static void enterSetup() {
@@ -1357,6 +1360,82 @@ static void testRailReAnchor() {
 	checkTrue("a small push off the bottom responds at once", fakeThrottle() > 0);
 }
 
+
+/**
+ * @brief The board picker, on images that carry more than one board.
+ *
+ * Compiled everywhere and meaningful only in a unified build, which is the
+ * point: `make both` runs this for the single-board images too, and the
+ * assertions below are the ones that must hold either way.
+ */
+static void testBoardSelection() {
+	section("Board: selection");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+
+	checkTrue("a board is always selected", g_board != nullptr);
+	checkTrue("with a label", g_board->label && g_board->label[0]);
+	checkTrue("and at least one free GPIO", g_board->freeGpioMask != 0);
+	checkTrue("whose default ESC pin is one of them",
+	          settingsPinFree(g_board->defaultDshotPin));
+
+	// Every board this image carries must be internally consistent. A
+	// descriptor that names a pin outside its own free mask would make the
+	// SETUP screen's steppers unable to return to their starting point.
+	for (int i = 0; i < boardCount(); i++) {
+		const BoardDesc *b = boardAt(i);
+		checkTrue("descriptor is present", b != nullptr);
+		if (!b) continue;
+		checkTrue("its default ESC pin is in its own free mask",
+		          (b->freeGpioMask >> b->defaultDshotPin) & 1u);
+		checkTrue("it names a touch driver", b->touch && b->touch->init && b->touch->poll);
+		checkTrue("and an id that selects it", boardSelect(boardIdAt(i)));
+	}
+	boardSelect(settings()->boardId ? settings()->boardId : boardIdAt(0));
+
+	if (boardCount() < 2) {
+		checkTrue("single-board image: nothing to pick", boardCount() == 1);
+		return;
+	}
+
+	// --- unified only, from here ---
+	enterSetup();
+	uint8_t first = boardId();
+	tap(SET_TOGGLE_X, SET_R_BOARD);
+	checkTrue("tapping the board row changes board", boardId() != first);
+	checkInt("and the setting follows", settings()->boardId, boardId());
+
+	// The pins must be this board's, not the previous one's. Carrying them
+	// across would name GPIOs the new board does not offer, and they would then
+	// be repaired one at a time by validation -- silently, and to values the
+	// user never chose.
+	checkTrue("the ESC pin is free on the new board",
+	          settingsPinFree(settings()->dshotPin));
+	checkInt("and is that board's default",
+	         settings()->dshotPin, g_board->defaultDshotPin);
+
+	// Cycling all the way round returns to where it started.
+	for (int i = 1; i < boardCount(); i++) tap(SET_TOGGLE_X, SET_R_BOARD);
+	checkInt("cycling wraps back to the first", boardId(), first);
+
+	// And the choice survives a save and reload.
+	tap(SET_TOGGLE_X, SET_R_BOARD);
+	uint8_t chosen = boardId();
+	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
+	for (int i = 0; i < 60; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	fakeRelease(); frames(2);
+	settingsLoad();
+	checkInt("the board choice persists", settings()->boardId, chosen);
+	checkInt("and is applied on load", boardId(), chosen);
+
+	fakeFlashClear();
+	settingsLoad();
+	boardSelect(boardIdAt(0));
+}
+
 void runUiTests() {
 	// Off zero before anything is stamped. Virtual time starts at 0, and 0 is
 	// reserved for "this frame type has never arrived" -- so telemetry stamped
@@ -1528,6 +1607,7 @@ void runUiTests() {
 	testTelemetryExpires();
 	testSettingsCommandRow();
 
+	testBoardSelection();
 	testArmInterlocks();
 	testIdleAutoDisarm();
 	testPoleCountReachesEsc();

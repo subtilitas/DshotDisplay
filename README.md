@@ -42,10 +42,21 @@ UI has hung and forces throttle to zero on its own.
 
 **Boards:** [RP2350-Touch-LCD-2](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2) (2.0") and
 [RP2350-Touch-LCD-2.8](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8). Both are
-240x320 portrait, and the firmware is built for one or the other with
-`-DBOARD=...`. They are not interchangeable: different SPI instance for the
+240x320 portrait. They share almost nothing else: different SPI instance for the
 panel, different I2C, a different touch controller (CST816D vs CST328), and a
 different SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
+
+**One image runs on both.** Build with `-DBOARD=BOARD_UNIFIED` — or take the
+`unified` release asset — and the board is a setting rather than a build option:
+the first boot asks which one you have, under **CFG → SETUP**, and remembers.
+It costs about 3 kB of flash against the 4 MB available, and it removes the
+failure this project could not otherwise design away — the two single-board
+images are indistinguishable once flashed, and the 2.8" one asserts a power
+latch the 2.0" does not.
+
+The single-board builds remain (`-DBOARD=BOARD_RP2350_TOUCH_LCD_2` and
+`..._2_8`), are slightly smaller, and are still built by CI. They are also what
+keeps the preprocessor path from rotting.
 
 The 2.0" is an RP2350A with 16 MB flash, a 240×320 IPS panel (ST7789T3 over
 SPI), CST816D capacitive touch, a QMI8658 IMU and a LiPo charger. The 2.8" is
@@ -161,11 +172,13 @@ cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s .
 ninja -C build
 ```
 
-Two build options worth knowing:
+Build options worth knowing:
 
 ```sh
--DBOARD=BOARD_RP2350_TOUCH_LCD_2_8   # the 2.8" board; default is the 2.0"
--DDSHOT_PIN=28                        # ESC on a different GPIO than the default
+-DBOARD=BOARD_UNIFIED                # one image for both boards
+-DBOARD=BOARD_RP2350_TOUCH_LCD_2_8   # the 2.8" board only; default is the 2.0"
+-DDSHOT_PIN=28                       # the ESC pin a blank board starts on
+-DSTRICT=ON                          # warnings fatal, for this project's sources
 ```
 
 `DSHOT_PIN` defaults to **GP4** on the 2.0" and **GP29** on the 2.8". The 2.8"
@@ -699,9 +712,12 @@ src/
   settings.{h,cpp}      the persisted subset: rules, validation, fallback (pure)
   settings_flash.cpp    the one flash sector those live in
   theme.{h,cpp}         the two palettes and the stroke weights
-  board.h               which board this build targets
-  board_pins.h          dispatches to the per-board pin map
+  board.h               which board(s) this build can drive
+  board_pins.h          dispatches to the per-board pin map (single-board builds)
   board_rp2350_touch_lcd_2{,_8}.h   the pin maps themselves
+  board_desc.{h,cpp}    the board as data, so one image can drive either
+  board_desc_lcd2{,_8}.cpp  one descriptor each, one board header each
+  touch.cpp             dispatches to whichever touch driver the board names
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
@@ -807,6 +823,7 @@ checksums them, and publishes a GitHub Release with the images attached.
 Assets per release:
 
 ```
+DshotDisplay-v1.0.0-unified.uf2        <- runs on either board
 DshotDisplay-v1.0.0-touch-lcd-2.uf2
 DshotDisplay-v1.0.0-touch-lcd-2.8.uf2
 SHA256SUMS.txt
