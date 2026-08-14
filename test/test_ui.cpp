@@ -15,6 +15,7 @@
 #include "board_desc.h"
 #include "gfx.h"
 #include "ui.h"
+#include "ui_setup.h"
 #include "touch.h"
 #include "esc_task.h"
 #include "esc_merge.h"
@@ -1402,38 +1403,195 @@ static void testBoardSelection() {
 	}
 
 	// --- unified only, from here ---
+	//
+	// A board choice is *pending* until saved: display, touch and the pump
+	// wiring are all built from the live descriptor during boot, and
+	// re-pointing any of them at hardware that is not there wedges the screen
+	// and drives outputs into other chips' pins. So the tap may change the
+	// settings and nothing else, and the save becomes the answer by rebooting.
 	enterSetup();
-	uint8_t first = boardId();
+	uint8_t live = boardId();
+	uint8_t pumpPin = escTaskDshotPin();
+	int configures = fakeConfigureCount();
 	tap(SET_TOGGLE_X, SET_R_BOARD);
-	checkTrue("tapping the board row changes board", boardId() != first);
-	checkInt("and the setting follows", settings()->boardId, boardId());
+	checkTrue("tapping the board row changes the choice",
+	          settings()->boardId != live);
+	checkInt("but never the live board", boardId(), live);
+	checkInt("and never the pump's pin", escTaskDshotPin(), pumpPin);
+	checkInt("nor rebuilds the pump at all", fakeConfigureCount(), configures);
 
-	// The pins must be this board's, not the previous one's. Carrying them
-	// across would name GPIOs the new board does not offer, and they would then
-	// be repaired one at a time by validation -- silently, and to values the
-	// user never chose.
-	checkTrue("the ESC pin is free on the new board",
-	          settingsPinFree(settings()->dshotPin));
-	checkInt("and is that board's default",
-	         settings()->dshotPin, g_board->defaultDshotPin);
+	// The pins must be the chosen board's, not the previous one's. Carrying
+	// them across would name GPIOs the new board does not offer, and they
+	// would then be repaired one at a time by validation -- silently, and to
+	// values the user never chose.
+	checkTrue("the ESC pin is legal on the chosen board",
+	          settingsPinFreeOn(settings()->boardId, settings()->dshotPin));
 
 	// Cycling all the way round returns to where it started.
 	for (int i = 1; i < boardCount(); i++) tap(SET_TOGGLE_X, SET_R_BOARD);
-	checkInt("cycling wraps back to the first", boardId(), first);
+	checkInt("cycling wraps back to the live board",
+	         settings()->boardId, live);
 
-	// And the choice survives a save and reload.
+	// Saving a pending board choice persists it, then reboots -- the only
+	// clean way to *become* a different board.
 	tap(SET_TOGGLE_X, SET_R_BOARD);
-	uint8_t chosen = boardId();
+	uint8_t chosen = settings()->boardId;
+	checkTrue("the choice really is pending", chosen != boardId());
+	int reboots = fakeRebootCount();
 	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
 	for (int i = 0; i < 60; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
 	fakeRelease(); frames(2);
+	checkInt("saving a board change reboots", fakeRebootCount() - reboots, 1);
 	settingsLoad();
 	checkInt("the board choice persists", settings()->boardId, chosen);
-	checkInt("and is applied on load", boardId(), chosen);
+	checkInt("and the reboot's load applies it", boardId(), chosen);
+
+	// An ordinary save -- same board, different value -- must not reboot.
+	tap(SET_BACK_X, SET_BACK_Y);           // the host kept running; leave SETUP
+	frames(2);
+	enterSetup();
+	tap(SET_PLUS_X, SET_R_PIN);
+	reboots = fakeRebootCount();
+	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
+	for (int i = 0; i < 60; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	fakeRelease(); frames(2);
+	checkTrue("an ordinary save lands", !settingsDirty());
+	checkInt("without a reboot", fakeRebootCount() - reboots, 0);
 
 	fakeFlashClear();
 	settingsLoad();
 	boardSelect(boardIdAt(0));
+}
+
+/**
+ * @brief The armed-save backstop: flash is never erased over a live motor.
+ *
+ * A save parks core1 for the erase, which stalls the DShot pump; a spinning
+ * ESC would time out and cut. CFG force-disarms, so the setup screen cannot be
+ * reached armed through the UI today -- which is exactly why the backstop is
+ * driven directly here: the day that routing changes is not a day anyone will
+ * remember this rule, but this test will.
+ */
+static void testArmedSaveRefused() {
+	section("SETUP: a save while armed is refused");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	holdToArm();
+	checkTrue("armed to begin with", uiArmed());
+
+	settings()->poles = (uint8_t)(settings()->poles == 12 ? 14 : 12);
+	checkTrue("a change is pending", settingsDirty());
+
+	uiSetupEnter();
+	int writes = fakeFlashWrites();
+	int reboots = fakeRebootCount();
+
+	TouchState t;
+	memset(&t, 0, sizeof(t));
+	t.down = true; t.pressed = true;
+	t.x = t.downX = SET_SAVE_X;
+	t.y = t.downY = SET_SAVE_Y;
+	uiSetupTick(&t);
+	t.pressed = false;
+	for (int i = 0; i < 60; i++) { fakeAdvance(UI_FRAME_MS); uiSetupTick(&t); }
+
+	checkTrue("still armed afterwards", uiArmed());
+	checkTrue("the save was refused", settingsDirty());
+	checkTrue("nothing was stored", !settingsStored());
+	checkInt("flash was never touched", fakeFlashWrites() - writes, 0);
+	checkInt("and nothing rebooted", fakeRebootCount() - reboots, 0);
+
+	t.down = false; t.released = true;
+	uiSetupTick(&t);
+
+	// Disarm on the main screen and leave the module clean.
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	fakeRelease(); frames(2);
+	checkTrue("disarmed again", !uiArmed());
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+}
+
+/**
+ * @brief A held control looks pressed, and stops looking pressed.
+ *
+ * The second half is the regression: the release frame used to change no
+ * cached value, so nothing repainted and the pressed double-frame survived
+ * until something else happened to invalidate the screen.
+ */
+static void testPressedLookClears() {
+	section("Buttons: the pressed look appears, and clears on release");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	tap(BTN_CFG_X, BTN_ARM_Y);           // to the settings screen
+	frames(2);
+
+	// BTN_POLES_M = { 14, 72, 46, 40 } in ui.cpp. The pole *value* is drawn
+	// outside this rectangle, so the hash isolates the button's own look.
+	uint32_t idle = fakeRegionHash(14, 72, 46, 40);
+	fakePress(CFG_POLES_M_X, CFG_POLES_Y); frames(1);
+	checkTrue("a held stepper draws its pressed state",
+	          fakeRegionHash(14, 72, 46, 40) != idle);
+	fakeRelease(); frames(1);
+	checkTrue("and returns to rest on release",
+	          fakeRegionHash(14, 72, 46, 40) == idle);
+
+	// The same rule on SETUP, which never had pressed states at all:
+	// the ESC-pin '-' button is at { BTN_M_X 148, R_PIN 62, 40, 24 }.
+	tap(BTN_SETUP_X, BTN_AM32_Y);
+	frames(2);
+	idle = fakeRegionHash(148, 62, 40, 24);
+	fakePress(SET_MINUS_X, SET_R_PIN); frames(1);
+	checkTrue("SETUP's stepper draws its pressed state",
+	          fakeRegionHash(148, 62, 40, 24) != idle);
+	fakeRelease(); frames(1);
+	checkTrue("and returns to rest on release",
+	          fakeRegionHash(148, 62, 40, 24) == idle);
+
+	tap(SET_BACK_X, SET_BACK_Y);
+	frames(2);
+	tap(120, 309);                       // CFG BACK, to the tester screen
+	frames(2);
+}
+
+/**
+ * @brief Screen changes leave nothing behind.
+ *
+ * The companion to the compile-time tiling asserts in ui.cpp: those prove
+ * every row belongs to a region, this proves the transitions blank what the
+ * incoming screen does not cover.
+ */
+static void testScreenChangeResidue() {
+	section("Screen changes leave nothing behind");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+
+	// The tester screen legitimately shows some cyan of its own -- KISS source
+	// tags, the EDT chip -- so the assertion is against its *own* baseline: a
+	// round trip through the cyan-rich settings screen must not add any.
+	int before = fakeCountColour(C_CYAN);
+
+	tap(BTN_CFG_X, BTN_ARM_Y);           // into the settings screen
+	frames(2);
+	int onSettings = fakeCountColour(C_CYAN);
+	checkTrue("the settings screen shows more cyan", onSettings > before);
+
+	tap(120, 309);                       // BACK, to the tester screen
+	frames(3);
+	int after = fakeCountColour(C_CYAN);
+	checkTrue("no settings cyan survives on the tester screen",
+	          after <= before);
 }
 
 void runUiTests() {
@@ -1630,6 +1788,9 @@ void runUiTests() {
 	testSetupKiss();
 	testSetupDisplay();
 	testSetupSave();
+	testArmedSaveRefused();
+	testPressedLookClears();
+	testScreenChangeResidue();
 
 	// Back to a known state for anything that runs after this.
 	fakeFlashClear();

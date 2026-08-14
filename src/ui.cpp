@@ -39,16 +39,28 @@ static_assert(GFX_W == 240 && GFX_H == 320,
  * @brief Vertical extents of each screen region, in framebuffer rows.
  * @{
  */
+// The regions tile the panel exactly: each ends where the next begins. Gaps
+// here are rows no region ever repaints, so whatever the previous screen left
+// in them survives. The screen-change clears already keep those rows blank in
+// practice; the asserts make the property structural rather than coincidental,
+// so the next layout edit cannot quietly reopen a one-row leak.
 #define Z_STATUS_Y0   0
-#define Z_STATUS_Y1   25
+#define Z_STATUS_Y1   26
 #define Z_RPM_Y0      27
-#define Z_RPM_Y1      126
+#define Z_RPM_Y1      127
 #define Z_TELE_Y0     128
-#define Z_TELE_Y1     232
+#define Z_TELE_Y1     233
 #define Z_THR_Y0      234
-#define Z_THR_Y1      277
+#define Z_THR_Y1      278
 #define Z_BTN_Y0      279
 #define Z_BTN_Y1      319
+
+static_assert(Z_STATUS_Y0 == 0, "regions must start at the top of the panel");
+static_assert(Z_RPM_Y0  == Z_STATUS_Y1 + 1, "gap between status and RPM");
+static_assert(Z_TELE_Y0 == Z_RPM_Y1 + 1,    "gap between RPM and telemetry");
+static_assert(Z_THR_Y0  == Z_TELE_Y1 + 1,   "gap between telemetry and throttle");
+static_assert(Z_BTN_Y0  == Z_THR_Y1 + 1,    "gap between throttle and buttons");
+static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 
 #define THR_TRACK_X   8
 #define THR_TRACK_Y   248
@@ -686,10 +698,10 @@ static void drawButtons() {
 	s_shown.btnArmed = s_armed;
 	s_shown.config = s_config;
 
-	// From Z_THR_Y1 + 1 rather than Z_BTN_Y0: the row between the two regions
-	// belongs to neither, so nothing ever repaints it, and a glyph descender or
-	// a bold smear landing there would persist for the rest of the session.
-	gfxRect(0, Z_THR_Y1 + 1, GFX_W, Z_BTN_Y1 - Z_THR_Y1, C_BG);
+	// The regions tile exactly (asserted at their definitions), so this is the
+	// whole button band and nothing but it. It used to start a row early to
+	// cover a boundary row that belonged to neither region.
+	gfxRect(0, Z_BTN_Y0, GFX_W, Z_BTN_Y1 - Z_BTN_Y0 + 1, C_BG);
 	drawBtn(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
 	        s_armed ? C_RED : C_PANEL, s_armed ? C_ONACCENT : C_TEXT,
 	        s_armed ? 2 : 1, pressing(BTN_ARM, s_touch));
@@ -962,10 +974,17 @@ static void handleConfigTouch() {
 			s_shown.maxPct = -1;
 		}
 	}
+
+	// Keep the pressed look live -- and *clear* it. `released` matters as much
+	// as `down`, and this has to run before the stepper early-return: the frame
+	// a held stepper was let go used to change no cached value, so drawConfig()
+	// drew nothing and the button kept its pressed double-frame until something
+	// else happened to invalidate the screen.
+	if (s_touch.down || s_touch.released) { s_shown.cmdFlash = -1; }
+
 	if (polesDir || maxtDir) return;
 
 	// --- everything else: fires on release, inside, having started inside ---
-	if (s_touch.down) { s_shown.cmdFlash = -1; }   // keep the pressed look live
 	if (tapped(BTN_BEEP, s_touch)) {
 		cmdFlashSet(CmdFlash::Beep, escRequestBeep(1));
 	} else if (tapped(BTN_AM32, s_touch)) {

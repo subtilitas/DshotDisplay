@@ -4,6 +4,21 @@
  */
 
 #include "ui_input.h"
+#include "touch.h"
+
+static bool inRect(int px, int py, int x, int y, int w, int h) {
+	return px >= x && px < x + w && py >= y && py < y + h;
+}
+
+bool inputPressing(const TouchState *t, int x, int y, int w, int h) {
+	return t->down && inRect(t->x, t->y, x, y, w, h)
+	               && inRect(t->downX, t->downY, x, y, w, h);
+}
+
+bool inputTapped(const TouchState *t, int x, int y, int w, int h) {
+	return t->released && inRect(t->x, t->y, x, y, w, h)
+	                   && inRect(t->downX, t->downY, x, y, w, h);
+}
 
 uint32_t repeatInterval(uint32_t heldMs) {
 	// Three tiers rather than a curve. A curve reads better in source and is
