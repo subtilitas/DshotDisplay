@@ -26,11 +26,16 @@
  *
  * @section board_desc_selection Which board
  *
- * Chosen by the user, from the SETUP screen, and remembered. Not probed:
- * `board.h` argues that probing an I2C bus means first knowing which pins it is
- * on, and a detector that guesses wrong drives an LCD reset line out of an SD
- * clock pin — whose symptom is a black screen, indistinguishable from a dead
- * board. Asking once and remembering the answer has no such failure mode.
+ * Remembered from the stored settings once one has been saved. On a unified
+ * image with nothing stored, the first boot has a chicken-and-egg problem this
+ * section used to wave away: the SETUP picker can only be reached through a
+ * display and touch controller whose pins are exactly the thing not yet known.
+ * So the first boot *identifies* the board — see board_probe.h, whose probe is
+ * deliberately narrower than the pin-map guessing `board.h` warns about: it
+ * only ever drives two pins as open-drain I2C, on lines shown benign on both
+ * schematics, and treats anything but exactly one answer as "unknown", which
+ * keeps the power latch held and every output silent. The user still confirms
+ * (or overrides) the answer on the SETUP screen; only a save persists it.
  */
 
 #pragma once
