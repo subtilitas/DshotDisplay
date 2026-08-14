@@ -49,10 +49,16 @@ jobs:
     strategy:
       fail-fast: true   # never publish a half-complete set of assets
       matrix:
+        # touch / other_touch / label drive the board-identity assertion below,
+        # exactly as in ci.yml. other_touch is empty for the unified image: it
+        # deliberately compiles both drivers in.
         board:
-          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
-          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
-          - { slug: "unified",       id: BOARD_UNIFIED }
+          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2,
+              touch: cst816, other_touch: cst328, label: "RP2350-TOUCH-LCD-2" }
+          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8,
+              touch: cst328, other_touch: cst816, label: "RP2350-TOUCH-LCD-2.8" }
+          - { slug: "unified",       id: BOARD_UNIFIED,
+              touch: cst816, other_touch: "", label: "RP2350-TOUCH-LCD-2" }
     steps:
       # ref: is load-bearing for workflow_dispatch. Without it a manual run
       # checks out the branch it was launched from and attaches binaries built
@@ -70,12 +76,18 @@ jobs:
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      # Same key scheme as ci.yml: not keyed on the board (neither cached path
+      # depends on it), with restore-keys so a CMakeLists.txt edit reuses the
+      # previous entry -- and so release builds share cache entries with CI
+      # instead of re-cloning the ~200 MB SDK.
       - uses: actions/cache@v4
         with:
           path: |
             ~/pico-sdk
             build/_deps
-          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ matrix.board.slug }}-${{ hashFiles('CMakeLists.txt') }}
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            picosdk-${{ env.PICO_SDK_VERSION }}-
 
       - name: Fetch the Pico SDK
         run: |
@@ -100,14 +112,65 @@ jobs:
           # env values -- CMake would receive the literal string "~/pico-sdk"
           # and report the SDK missing.
           export PICO_SDK_PATH="$HOME/pico-sdk"
+          # Mirror the CI build exactly: CMAKE_BUILD_TYPE=Release makes the
+          # intent explicit (and keeps DWARF present via the SDK's
+          # PICO_DEBUG_INFO_IN_RELEASE, which the identity assert below needs),
+          # and STRICT=ON applies the same -Werror CI proved the sources clean
+          # under -- released bits should be built the way CI tested them.
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
-                -DBOARD=${{ matrix.board.id }} .
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBOARD=${{ matrix.board.id }} -DSTRICT=ON .
           # Named target rather than a bare `ninja`. sdtest is a bench
           # diagnostic and is deliberately not part of a release: an unlabelled
           # second .uf2 beside the firmware is an invitation to flash the wrong
           # one, and it does nothing a user of the tester wants.
           ninja -C build DshotDisplay
-          arm-none-eabi-size build/DshotDisplay.elf
+          arm-none-eabi-size "build/DshotDisplay-${{ matrix.board.slug }}.elf"
+
+      # Same assertion CI runs: a UF2 structure check cannot tell the boards
+      # apart, and a release that ships the 2.0" image under the 2.8" name is
+      # exactly the mistake this exists to catch. The DWARF line table is the
+      # discriminator -- both touch drivers export identical symbols, so nm
+      # cannot tell the two images apart; the source file each was compiled
+      # from is the thing that differs.
+      - name: Assert the image is actually for this board
+        run: |
+          set -e
+          elf=build/DshotDisplay-${{ matrix.board.slug }}.elf
+          want='${{ matrix.board.touch }}.cpp'
+          other='${{ matrix.board.other_touch }}.cpp'
+
+          files=$(arm-none-eabi-objdump --dwarf=rawline "$elf" \
+                    | grep -oE 'cst(816|328)\.cpp' | sort -u || true)
+          if ! printf '%s\n' "$files" | grep -qx "$want"; then
+            echo "::error::$want was not compiled into this image (found: $files)"
+            exit 1
+          fi
+          if [ -n "$other" ] && printf '%s\n' "$files" | grep -qx "$other"; then
+            echo "::error::$other is in this image too"
+            exit 1
+          fi
+          # The unified image is the one that must contain *both*, and both
+          # board labels with it -- that is the whole claim it makes.
+          if [ "${{ matrix.board.slug }}" = "unified" ]; then
+            for f in cst816.cpp cst328.cpp; do
+              printf '%s\n' "$files" | grep -qx "$f" || {
+                echo "::error::unified image is missing $f"; exit 1; }
+            done
+            for l in RP2350-TOUCH-LCD-2 RP2350-TOUCH-LCD-2.8; do
+              strings "$elf" | grep -qx "$l" || {
+                echo "::error::unified image is missing the $l label"; exit 1; }
+            done
+            echo "unified: both drivers and both labels present"
+          fi
+
+          # Exact match. "RP2350-TOUCH-LCD-2" is a prefix of the 2.8" label, so
+          # a substring test passes on the wrong image.
+          if ! strings "$elf" | grep -qx '${{ matrix.board.label }}'; then
+            echo "::error::splash label ${{ matrix.board.label }} missing"
+            exit 1
+          fi
+          echo "compiled $want; splash says ${{ matrix.board.label }}"
 
       # Prove the validator works before trusting its verdict. The first version
       # of this check was inlined here, never executed, and rejected every
@@ -122,7 +185,7 @@ jobs:
         run: |
           mkdir -p dist
           out="dist/DshotDisplay-${TAG}-${SLUG}.uf2"
-          cp build/DshotDisplay.uf2 "$out"
+          cp "build/DshotDisplay-${SLUG}.uf2" "$out"
           bash test/check_uf2.sh "$out"
 
       - uses: actions/upload-artifact@v4
@@ -164,26 +227,9 @@ jobs:
           cat > notes.md <<'EOF'
           ## Which image
 
-          | Board | File |
-          |---|---|
-          | Waveshare RP2350-Touch-LCD-2 (2.0") | `...-touch-lcd-2.uf2` |
-          | Waveshare RP2350-Touch-LCD-2.8 | `...-touch-lcd-2.8.uf2` |
-
-          The two are not interchangeable: different SPI instance for the panel,
-          different I2C, a different touch controller and a different SD
-          interface.
-
-          ## Flashing
-
-          1. Hold **BOOT**, tap **RESET**, release **BOOT**. The board appears as a
-             USB drive.
-          2. Copy the `.uf2` onto it. The board reboots into the new firmware.
-
-          ## Which image
-
           | File | Use it when |
           |---|---|
-          | `DshotDisplay-VERSION-unified.uf2` | **Start here.** Runs on either board; the first boot asks which one you have and remembers the answer, under **CFG → SETUP** |
+          | `DshotDisplay-VERSION-unified.uf2` | **Start here.** Runs on either board; the first boot detects which one it is on (a safe probe of the board's always-on I2C devices) and shows the answer under **CFG → SETUP** to confirm with a save |
           | `DshotDisplay-VERSION-touch-lcd-2.uf2` | The 2.0" board only. A few kB smaller, and never asks |
           | `DshotDisplay-VERSION-touch-lcd-2.8.uf2` | The 2.8" board only |
 
@@ -191,6 +237,12 @@ jobs:
           against 4 MB available. Take it unless you have a reason not to: the
           single-board images are indistinguishable once flashed, and the 2.8"
           one asserts a power latch the 2.0" does not.
+
+          ## Flashing
+
+          1. Hold **BOOT**, tap **RESET**, release **BOOT**. The board appears as a
+             USB drive.
+          2. Copy the `.uf2` onto it. The board reboots into the new firmware.
 
           ## Wiring
 
