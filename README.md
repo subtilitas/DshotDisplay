@@ -47,16 +47,21 @@ panel, different I2C, a different touch controller (CST816D vs CST328), and a
 different SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
 
 **One image runs on both.** Build with `-DBOARD=BOARD_UNIFIED` — or take the
-`unified` release asset — and the board is a setting rather than a build option:
-the first boot finds out which board it is on by probing for the board's
-always-on I2C devices (the IMU and, on the 2.8", the RTC — open-drain, and
-harmless on the wrong board; see `board_probe.h`), runs on the answer, and
-shows it under **CFG → SETUP** for you to confirm with a save. If the probe
-cannot tell — nothing answered, or something answered on both buses — the image
-stops safely rather than guessing: power latch held, no display, no DShot
-output, recoverable over USB. The stored choice can be changed later from the
-same screen; saving a *different* board reboots into it, because the display,
-the touch controller and the pin map are all built from that choice at boot.
+`unified` release asset — and the image works out which board it is on for
+itself, every boot, by probing for the board's always-on I2C devices (the IMU
+and, on the 2.8", the RTC — open-drain, and harmless on the wrong board; see
+`board_probe.h`). It shows the answer under **CFG → SETUP**, read-only. If the
+probe cannot tell — nothing answered, or something answered on both buses, three
+times over — the image stops safely rather than guessing: power latch held, no
+display, no DShot output, recoverable over USB.
+
+**The board is not a setting, and there is nothing to pick.** It was briefly
+both, and that was a mistake worth naming: a stored board id outranked the
+hardware, so choosing the wrong one and saving built the *next* boot's display,
+touch controller and pin map for a board that was not there — and the screen you
+would have used to change it back was the screen that no longer came up. One tap
+cost a reflash over USB. Detection cannot fail that way: a wrong answer stops
+the boot before a single pin is driven, and the next power cycle asks again.
 All of this costs about 3 kB of flash against the 4 MB available, and it
 removes the failure this project could not otherwise design away — the two
 single-board images are indistinguishable once flashed, and the 2.8" one
@@ -353,7 +358,7 @@ settings screen.*
 
 | Row | What it does |
 |---|---|
-| **BOARD** | Which board this firmware is driving. Read-only on a single-board image. On the unified image it cycles the *choice*; nothing is re-wired until you save, and a save that changes the board reboots into it — the display, touch controller and pin map are all built from this at boot |
+| **BOARD** | Which board this firmware is driving. Read-only, on every image — it is detected at boot, not chosen. The row is here because "which board does this firmware think it is" is the first question to ask when a panel or a touch controller misbehaves |
 | **ESC PIN** | Which GPIO carries the DShot signal. Steps through the GPIOs this board leaves free and nothing else, so there is no wrong pin to pick — only pins you have not wired to yet |
 | **DSHOT KBAUD** | 150 / 300 / 600 / 1200. Applies immediately: the driver is torn down and rebuilt on the new pin and rate before the next frame |
 | **KISS TELEM** | Whether to claim a UART for the telemetry wire |

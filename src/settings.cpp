@@ -163,27 +163,24 @@ bool settingsValidate(Settings *s) {
 	if (!legal) { s->dshotKbaud = DSHOT_SPEED_KBAUD; ok = false; }
 
 	// --- board ---
-	// An id this image cannot drive is as untrustworthy as a bad CRC: every pin
-	// below is validated against the board's free mask, and validating them
-	// against the wrong board is worse than starting over.
+	// Not a setting, and never restored from the block. The board is identified
+	// at boot — by boardProbe() on a unified image, by the build on a
+	// single-board one — and this field only *records* which one, so that a
+	// block written on other hardware is recognisable as such and the pin rules
+	// below have a board to judge against.
 	//
-	// Resolved to a descriptor rather than *selected*: validation must not
-	// re-point g_board as a side effect, because the SETUP screen validates a
-	// pending board choice while the display is still running on the live one.
-	// settingsLoad() applies the board explicitly after validating.
-	const BoardDesc *b;
-	if (s->boardId == BOARD_ID_UNSET) {
-		// Nothing chosen yet (unified image, blank flash). Judge the pins
-		// against the live board; the probe or the picker fills this in.
-		b = g_board;
-	} else {
-		b = descForId(s->boardId);
-		if (!b) {
-			s->boardId = boardId();
-			b = g_board;
-			ok = false;
-		}
+	// So an id that disagrees with the live board is overwritten rather than
+	// honoured, and validation never re-points g_board as a side effect.
+	// Honouring it is the bug this rule exists for: a stored id naming the wrong
+	// board was applied by the next boot, which built the display from the wrong
+	// pins, and the screen that could have undone it was the screen that no
+	// longer came up. An alien id — a block from a build this one is not — lands
+	// in the same place, for the same reason.
+	if (s->boardId != boardId()) {
+		s->boardId = boardId();
+		ok = false;
 	}
+	const BoardDesc *b = g_board;
 
 	// --- ESC pin ---
 	if (!settingsPinFreeOn(s->boardId, s->dshotPin)) {
@@ -238,19 +235,18 @@ static uint32_t crcSpan() {
 // ---------------------------------------------------------------------------
 
 /**
- * @brief The blank-flash starting point: defaults, with the board honestly
- *        marked unchosen on an image that carries more than one.
+ * @brief The blank-flash starting point: this board's compiled defaults.
  *
- * A single-board image knows what it is, so its defaults name it. A unified
- * image does not — its `g_board` merely points at the first descriptor so that
- * early code has coherent values to read — and pretending that guess is a
- * choice is exactly the bug that used to boot 2.8" hardware with the 2.0"
- * board's pin map. @see boardProbe() and setup() in main.cpp for who answers.
+ * Which board that is has already been settled — setup() probes for it on a
+ * unified image and the build fixes it on a single-board one — so the pin
+ * defaults @ref settingsDefaults() reads out of `g_board` are the right
+ * board's either way. There used to be a third case, a unified image that had
+ * not found out yet and marked itself @ref BOARD_ID_UNSET so nothing mistook
+ * the first descriptor for an answer; probing before the load retired it.
  */
 static void freshDefaults() {
 	s_seeded = true;
 	settingsDefaults(&s_live);
-	if (boardCount() > 1) s_live.boardId = BOARD_ID_UNSET;
 	s_saved = s_live;
 }
 
@@ -279,11 +275,12 @@ void settingsLoad() {
 	}
 
 	s_live = blk.s;
+	// Validation rewrites the block's board id to the one this boot detected and
+	// re-judges every pin against it, so a block carried over from the other
+	// board loads as this board's settings rather than as a pin map for hardware
+	// that is not here. Nothing in this file selects a board: g_board was
+	// settled before the load ran, and no stored value may move it.
 	settingsValidate(&s_live);
-	// Validation resolved the board id (repairing it if this image cannot
-	// drive it) without touching g_board; a *load* is the one moment the
-	// stored choice becomes the live board.
-	if (s_live.boardId != BOARD_ID_UNSET) boardSelect(s_live.boardId);
 	s_saved = s_live;
 	s_stored = true;
 }

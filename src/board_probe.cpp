@@ -17,12 +17,26 @@
 
 #include <hardware/i2c.h>
 #include <hardware/gpio.h>
+#include <pico/time.h>
 
 /** @brief Probe bus speed. Conservative: every device here does 400 kHz. */
 #define PROBE_BAUD 100000u
 
 /** @brief Per-address ACK wait. A present device answers in microseconds. */
 #define PROBE_TIMEOUT_US 2000u
+
+/**
+ * @brief How many times an inconclusive probe is repeated before giving up.
+ *
+ * The verdict is final: there is no picker to override it, so the cost of
+ * having asked a moment too early is a USB cable rather than a tap. Every
+ * device involved shares the RP2350's rail and answers long before the first
+ * attempt lands — this is for the day one of them does not.
+ */
+#define PROBE_ATTEMPTS 3
+
+/** @brief Gap between attempts. Only the failing path ever waits. */
+#define PROBE_RETRY_MS 5
 
 /**
  * @brief True if any of @p addrs ACKs on an I2C bus brought up on @p sda/@p scl.
@@ -64,26 +78,36 @@ static bool probeBus(i2c_inst_t *bus, uint8_t sda, uint8_t scl,
 }
 
 uint8_t boardProbe(void) {
-	// RP2350-Touch-LCD-2.8: I2C1 on GP6/GP7 carries the QMI8658 IMU (0x6B),
-	// the PCF85063 RTC (0x51) and the CST328 touch controller (0x1A) — see
-	// board_rp2350_touch_lcd_2_8.h. On the 2.0" these pins are free camera
-	// header lines (CAM_D6/D7), floating unless a camera module is fitted.
-	static const uint8_t LCD_2_8_ADDRS[] = { 0x6B, 0x51, 0x1A };
-	bool is28 = probeBus(i2c1, 6, 7, LCD_2_8_ADDRS,
-	                     (int)sizeof(LCD_2_8_ADDRS));
+	for (int attempt = 0; attempt < PROBE_ATTEMPTS; attempt++) {
+		if (attempt) sleep_ms(PROBE_RETRY_MS);
 
-	// RP2350-Touch-LCD-2: I2C0 on GP12/GP13 carries the QMI8658 IMU (0x6B)
-	// and the CST816D touch controller (0x15) — see board_rp2350_touch_lcd_2.h.
-	// The IMU is the witness that matters: a CST816D can autosleep into a
-	// NACK. On the 2.8" these pins are LCD MISO and LCD CS, idle and pulled
-	// up until the panel driver claims them.
-	static const uint8_t LCD_2_ADDRS[] = { 0x6B, 0x15 };
-	bool is2 = probeBus(i2c0, 12, 13, LCD_2_ADDRS, (int)sizeof(LCD_2_ADDRS));
+		// RP2350-Touch-LCD-2.8: I2C1 on GP6/GP7 carries the QMI8658 IMU
+		// (0x6B), the PCF85063 RTC (0x51) and the CST328 touch controller
+		// (0x1A) — see board_rp2350_touch_lcd_2_8.h. On the 2.0" these pins
+		// are free camera header lines (CAM_D6/D7), floating unless a camera
+		// module is fitted.
+		static const uint8_t LCD_2_8_ADDRS[] = { 0x6B, 0x51, 0x1A };
+		bool is28 = probeBus(i2c1, 6, 7, LCD_2_8_ADDRS,
+		                     (int)sizeof(LCD_2_8_ADDRS));
 
-	// Exactly one answer or no answer at all. "Both" means something is
-	// back-driving a bus this image does not understand — a camera module,
-	// a rework, hardware this table has never met — and a guess about
-	// hardware is precisely what this function exists to avoid.
-	if (is28 == is2) return BOARD_ID_UNSET;
-	return is28 ? BOARD_ID_LCD_2_8 : BOARD_ID_LCD_2;
+		// RP2350-Touch-LCD-2: I2C0 on GP12/GP13 carries the QMI8658 IMU
+		// (0x6B) and the CST816D touch controller (0x15) — see
+		// board_rp2350_touch_lcd_2.h. The IMU is the witness that matters: a
+		// CST816D can autosleep into a NACK. On the 2.8" these pins are LCD
+		// MISO and LCD CS, idle and pulled up until the panel driver claims
+		// them.
+		static const uint8_t LCD_2_ADDRS[] = { 0x6B, 0x15 };
+		bool is2 = probeBus(i2c0, 12, 13, LCD_2_ADDRS,
+		                    (int)sizeof(LCD_2_ADDRS));
+
+		// Exactly one answer. "Both" means something is back-driving a bus
+		// this image does not understand — a camera module, a rework,
+		// hardware this table has never met — and a guess about hardware is
+		// precisely what this function exists to avoid.
+		if (is28 != is2) return is28 ? BOARD_ID_LCD_2_8 : BOARD_ID_LCD_2;
+	}
+
+	// Nothing answered, or both did, every time we asked. The caller holds its
+	// safe state rather than guessing — see setup() in main.cpp.
+	return BOARD_ID_UNSET;
 }

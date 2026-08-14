@@ -91,7 +91,7 @@ uint8_t *fakeFlashBytes();
 /** @brief How many storage writes have been *attempted* since process start. */
 int fakeFlashWrites();
 
-/** @brief How many times platReboot() has fired since process start. */
+/** @brief How many times platReboot() has fired. Asserted to stay put. */
 int fakeRebootCount();
 
 /** @brief How many times the UI has rebuilt the DShot pump's wiring. */

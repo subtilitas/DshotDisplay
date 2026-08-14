@@ -13,12 +13,11 @@
  * - **Changes apply live; only persistence needs the hold.** Turn the bitrate
  *   down and the pump rebuilds this frame. The one-second hold is about writing
  *   flash, which parks core1, not about the value being dangerous.
- * - **Except the board.** A board choice is applied by rebooting after the
- *   save: the display, the touch controller and the pump wiring are all built
- *   from the board descriptor during setup(), and re-pointing them while the
- *   old board is still the physical hardware wedges the screen and drives
- *   outputs into other chips' pins. Until the save, the choice is pending —
- *   shown, validated against, but not driven.
+ * - **The board is not one of them.** It is detected at boot and shown here
+ *   read-only. It used to be a picker, and a picker over hardware is a way to
+ *   be wrong about hardware: choosing the other board and saving built the
+ *   next boot's display from the wrong pins, and the screen that could have
+ *   put it back was the screen that no longer came up. @see boardProbe()
  *
  * Input follows the three rules in ui_input.h: taps fire on release (so a
  * mis-tap can slide off), a pressed control looks pressed, and the `-`/`+`
@@ -55,13 +54,13 @@
 /*
  * One layout, always seven rows, with no section captions.
  *
- * The board row is drawn whether or not there is a choice to make: on a
- * single-board image it is read-only, and "which board does this firmware think
- * it is" is worth a line of its own regardless. The alternative was geometry
- * that moved depending on how many boards the image carries, which meant the
- * layout asserts stopped being compile-time constants -- and those asserts are
- * the only thing standing between this screen and a caption drawn through a
- * button.
+ * The board row is read-only on every image -- there is nothing to choose --
+ * and it stays because "which board does this firmware think it is" is worth a
+ * line of its own. Dropping it would buy one row of height and cost the only
+ * on-screen answer to the first question a misbehaving panel raises. Keeping
+ * the geometry fixed also keeps the layout asserts compile-time constants,
+ * which are the only thing standing between this screen and a caption drawn
+ * through a button.
  *
  * The captions went to pay for the row. Seven rows plus two captions do not fit
  * above LINK, and of the two, the rows carry the information.
@@ -145,27 +144,6 @@ static Repeat s_pinRep, s_speedRep, s_kissPinRep, s_backlightRep;
  */
 static TouchState s_touchSnap;
 
-/**
- * @brief The descriptor for the settings' (possibly pending) board choice.
- *
- * Falls back to the live board for an id this image cannot drive, which the
- * validator repairs on the next applyLive() anyway.
- */
-static const BoardDesc *chosenBoard() {
-	for (int i = 0; i < boardCount(); i++)
-		if (boardIdAt(i) == settings()->boardId) return boardAt(i);
-	return g_board;
-}
-
-/** @brief True while the chosen board is not the one this boot is driving. */
-static bool boardPending() {
-	// UNSET is "no choice yet", not "a different board": edits made in that
-	// state -- reachable on the host, and defensively on the device -- apply
-	// to the live board like any other.
-	uint8_t chosen = settings()->boardId;
-	return boardCount() > 1 && chosen != BOARD_ID_UNSET && chosen != boardId();
-}
-
 static void button(int x, int y, int w, int h, const char *label,
                    uint16_t fill, uint16_t fg, int scale, bool pressed = false) {
 	gfxRoundRect(x, y, w, h, 5, fill);
@@ -215,11 +193,9 @@ static void drawToggleRow(int y, const char *label, const char *value, bool on) 
  * @brief The note line: the single most useful thing to say right now.
  *
  * Ordered by urgency rather than by category. A failed save outranks
- * everything; a pending board choice outranks the first-boot prompt, because
- * it is the user's own action and it is about to cause a reboot; a setting the
- * firmware had to repair outranks the ordinary saved/unsaved distinction,
- * because the user asked for something and did not get it and nothing else on
- * the screen says so.
+ * everything; a setting the firmware had to repair outranks the ordinary
+ * saved/unsaved distinction, because the user asked for something and did not
+ * get it and nothing else on the screen says so.
  *
  * @param[out] col Colour to draw it in.
  * @return The text.
@@ -232,16 +208,6 @@ static const char *noteText(uint16_t *col) {
 	if (s_saveOutcome == SaveOutcome::Failed) {
 		*col = C_RED;
 		return "SAVE FAILED - FLASH REFUSED THE WRITE";
-	}
-	if (boardPending()) {
-		*col = C_AMBER;
-		return "NEW BOARD ON SAVE - THEN REBOOTS";
-	}
-	// A unified image running on a probed answer nobody has confirmed yet.
-	// The probe is reliable, but it is a detection, not a decision.
-	if (boardCount() > 1 && !settingsStored()) {
-		*col = C_AMBER;
-		return "CHECK BOARD, THEN HOLD SAVE";
 	}
 	if (s_repaired) {
 		*col = C_AMBER;
@@ -293,20 +259,13 @@ static void drawAll() {
 	button(BACK_X, BACK_Y, BACK_W, BACK_H, "BACK", C_PANEL, C_TEXT, 1,
 	       inputPressing(&s_touchSnap, BACK_X, BACK_Y, BACK_W, BACK_H));
 
-	// Always shown; only tappable where there is something to choose. A
-	// single-board image knows what it is on, and a picker with one entry is a
-	// question with one answer -- but the answer is still worth reading.
-	//
-	// The label is the *chosen* board, which until a save-and-reboot may not
-	// be the one this boot is driving; the note line says so in amber.
-	if (boardCount() > 1) {
-		drawToggleRow(R_BOARD, "BOARD", chosenBoard()->label, !boardPending());
-	} else {
-		gfxRect(0, R_BOARD, GFX_W, ROW_H, C_BG);
-		gfxText(8, R_BOARD + 8, "BOARD", C_DIM, 1);
-		gfxText(GFX_W - 8 - gfxTextW(g_board->label, 1), R_BOARD + 8,
-		        g_board->label, C_GRID, 1);
-	}
+	// Read-only on every image: the board is what the hardware answered at
+	// boot, not something to pick. Drawn as text rather than a dead-looking
+	// button so that nothing invites the tap.
+	gfxRect(0, R_BOARD, GFX_W, ROW_H, C_BG);
+	gfxText(8, R_BOARD + 8, "BOARD", C_DIM, 1);
+	gfxText(GFX_W - 8 - gfxTextW(g_board->label, 1), R_BOARD + 8,
+	        g_board->label, C_GRID, 1);
 
 	snprintf(buf, sizeof(buf), "GP%u", (unsigned)s->dshotPin);
 	drawStepRow(R_PIN, "ESC PIN", buf, C_LIME);
@@ -358,10 +317,6 @@ static void drawAll() {
  * can be unconditional rather than tracking which field moved — which is the
  * kind of bookkeeping that goes wrong exactly once and then behaves like a
  * hardware fault.
- *
- * The one exception is a pending board choice: those pins are for hardware
- * this boot is not driving, so the pump keeps the live board's wiring until
- * the save reboots into the new one. @see uiSetupTick()
  */
 static void applyLive() {
 	Settings *s = settings();
@@ -369,8 +324,7 @@ static void applyLive() {
 	s_repaired = !settingsValidate(s);
 	s_repairKiss = s_repaired && kissBefore && !s->kissEnable;
 
-	if (!boardPending())
-		escTaskConfigure(s->dshotPin, s->dshotKbaud, s->kissEnable != 0, s->kissPin);
+	escTaskConfigure(s->dshotPin, s->dshotKbaud, s->kissEnable != 0, s->kissPin);
 	// Pure bookkeeping (the eRPM divisor), so unlike the wiring it always
 	// follows the settings -- RESET used to change the stored pole count while
 	// the RPM readout kept dividing by the old one.
@@ -428,23 +382,12 @@ bool uiSetupTick(const TouchState *t) {
 			if (uiArmed()) {
 				s_saveOutcome = SaveOutcome::FailedArmed;
 			} else {
-				bool rebootAfter = boardPending();
-				if (settingsSave()) {
-					s_saveOutcome = SaveOutcome::Ok;
-					if (rebootAfter) {
-						// The saved board is not the one this boot built its
-						// display, touch and pump from; a reboot is the only
-						// clean way to *become* it. Say so first.
-						gfxFill(C_BG);
-						gfxText((GFX_W - gfxTextW("SAVED - REBOOTING", 2)) / 2,
-						        GFX_H / 2 - 7, "SAVED - REBOOTING", C_LIME, 2);
-						st7789FlushDirty();
-						delay(650);
-						platReboot();
-					}
-				} else {
-					s_saveOutcome = SaveOutcome::Failed;
-				}
+				// Nothing here can need a reboot to take effect: every value on
+				// this screen is applied live by applyLive(), and the one that
+				// could not be -- the board -- is no longer a value on this
+				// screen. @see boardProbe()
+				s_saveOutcome = settingsSave() ? SaveOutcome::Ok
+				                               : SaveOutcome::Failed;
 			}
 		}
 		s_redraw = true;
@@ -488,22 +431,6 @@ bool uiSetupTick(const TouchState *t) {
 	if (inputTapped(t, BACK_X, BACK_Y, BACK_W, BACK_H)) {
 		s_leaving = true;
 		return false;
-	} else if (boardCount() > 1 &&
-	           inputTapped(t, BTN_M_X, R_BOARD, TOGGLE_W, ROW_H)) {
-		// Cycle the *pending* choice to the next board this image can drive.
-		// Nothing is re-pointed here — the hardware only changes on the reboot
-		// that follows a save. The pins are reset to the chosen board's
-		// defaults rather than carried across, where they would name GPIOs the
-		// new board does not offer and be silently repaired one at a time.
-		int n = boardCount();
-		int cur = 0;
-		for (int i = 0; i < n; i++) if (boardIdAt(i) == s->boardId) cur = i;
-		const BoardDesc *next = boardAt((cur + 1) % n);
-		s->boardId    = boardIdAt((cur + 1) % n);
-		s->dshotPin   = next->defaultDshotPin;
-		s->kissPin    = next->defaultKissPin;
-		s->kissEnable = next->defaultKissEnable ? 1 : 0;
-		changed = true;
 	} else if (inputTapped(t, BTN_M_X, R_KISS, TOGGLE_W, ROW_H)) {
 		// Turning KISS on picks the first pin that can actually receive,
 		// rather than enabling it against whatever was last stored and
@@ -521,9 +448,9 @@ bool uiSetupTick(const TouchState *t) {
 		changed = true;
 	} else if (inputTapped(t, DEF_X, FOOT_Y, DEF_W, FOOT_H)) {
 		// Restores the compiled defaults into the live settings only. Flash
-		// is untouched until SAVE, so this is undoable by walking away. On a
-		// unified image this also clears any pending board choice: the
-		// defaults are *this* hardware's.
+		// is untouched until SAVE, so this is undoable by walking away. The
+		// defaults are this board's -- settingsDefaults() reads them out of the
+		// descriptor the boot probe selected.
 		settingsDefaults(s);
 		s_saveOutcome = SaveOutcome::None;
 		changed = true;

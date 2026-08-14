@@ -18,11 +18,14 @@
  * and Extended DShot Telemetry that comes back on the same wire.
  *
  * Built either per board with `-DBOARD=`, or as one unified image that carries
- * both board descriptions and picks at run time — from the stored settings, or
- * on a first boot by probing for the board's always-on I2C devices (see
- * board_probe.h). The boards are genuinely different: different SPI instance
- * for the panel, different I2C, a different touch controller, and a different
- * SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
+ * both board descriptions and works out which one it is on at boot, by probing
+ * for the board's always-on I2C devices (see board_probe.h). The board is not a
+ * setting and there is nothing to pick: it is detected every boot, because an
+ * answer that can be remembered is an answer that can be remembered wrongly,
+ * and the display is what it costs. The boards are genuinely different:
+ * different SPI instance for the panel, different I2C, a different touch
+ * controller, and a different SD interface — hardware SPI on the 2.0", PIO
+ * SDIO on the 2.8".
  *
  * @section arch Two cores
  *
@@ -124,36 +127,39 @@ void setup() {
 	stdio_init_all();
 #endif
 
-	// Before escTaskInit(), which seeds core1's wiring from these, and before
-	// uiInit(), which reads the palette and backlight preference. A board with
-	// blank flash gets the compiled defaults and never knows the difference.
+	// Which board this is, before anything reads a value that depends on it.
 	//
-	// settingsLoad() applies a stored board id itself; after it returns,
-	// boardId() is the truth for every configured boot, single-board or
-	// unified.
-	settingsLoad();
-
-	// The one boot where the board is *not* yet known: a unified image with
-	// nothing stored. Identify it by asking its always-on I2C devices — see
-	// board_probe.h for why this is safe on either board — then reseed the
-	// defaults, which are pin choices and therefore per-board. The answer is
-	// deliberately not saved: the SETUP screen shows it and the user's HOLD
-	// SAVE is what persists it.
-	if (settings()->boardId == BOARD_ID_UNSET) {
+	// A unified image asks the hardware itself, every boot, and nothing else
+	// gets a vote — see board_probe.h for why the two bus probes are safe on
+	// either board. There is deliberately no override and no picker: a stored
+	// board id used to outrank the hardware, and a wrong one was applied by the
+	// very boot that would have had to show the screen to undo it. Detection
+	// cannot go stale that way; a wrong detection fails here, before a pin is
+	// driven.
+	//
+	// A single-board image knows what it is — BOARDS[] holds one entry and
+	// g_board already points at it — so it does not probe at all.
+	if (boardCount() > 1) {
 		uint8_t probed = boardProbe();
-		if (probed != BOARD_ID_UNSET && boardSelect(probed)) {
-			settingsDefaults(settings());
-		} else {
-			// Unknown hardware. Every option from here is a guess, and a
-			// guessed pin map drives outputs into other chips' pins — so
-			// hold what is safe and do nothing at all: latch kept asserted
-			// (releasing it powers off a battery-fed 2.8" mid-boot), no
-			// display, no touch, and above all no DShot. Recovery is a
-			// reflash over USB, which BOOTSEL provides regardless of how
-			// wedged the firmware is.
+		if (!boardSelect(probed)) {
+			// Unknown hardware: nothing answered, or both buses did. Every
+			// option from here is a guess, and a guessed pin map drives outputs
+			// into other chips' pins — so hold what is safe and do nothing at
+			// all: latch kept asserted (releasing it powers off a battery-fed
+			// 2.8" mid-boot), no display, no touch, and above all no DShot.
+			// Recovery is a reflash over USB, which BOOTSEL provides regardless
+			// of how wedged the firmware is.
 			for (;;) tight_loop_contents();
 		}
 	}
+
+	// After the board, because the defaults this seeds are pin choices and those
+	// are per-board — and before escTaskInit(), which seeds core1's wiring from
+	// them, and before uiInit(), which reads the palette and backlight
+	// preference. A board with blank flash gets this board's defaults and never
+	// knows the difference; a block saved on the *other* board arrives as this
+	// board's settings, every pin in it re-judged. @see settingsValidate()
+	settingsLoad();
 
 	// Hand GP26 back if this board does not want it held. On the 2.0" it is
 	// SD_SCK and the card driver claims it shortly afterwards.

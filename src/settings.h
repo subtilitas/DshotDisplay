@@ -50,14 +50,17 @@
 /** @brief The persisted settings. */
 struct Settings {
 	/**
-	 * @brief Which board this is, one of @ref board_desc_ids.
+	 * @brief Which board this block was written on, one of @ref board_desc_ids.
 	 *
-	 * @ref BOARD_ID_UNSET until a choice exists. On a unified image with blank
-	 * flash the first boot finds the board by probing for its always-on I2C
-	 * devices — see boardProbe() — runs on that answer, and shows it on the
-	 * SETUP screen for the user to confirm with a save (or override with the
-	 * picker). A single-board image fills this in for itself, because there is
-	 * nothing to ask.
+	 * A record, never an input. The board is identified at boot — a unified
+	 * image probes for its always-on I2C devices, see boardProbe(); a
+	 * single-board image is told by the build — and @ref settingsValidate()
+	 * overwrites this field with that answer. So a card moved to the other
+	 * board arrives as *that* board's settings, every pin in it re-judged,
+	 * instead of a pin map for hardware that is not there.
+	 *
+	 * Kept in the block precisely so that mismatch is visible rather than
+	 * implied. It is not a choice, and nothing in the UI offers to change it.
 	 */
 	uint8_t  boardId;
 	uint8_t  dshotPin;     /**< GPIO carrying the ESC signal wire. */

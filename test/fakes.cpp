@@ -302,9 +302,10 @@ bool settingsStorageWrite(const void *src, uint32_t len) {
 // ---------------------------------------------------------------------------
 // Reboot
 //
-// platReboot() is how a saved board change takes effect. The tests assert both
-// directions -- a board change reboots, any other save must not -- so the fake
-// only counts.
+// platReboot() has no caller left. A saved *board* change used to take effect
+// by rebooting into it, and that is the mechanism that made one wrong tap on a
+// board picker cost a reflash; the board is detected every boot now. So this
+// counts a thing that must never happen -- see testBoardSelection().
 // ---------------------------------------------------------------------------
 static int g_reboots = 0;
 

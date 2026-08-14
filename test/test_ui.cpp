@@ -1363,11 +1363,11 @@ static void testRailReAnchor() {
 
 
 /**
- * @brief The board picker, on images that carry more than one board.
+ * @brief The board: detected at boot, and not offered as a choice here.
  *
- * Compiled everywhere and meaningful only in a unified build, which is the
- * point: `make both` runs this for the single-board images too, and the
- * assertions below are the ones that must hold either way.
+ * The picker this replaces only ever appeared on a unified build. What is left
+ * holds on every image, which is why `make both` runs it for all three: there
+ * is nothing on this screen that can change which board the firmware drives.
  */
 static void testBoardSelection() {
 	section("Board: selection");
@@ -1397,66 +1397,50 @@ static void testBoardSelection() {
 	}
 	boardSelect(settings()->boardId ? settings()->boardId : boardIdAt(0));
 
-	if (boardCount() < 2) {
-		checkTrue("single-board image: nothing to pick", boardCount() == 1);
-		return;
-	}
-
-	// --- unified only, from here ---
+	// --- the board is not a setting, on any image ---
 	//
-	// A board choice is *pending* until saved: display, touch and the pump
-	// wiring are all built from the live descriptor during boot, and
-	// re-pointing any of them at hardware that is not there wedges the screen
-	// and drives outputs into other chips' pins. So the tap may change the
-	// settings and nothing else, and the save becomes the answer by rebooting.
+	// It used to be, on a unified one: a toggle on this row cycled the choice,
+	// and a save persisted it and rebooted into it. Picking the wrong board that
+	// way built the next boot's display from the wrong pins, and the screen that
+	// could have put it back was the screen that no longer came up -- leaving a
+	// reflash over USB as the only way in. The row is read-only now, and these
+	// are the assertions that keep it that way.
 	enterSetup();
-	uint8_t live = boardId();
-	uint8_t pumpPin = escTaskDshotPin();
-	int configures = fakeConfigureCount();
+	uint8_t live     = boardId();
+	uint8_t recorded = settings()->boardId;
+	uint8_t pumpPin  = escTaskDshotPin();
+	int configures   = fakeConfigureCount();
+
 	tap(SET_TOGGLE_X, SET_R_BOARD);
-	checkTrue("tapping the board row changes the choice",
-	          settings()->boardId != live);
-	checkInt("but never the live board", boardId(), live);
-	checkInt("and never the pump's pin", escTaskDshotPin(), pumpPin);
+	checkInt("tapping the board row changes no choice",
+	         settings()->boardId, recorded);
+	checkInt("nor the live board", boardId(), live);
+	checkInt("nor the pump's pin", escTaskDshotPin(), pumpPin);
 	checkInt("nor rebuilds the pump at all", fakeConfigureCount(), configures);
 
-	// The pins must be the chosen board's, not the previous one's. Carrying
-	// them across would name GPIOs the new board does not offer, and they
-	// would then be repaired one at a time by validation -- silently, and to
-	// values the user never chose.
-	checkTrue("the ESC pin is legal on the chosen board",
-	          settingsPinFreeOn(settings()->boardId, settings()->dshotPin));
-
-	// Cycling all the way round returns to where it started.
-	for (int i = 1; i < boardCount(); i++) tap(SET_TOGGLE_X, SET_R_BOARD);
-	checkInt("cycling wraps back to the live board",
-	         settings()->boardId, live);
-
-	// Saving a pending board choice persists it, then reboots -- the only
-	// clean way to *become* a different board.
-	tap(SET_TOGGLE_X, SET_R_BOARD);
-	uint8_t chosen = settings()->boardId;
-	checkTrue("the choice really is pending", chosen != boardId());
-	int reboots = fakeRebootCount();
-	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
-	for (int i = 0; i < 60; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
+	// Held, too. The row carries no control at all, so neither the tap path nor
+	// the held-repeat path has anything to reach.
+	fakePress(SET_TOGGLE_X, SET_R_BOARD); frames(1);
+	for (int i = 0; i < 40; i++) { fakeHold(SET_TOGGLE_X, SET_R_BOARD); frames(1); }
 	fakeRelease(); frames(2);
-	checkInt("saving a board change reboots", fakeRebootCount() - reboots, 1);
-	settingsLoad();
-	checkInt("the board choice persists", settings()->boardId, chosen);
-	checkInt("and the reboot's load applies it", boardId(), chosen);
+	checkInt("holding it does nothing either", settings()->boardId, recorded);
+	checkInt("and the board is still this one", boardId(), live);
 
-	// An ordinary save -- same board, different value -- must not reboot.
-	tap(SET_BACK_X, SET_BACK_Y);           // the host kept running; leave SETUP
-	frames(2);
-	enterSetup();
+	// And no save reboots. platReboot() is what a saved board change used to
+	// call; this counter staying still is what fails if anything on this screen
+	// ever starts re-pointing the hardware again.
+	int reboots = fakeRebootCount();
 	tap(SET_PLUS_X, SET_R_PIN);
-	reboots = fakeRebootCount();
 	fakePress(SET_SAVE_X, SET_SAVE_Y); frames(1);
 	for (int i = 0; i < 60; i++) { fakeHold(SET_SAVE_X, SET_SAVE_Y); frames(1); }
 	fakeRelease(); frames(2);
 	checkTrue("an ordinary save lands", !settingsDirty());
-	checkInt("without a reboot", fakeRebootCount() - reboots, 0);
+	checkInt("and no save reboots", fakeRebootCount() - reboots, 0);
+	checkInt("the saved block records the live board",
+	         settings()->boardId, live);
+
+	tap(SET_BACK_X, SET_BACK_Y);
+	frames(2);
 
 	fakeFlashClear();
 	settingsLoad();
