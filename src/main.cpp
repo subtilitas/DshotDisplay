@@ -17,10 +17,12 @@
  * the board sends bidirectional DShot to a single ESC while decoding the eRPM
  * and Extended DShot Telemetry that comes back on the same wire.
  *
- * One board per build, chosen with `-DBOARD=`. They are not interchangeable:
- * different SPI instance for the panel, different I2C, a different touch
- * controller, and a different SD interface — hardware SPI on the 2.0", PIO
- * SDIO on the 2.8".
+ * Built either per board with `-DBOARD=`, or as one unified image that carries
+ * both board descriptions and picks at run time — from the stored settings, or
+ * on a first boot by probing for the board's always-on I2C devices (see
+ * board_probe.h). The boards are genuinely different: different SPI instance
+ * for the panel, different I2C, a different touch controller, and a different
+ * SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
  *
  * @section arch Two cores
  *
@@ -64,6 +66,7 @@
 
 #include "config.h"
 #include "board_desc.h"
+#include "board_probe.h"
 #include "gfx.h"
 #include "st7789.h"
 #include "touch.h"
@@ -124,12 +127,33 @@ void setup() {
 	// Before escTaskInit(), which seeds core1's wiring from these, and before
 	// uiInit(), which reads the palette and backlight preference. A board with
 	// blank flash gets the compiled defaults and never knows the difference.
+	//
+	// settingsLoad() applies a stored board id itself; after it returns,
+	// boardId() is the truth for every configured boot, single-board or
+	// unified.
 	settingsLoad();
 
-	// Now the board is known -- either because this image only drives one, or
-	// because the stored settings name it. boardSelect() has already been
-	// applied by settingsValidate(); this covers the never-configured case.
-	if (settings()->boardId != BOARD_ID_UNSET) boardSelect(settings()->boardId);
+	// The one boot where the board is *not* yet known: a unified image with
+	// nothing stored. Identify it by asking its always-on I2C devices — see
+	// board_probe.h for why this is safe on either board — then reseed the
+	// defaults, which are pin choices and therefore per-board. The answer is
+	// deliberately not saved: the SETUP screen shows it and the user's HOLD
+	// SAVE is what persists it.
+	if (settings()->boardId == BOARD_ID_UNSET) {
+		uint8_t probed = boardProbe();
+		if (probed != BOARD_ID_UNSET && boardSelect(probed)) {
+			settingsDefaults(settings());
+		} else {
+			// Unknown hardware. Every option from here is a guess, and a
+			// guessed pin map drives outputs into other chips' pins — so
+			// hold what is safe and do nothing at all: latch kept asserted
+			// (releasing it powers off a battery-fed 2.8" mid-boot), no
+			// display, no touch, and above all no DShot. Recovery is a
+			// reflash over USB, which BOOTSEL provides regardless of how
+			// wedged the firmware is.
+			for (;;) tight_loop_contents();
+		}
+	}
 
 	// Hand GP26 back if this board does not want it held. On the 2.0" it is
 	// SD_SCK and the card driver claims it shortly afterwards.

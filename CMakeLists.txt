@@ -60,6 +60,16 @@ include(pico_sdk_import.cmake)
 
 project(DshotDisplay C CXX ASM)
 
+# An empty CMAKE_BUILD_TYPE is not a default build: it is *no* per-config flags
+# at all -- no optimisation, no -g -- and neither CMake nor the pinned SDK
+# fills it in. Every image this project ever shipped that way was unoptimised,
+# and CI's board-identity assert (which reads the DWARF line table) can never
+# pass against it. Release opts in to both: the SDK's set_flags adds -O3 and,
+# via PICO_DEBUG_INFO_IN_RELEASE (default ON), keeps the debug info in the ELF.
+# The UF2 is unaffected by debug info; only the ELF carries it.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -124,6 +134,7 @@ add_executable(DshotDisplay
     src/board_desc.cpp
     src/board_desc_lcd2.cpp
     src/board_desc_lcd2_8.cpp
+    src/board_probe.cpp
     src/esc_task.cpp
     src/am32_bl.cpp
     src/am32_eeprom.cpp
@@ -212,9 +223,19 @@ endif()
 # Standalone SD bring-up test: nothing but the card, sweeping the SPI clock.
 # Built alongside the firmware because the whole value of it is being able to
 # flash one, then the other, without changing anything else.
+#
+# Single-board only: its pin-integrity sweep reads PIN_SD_* from board_pins.h,
+# which a unified build deliberately does not define -- "which pins" is exactly
+# the question a unified image answers at run time, and a bring-up tool that
+# guessed would be worse than one that does not exist. Flash the board-specific
+# sdtest instead; the card wiring it exercises is identical.
+if(NOT BOARD STREQUAL "BOARD_UNIFIED")
 add_executable(sdtest
     tools/sdtest/main.c
     src/sd_hw_config.c
+    src/board_desc.cpp
+    src/board_desc_lcd2.cpp
+    src/board_desc_lcd2_8.cpp
 )
 target_include_directories(sdtest PRIVATE src)
 target_compile_definitions(sdtest PRIVATE BOARD=${BOARD})
@@ -228,6 +249,7 @@ target_compile_definitions(sdtest PRIVATE USE_PRINTF=1 USE_DBG_PRINTF=1)
 pico_enable_stdio_usb(sdtest 1)
 pico_enable_stdio_uart(sdtest 0)
 pico_add_extra_outputs(sdtest)
+endif()
 
 if(SD_DEBUG)
     # USE_PRINTF routes the driver's messages to stdio; USE_DBG_PRINTF adds the

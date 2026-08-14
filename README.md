@@ -48,11 +48,19 @@ different SD interface — hardware SPI on the 2.0", PIO SDIO on the 2.8".
 
 **One image runs on both.** Build with `-DBOARD=BOARD_UNIFIED` — or take the
 `unified` release asset — and the board is a setting rather than a build option:
-the first boot asks which one you have, under **CFG → SETUP**, and remembers.
-It costs about 3 kB of flash against the 4 MB available, and it removes the
-failure this project could not otherwise design away — the two single-board
-images are indistinguishable once flashed, and the 2.8" one asserts a power
-latch the 2.0" does not.
+the first boot finds out which board it is on by probing for the board's
+always-on I2C devices (the IMU and, on the 2.8", the RTC — open-drain, and
+harmless on the wrong board; see `board_probe.h`), runs on the answer, and
+shows it under **CFG → SETUP** for you to confirm with a save. If the probe
+cannot tell — nothing answered, or something answered on both buses — the image
+stops safely rather than guessing: power latch held, no display, no DShot
+output, recoverable over USB. The stored choice can be changed later from the
+same screen; saving a *different* board reboots into it, because the display,
+the touch controller and the pin map are all built from that choice at boot.
+All of this costs about 3 kB of flash against the 4 MB available, and it
+removes the failure this project could not otherwise design away — the two
+single-board images are indistinguishable once flashed, and the 2.8" one
+asserts a power latch the 2.0" does not.
 
 The single-board builds remain (`-DBOARD=BOARD_RP2350_TOUCH_LCD_2` and
 `..._2_8`), are slightly smaller, and are still built by CI. They are also what
@@ -345,6 +353,7 @@ settings screen.*
 
 | Row | What it does |
 |---|---|
+| **BOARD** | Which board this firmware is driving. Read-only on a single-board image. On the unified image it cycles the *choice*; nothing is re-wired until you save, and a save that changes the board reboots into it — the display, touch controller and pin map are all built from this at boot |
 | **ESC PIN** | Which GPIO carries the DShot signal. Steps through the GPIOs this board leaves free and nothing else, so there is no wrong pin to pick — only pins you have not wired to yet |
 | **DSHOT KBAUD** | 150 / 300 / 600 / 1200. Applies immediately: the driver is torn down and rebuilt on the new pin and rate before the next frame |
 | **KISS TELEM** | Whether to claim a UART for the telemetry wire |
@@ -366,7 +375,9 @@ armed. **RESET** puts the compiled defaults back into the live settings and
 touches flash only when you then save.
 
 Everything applies the moment you change it; only persistence waits for the
-hold. So a value can be tried and walked away from.
+hold. So a value can be tried and walked away from. The one exception is the
+board choice, which cannot be tried live — the hardware is whatever it is — and
+therefore applies by rebooting after the save.
 
 **High contrast**
 
