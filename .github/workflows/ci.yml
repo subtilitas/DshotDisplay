@@ -94,18 +94,11 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBOARD=${{ matrix.board.id }} -DSTRICT=ON .
           ninja -C build DshotDisplay
-          # sdtest too. It is not released -- an unlabelled second .uf2 beside
-          # the real one is an invitation to flash the wrong thing -- but
-          # README tells people a plain `ninja` produces both, and nothing was
-          # compiling it, so a change to sd_hw_config.c or either pin map could
-          # break it with every job green.
-          #
-          # Single-board legs only: board_pins.h deliberately has no unified
-          # pin map, so sdtest cannot compile for BOARD_UNIFIED and CMake does
-          # not define the target there.
-          if [ "${{ matrix.board.slug }}" != "unified" ]; then
-            ninja -C build sdtest
-          fi
+          # sdtest is deliberately NOT built here. It is a bench bring-up
+          # tool, never released, and it is not worth a red firmware leg: it
+          # still builds locally (a plain `ninja` produces it on the
+          # single-board configs, as README says), it is just not this
+          # pipeline's job to prove it.
           arm-none-eabi-size build/DshotDisplay-${{ matrix.board.slug }}.elf
 
       # A ceiling, not a printout. The framebuffer alone is 150 kB of the

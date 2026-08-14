@@ -233,6 +233,7 @@ endif()
 if(NOT BOARD STREQUAL "BOARD_UNIFIED")
 add_executable(sdtest
     tools/sdtest/main.c
+    tools/sdtest/touch_stubs.cpp
     src/sd_hw_config.c
     src/board_desc.cpp
     src/board_desc_lcd2.cpp
@@ -243,6 +244,7 @@ target_compile_definitions(sdtest PRIVATE BOARD=${BOARD})
 target_link_libraries(sdtest
     pico_stdlib
     hardware_spi
+    hardware_i2c
     hardware_clocks
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
