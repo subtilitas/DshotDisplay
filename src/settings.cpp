@@ -16,34 +16,61 @@
 #include <string.h>
 
 /**
- * @brief The compiled defaults, as a value.
+ * @brief The working copy, seeded with the compiled defaults on first use.
  *
- * Used to initialise the working copy at static-init time rather than leaving
- * it zeroed until settingsLoad() runs. A zero-filled Settings is not merely
- * "unset": it is a pole count of 0 and a throttle ceiling of 0, and anything
- * that reads settings() before load -- a test, a future caller, an ordering
- * mistake in setup() -- would get those instead of a diagnosable failure.
+ * Seeded lazily rather than at static-init time: computing the defaults reads
+ * `g_board`'s pointee, and the descriptors live in other translation units. On
+ * the device they are constant-initialised, but the host build gives them
+ * dynamic initialisers, so a static `defaultsValue()` here would read them in
+ * whatever order the linker chose — it happened to work only because the
+ * board_desc objects preceded this file in the test Makefile's source list.
+ * First-use seeding runs after *all* static init, on either toolchain.
+ *
+ * The original goal is kept: nothing that calls settings() before
+ * settingsLoad() ever sees a zero-filled Settings — a pole count of 0 and a
+ * throttle ceiling of 0 — instead of a diagnosable default.
  */
-static Settings defaultsValue() {
-	Settings s;
-	settingsDefaults(&s);
-	return s;
-}
-
-static Settings s_live  = defaultsValue();
-static Settings s_saved = defaultsValue();
+static Settings s_live;
+static Settings s_saved;
 static bool     s_stored = false;
+static bool     s_seeded = false;
+
+static void ensureSeeded() {
+	if (s_seeded) return;
+	s_seeded = true;
+	settingsDefaults(&s_live);
+	s_saved = s_live;
+}
 
 // ---------------------------------------------------------------------------
 // pin rules
 // ---------------------------------------------------------------------------
 
-bool settingsPinFree(uint8_t pin) {
+/**
+ * @brief The descriptor for @p id, or NULL if this image cannot drive it.
+ *
+ * Validation resolves the board *named by the settings being validated* rather
+ * than whichever board is live: while the SETUP screen holds a pending board
+ * choice, its pins must be judged against the board they are for.
+ */
+static const BoardDesc *descForId(uint8_t id) {
+	for (int i = 0; i < boardCount(); i++)
+		if (boardIdAt(i) == id) return boardAt(i);
+	return (const BoardDesc *)0;
+}
+
+bool settingsPinFreeOn(uint8_t boardIdArg, uint8_t pin) {
 	if (pin > 29) return false;
+	const BoardDesc *b = descForId(boardIdArg);
+	if (!b) b = g_board;
+	return (b->freeGpioMask >> pin) & 1u;
+}
+
+bool settingsPinFree(uint8_t pin) {
 	// From the active descriptor, not a compile-time mask: in a unified image
 	// the answer differs between the two boards, and the SETUP screen's pin
 	// steppers are the thing that must never offer an occupied GPIO.
-	return (g_board->freeGpioMask >> pin) & 1u;
+	return settingsPinFreeOn(boardId(), pin);
 }
 
 /**
@@ -65,7 +92,7 @@ int settingsUartForPin(uint8_t pin) {
 	return (int)UART_BY_GROUP[pin >> 2];
 }
 
-uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly) {
+uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir, bool uartOnly) {
 	if (dir == 0) return from;
 	int step = dir > 0 ? 1 : -1;
 	int p = (int)from;
@@ -75,11 +102,15 @@ uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly) {
 		p += step;
 		if (p > 29) p = 0;
 		if (p < 0) p = 29;
-		if (!settingsPinFree((uint8_t)p)) continue;
+		if (!settingsPinFreeOn(boardIdArg, (uint8_t)p)) continue;
 		if (uartOnly && settingsUartForPin((uint8_t)p) < 0) continue;
 		return (uint8_t)p;
 	}
 	return from;
+}
+
+uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly) {
+	return settingsNextPinOn(boardId(), from, dir, uartOnly);
 }
 
 // ---------------------------------------------------------------------------
@@ -135,14 +166,28 @@ bool settingsValidate(Settings *s) {
 	// An id this image cannot drive is as untrustworthy as a bad CRC: every pin
 	// below is validated against the board's free mask, and validating them
 	// against the wrong board is worse than starting over.
-	if (s->boardId != BOARD_ID_UNSET && !boardSelect(s->boardId)) {
-		s->boardId = boardId();
-		ok = false;
+	//
+	// Resolved to a descriptor rather than *selected*: validation must not
+	// re-point g_board as a side effect, because the SETUP screen validates a
+	// pending board choice while the display is still running on the live one.
+	// settingsLoad() applies the board explicitly after validating.
+	const BoardDesc *b;
+	if (s->boardId == BOARD_ID_UNSET) {
+		// Nothing chosen yet (unified image, blank flash). Judge the pins
+		// against the live board; the probe or the picker fills this in.
+		b = g_board;
+	} else {
+		b = descForId(s->boardId);
+		if (!b) {
+			s->boardId = boardId();
+			b = g_board;
+			ok = false;
+		}
 	}
 
 	// --- ESC pin ---
-	if (!settingsPinFree(s->dshotPin)) {
-		s->dshotPin = g_board->defaultDshotPin;
+	if (!settingsPinFreeOn(s->boardId, s->dshotPin)) {
+		s->dshotPin = b->defaultDshotPin;
 		ok = false;
 	}
 
@@ -151,7 +196,7 @@ bool settingsValidate(Settings *s) {
 	// on a pin the user never connected anything to, and a telemetry wire that
 	// reads "ON" against the wrong pin is worse than one that reads "OFF".
 	if (s->kissEnable) {
-		if (!settingsPinFree(s->kissPin) ||
+		if (!settingsPinFreeOn(s->boardId, s->kissPin) ||
 		    settingsUartForPin(s->kissPin) < 0 ||
 		    s->kissPin == s->dshotPin) {
 			s->kissEnable = 0;
@@ -192,14 +237,30 @@ static uint32_t crcSpan() {
 // load / save
 // ---------------------------------------------------------------------------
 
-void settingsLoad() {
+/**
+ * @brief The blank-flash starting point: defaults, with the board honestly
+ *        marked unchosen on an image that carries more than one.
+ *
+ * A single-board image knows what it is, so its defaults name it. A unified
+ * image does not — its `g_board` merely points at the first descriptor so that
+ * early code has coherent values to read — and pretending that guess is a
+ * choice is exactly the bug that used to boot 2.8" hardware with the 2.0"
+ * board's pin map. @see boardProbe() and setup() in main.cpp for who answers.
+ */
+static void freshDefaults() {
+	s_seeded = true;
 	settingsDefaults(&s_live);
+	if (boardCount() > 1) s_live.boardId = BOARD_ID_UNSET;
+	s_saved = s_live;
+}
+
+void settingsLoad() {
+	freshDefaults();
 	s_stored = false;
 
 	SettingsBlock blk;
 	memset(&blk, 0, sizeof(blk));
 	if (!settingsStorageRead(&blk, sizeof(blk))) {
-		s_saved = s_live;
 		return;
 	}
 
@@ -214,20 +275,34 @@ void settingsLoad() {
 	    blk.version != SETTINGS_VERSION ||
 	    blk.size != (uint16_t)sizeof(Settings) ||
 	    blk.crc32 != settingsCrc32(&blk, crcSpan())) {
-		s_saved = s_live;
 		return;
 	}
 
 	s_live = blk.s;
 	settingsValidate(&s_live);
+	// Validation resolved the board id (repairing it if this image cannot
+	// drive it) without touching g_board; a *load* is the one moment the
+	// stored choice becomes the live board.
+	if (s_live.boardId != BOARD_ID_UNSET) boardSelect(s_live.boardId);
 	s_saved = s_live;
 	s_stored = true;
 }
 
-Settings *settings() { return &s_live; }
+Settings *settings() {
+	ensureSeeded();
+	return &s_live;
+}
 
 bool settingsSave() {
+	ensureSeeded();
 	settingsValidate(&s_live);
+
+	// A save of exactly what is already stored is a no-op, reported as
+	// success. Every real erase parks core1 and opens a torn-write window in
+	// the only copy of the block — there is no A/B sector — so the write has
+	// to buy something.
+	if (s_stored && memcmp(&s_live, &s_saved, sizeof(Settings)) == 0)
+		return true;
 
 	SettingsBlock blk;
 	memset(&blk, 0, sizeof(blk));
@@ -255,4 +330,7 @@ bool settingsSave() {
 
 bool settingsStored() { return s_stored; }
 
-bool settingsDirty() { return memcmp(&s_live, &s_saved, sizeof(Settings)) != 0; }
+bool settingsDirty() {
+	ensureSeeded();
+	return memcmp(&s_live, &s_saved, sizeof(Settings)) != 0;
+}
