@@ -144,6 +144,7 @@ add_executable(DshotDisplay
     src/ui_am32.cpp
     src/ui_setup.cpp
     src/ui_input.cpp
+    src/ui_widgets.cpp
     src/theme.cpp
     src/settings.cpp
     src/settings_flash.cpp
