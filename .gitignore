@@ -19,3 +19,9 @@ test/*.BFL
 
 # Scratch space for files being retired
 _to_delete/
+
+# Wiki screenshots, rendered from the host suite by
+#   python3 tools/make_previews.py --wiki
+# Not committed: they are a function of the UI code, CI regenerates them on
+# every run, and 24 PNGs of churn per layout tweak buys nothing.
+wiki/img/

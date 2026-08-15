@@ -171,8 +171,52 @@ def build(name, shots):
     print("%-20s %d frame(s)  %dx%d" % (name + ".png", len(frames), total, ph))
 
 
+def build_wiki():
+    """One PNG per captured frame, for the wiki.
+
+    The stitched previews above are right for a README, where a row of panels
+    shows a screen's states at a glance. A manual wants the opposite: one
+    picture beside the paragraph that describes it, at a size you can read.
+
+    So this emits every shot_*.ppm the suite wrote, individually, and takes
+    whatever is there rather than a curated list -- a page that references a
+    frame nobody captured fails the link check, which is a better failure than
+    a picture silently missing from a list nobody updated.
+    """
+    out_dir = os.path.join(ROOT, "wiki", "img")
+    os.makedirs(out_dir, exist_ok=True)
+
+    shots = sorted(
+        f[:-4] for f in os.listdir(SHOTS)
+        if f.startswith("shot_") and f.endswith(".ppm")
+    )
+    if not shots:
+        raise SystemExit(
+            "no shot_*.ppm in %s\n"
+            "Run the host tests first:  cd test && make" % os.path.relpath(SHOTS, ROOT)
+        )
+
+    for shot in shots:
+        w, h, rows = read_ppm(os.path.join(SHOTS, shot + ".ppm"))
+        sw, sh = w * SCALE, h * SCALE
+        scaled = [[rows[y // SCALE][x // SCALE] for x in range(sw)] for y in range(sh)]
+        # shot_tester_armed -> tester-armed.png. The prefix says where the file
+        # came from and is noise once it is in wiki/img/; hyphens because the
+        # rest of the wiki is hyphenated.
+        name = shot[len("shot_"):].replace("_", "-")
+        write_png(os.path.join(out_dir, name + ".png"), sw, sh, scaled)
+        print("wiki/img/%-24s %dx%d" % (name + ".png", sw, sh))
+    print("%d screen(s)" % len(shots))
+
+
 def main():
-    wanted = sys.argv[1:] or sorted(PREVIEWS)
+    args = sys.argv[1:]
+    if "--wiki" in args:
+        args.remove("--wiki")
+        build_wiki()
+        if not args:
+            return
+    wanted = args or sorted(PREVIEWS)
     for name in wanted:
         if name not in PREVIEWS:
             raise SystemExit("unknown preview %r; have: %s"
