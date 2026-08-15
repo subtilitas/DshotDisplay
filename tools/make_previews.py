@@ -65,8 +65,13 @@ PREVIEWS = {
         "shot_tester_disarmed",
         "shot_tester_contrast",
     ],
+    # shot_am32_scrolled earns its place by being the one that is hard to get
+    # right: the list scrolls by the pixel, so its top and bottom rows are
+    # partial, and a published picture of that is the quickest way to notice
+    # a clipping regression that no assertion happens to cover.
     "am32-preview": [
         "shot_am32_list",
+        "shot_am32_scrolled",
         "shot_am32_edit",
         "shot_am32_hex",
         "shot_am32_written",
