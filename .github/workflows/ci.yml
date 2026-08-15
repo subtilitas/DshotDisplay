@@ -187,6 +187,10 @@ jobs:
           for args in "-DDSHOT_PIN_LCD_2=0" "-DDSHOT_PIN_LCD_2=10" \
                       "-DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29"; do
             rm -rf build-pin
+            # An array, not an unquoted $args: the 2.8" case carries two -D
+            # flags that must reach cmake as two words, and leaving the shell to
+            # split them is the same word-splitting that would also glob.
+            read -ra pindefs <<< "$args"
             # FETCHCONTENT_BASE_DIR points at the main build's _deps so the
             # dependencies fetched (and cached) there are reused instead of
             # being downloaded again for every permutation.
@@ -194,8 +198,8 @@ jobs:
                   -DPICO_PLATFORM=rp2350-arm-s -DBOARD=${{ matrix.board.id }} \
                   -DCMAKE_BUILD_TYPE=Release \
                   -DFETCHCONTENT_BASE_DIR="$PWD/build/_deps" \
-                  $args . 2>&1 | tee /tmp/cfg.txt
-            for a in $args; do
+                  "${pindefs[@]}" . 2>&1 | tee /tmp/cfg.txt
+            for a in "${pindefs[@]}"; do
               nv=${a#-D}
               grep -q "Pin override: ${nv%%=*}=GP${nv#*=}" /tmp/cfg.txt \
                 || { echo "::error::$a was ignored"; exit 1; }

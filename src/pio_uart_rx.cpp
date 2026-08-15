@@ -1,7 +1,7 @@
 /**
  * @file pio_uart_rx.cpp
- * @brief The RP2350 side of @ref pio_uart_rx.h: claim a state machine, point it
- *        at a pin, read bytes out of its FIFO.
+ * @brief The RP2350 side of @ref pio_uart_rx.h — claim a state machine, point
+ *        it at a pin, read bytes out of its FIFO.
  *
  * Device-only. The program it loads is in pio_uart_rx.pio, assembled into a
  * header at build time by `pico_generate_pio_header()`; test/stubs carries a
