@@ -12,6 +12,7 @@
 #include "ui_am32.h"
 #include "ui_setup.h"
 #include "ui_input.h"
+#include "ui_widgets.h"
 #include "settings.h"
 #include "gfx.h"
 #include "touch.h"
@@ -77,89 +78,109 @@ static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 
 /** @} */
 
-/** @brief A rectangular touch target with its own draw helper. */
-struct Btn { int16_t x, y, w, h; };
-
-static const Btn BTN_ARM  = { 6, 283, 104, 33 };
-static const Btn BTN_HOLD = { 116, 283, 54, 33 };
-static const Btn BTN_CFG  = { 176, 283, 58, 33 };
+// The main screen is the root, so it has no header and no BACK: there is
+// nowhere to go back to, and a disabled or missing control in the place the
+// habit says to look is worse than the habit not applying here. CFG is its
+// navigation, and it sits with the other two actions.
+static const UiRect BTN_ARM  = { 6, 283, 104, 33 };
+static const UiRect BTN_HOLD = { 116, 283, 54, 33 };
+static const UiRect BTN_CFG  = { 176, 283, 58, 33 };
 
 // config screen
 /**
  * @defgroup ui_cfg_layout Settings screen layout
  * @brief Row positions, with the gaps asserted rather than eyeballed.
+ *
+ * Everything below the header is derived from @ref UI_BODY_Y and from the row
+ * above it, rather than being a hand-picked pixel row. That is not tidiness:
+ * the previous version was eleven independent literals, so moving one row meant
+ * finding every other number that had quietly been chosen to clear it, and the
+ * asserts at the bottom of this block are all scar tissue from a case where
+ * that went wrong.
+ *
+ * The screen also got shorter by one control. BACK used to be an 18 px strip
+ * across the bottom — below @ref UI_TAP_MIN, and in a different place from the
+ * BACK on SETUP and AM32. It is in the header now, and every row here spent the
+ * space it freed on being big enough to hit.
  * @{
  */
-#define CFG_POLES_Y   72   /**< Pole-count -/+ row. */
-#define CFG_MAXT_Y   148   /**< Throttle-ceiling -/+ row. */
-#define CFG_CMD_Y    200   /**< BEEP row. */
-#define CFG_ROW_H     38
-#define CFG_HINT_Y   244   /**< Caption under the command buttons. */
-#define CFG_AM32_Y   256   /**< AM32 config entry. */
-#define CFG_BACK_Y   300
+#define CFG_ROW_H      44   /**< Height of a control row. Was 38-40. */
+#define CFG_POLES_LBL  UI_BODY_Y                        /**< "MOTOR POLES". */
+#define CFG_POLES_Y    (CFG_POLES_LBL + 12)             /**< Pole-count -/+ row. */
+#define CFG_MAXT_LBL   (CFG_POLES_Y + CFG_ROW_H + 10)   /**< "THROTTLE CEILING". */
+#define CFG_MAXT_Y     (CFG_MAXT_LBL + 12)              /**< Ceiling -/+ row. */
+#define CFG_CMD_Y      (CFG_MAXT_Y + CFG_ROW_H + 14)    /**< BEEP row. */
+#define CFG_HINT_Y     (CFG_CMD_Y + CFG_ROW_H + 6)      /**< Caption under BEEP. */
+#define CFG_NAV_Y      (CFG_HINT_Y + 16)                /**< AM32 / SD LOG / SETUP. */
+#define CFG_NAV_H      48
+#define CFG_STEP_W     46   /**< Width of a `-` or `+` target. */
 /** @} */
 
-static const Btn BTN_POLES_M = { 14, CFG_POLES_Y, 46, 40 };
-static const Btn BTN_POLES_P = { 180, CFG_POLES_Y, 46, 40 };
-static const Btn BTN_MAXT_M  = { 14, CFG_MAXT_Y, 46, 40 };
-static const Btn BTN_MAXT_P  = { 180, CFG_MAXT_Y, 46, 40 };
+static const UiRect BTN_POLES_M = { 14, CFG_POLES_Y, CFG_STEP_W, CFG_ROW_H };
+static const UiRect BTN_POLES_P = { 180, CFG_POLES_Y, CFG_STEP_W, CFG_ROW_H };
+static const UiRect BTN_MAXT_M  = { 14, CFG_MAXT_Y, CFG_STEP_W, CFG_ROW_H };
+static const UiRect BTN_MAXT_P  = { 180, CFG_MAXT_Y, CFG_STEP_W, CFG_ROW_H };
 // BEEP has the row to itself. The EDT enable used to sit beside it and is
 // gone: the firmware now sends it whenever an ESC starts answering, so the
 // button was a control for something already handled. What is left of EDT here
-// is the read-only chip in the title bar.
-static const Btn BTN_BEEP    = { 14, CFG_CMD_Y, 212, CFG_ROW_H };
-// One row, three destinations. The settings screen was already full to the
-// bottom edge before SETUP needed a home, so the row splits rather than the
-// screen growing -- 3 x 68 plus two 4 px gaps is exactly the 212 px between the
-// margins, and the asserts below keep it that way.
+// is the read-only chip on the strip under the title.
+static const UiRect BTN_BEEP    = { 14, CFG_CMD_Y, 212, CFG_ROW_H };
+// One row, three destinations -- 3 x 68 plus two 4 px gaps is exactly the
+// 212 px between the margins, and the assert below keeps it that way.
 #define CFG_NAV_W    68
 #define CFG_NAV_GAP  4
-static const Btn BTN_AM32  = { 14, CFG_AM32_Y, CFG_NAV_W, 38 };
-static const Btn BTN_LOG   = { 14 + CFG_NAV_W + CFG_NAV_GAP, CFG_AM32_Y, CFG_NAV_W, 38 };
-static const Btn BTN_SETUP = { 14 + 2 * (CFG_NAV_W + CFG_NAV_GAP), CFG_AM32_Y, CFG_NAV_W, 38 };
+static const UiRect BTN_AM32  = { 14, CFG_NAV_Y, CFG_NAV_W, CFG_NAV_H };
+static const UiRect BTN_LOG   = { 14 + CFG_NAV_W + CFG_NAV_GAP, CFG_NAV_Y,
+                                  CFG_NAV_W, CFG_NAV_H };
+static const UiRect BTN_SETUP = { 14 + 2 * (CFG_NAV_W + CFG_NAV_GAP), CFG_NAV_Y,
+                                  CFG_NAV_W, CFG_NAV_H };
 
 static_assert(14 + 3 * CFG_NAV_W + 2 * CFG_NAV_GAP <= 226,
               "the AM32/LOG/SETUP row is too wide");
-static const Btn BTN_BACK    = { 14, CFG_BACK_Y, 212, 18 };
 
 /**
  * @defgroup ui_log_layout Logging screen layout
  * @{
  */
-#define LOG_ROW0_Y     40   /**< First status row. */
+#define LOG_ROW0_Y     (UI_HDR_H + 8)   /**< First status row. */
 #define LOG_ROW_H      21
 #define LOG_ROWS        9   /**< Through MOUNT; CARD and MOUNT are diagnostics. */
-#define LOG_TOGGLE_Y  232   /**< START / STOP button. */
-#define LOG_TOGGLE_H   34
-#define LOG_RETRY_Y   270   /**< RETRY MOUNT. */
-#define LOG_RETRY_H    22
-#define LOG_BACK_Y    296
-#define LOG_BACK_H     18
+#define LOG_TOGGLE_Y  236   /**< START / STOP button. */
+#define LOG_TOGGLE_H   44
+#define LOG_RETRY_Y   286   /**< RETRY MOUNT. */
+#define LOG_RETRY_H    30
 /** @} */
 
-static const Btn BTN_LOG_TOGGLE = { 14, LOG_TOGGLE_Y, 212, LOG_TOGGLE_H };
-static const Btn BTN_LOG_RETRY  = { 14, LOG_RETRY_Y, 212, LOG_RETRY_H };
-static const Btn BTN_LOG_BACK   = { 14, LOG_BACK_Y, 212, LOG_BACK_H };
+static const UiRect BTN_LOG_TOGGLE = { 14, LOG_TOGGLE_Y, 212, LOG_TOGGLE_H };
+static const UiRect BTN_LOG_RETRY  = { 14, LOG_RETRY_Y, 212, LOG_RETRY_H };
 
+static_assert(LOG_ROW0_Y >= UI_HDR_H, "logging rows overlap the header");
 static_assert(LOG_ROW0_Y + LOG_ROWS * LOG_ROW_H <= LOG_TOGGLE_Y,
               "logging rows overlap the START/STOP button");
 static_assert(LOG_TOGGLE_Y + LOG_TOGGLE_H <= LOG_RETRY_Y,
               "START/STOP button overlaps RETRY");
-static_assert(LOG_RETRY_Y + LOG_RETRY_H <= LOG_BACK_Y,
-              "RETRY overlaps BACK");
-static_assert(LOG_BACK_Y + LOG_BACK_H <= GFX_H,
-              "logging BACK runs off the panel");
+static_assert(LOG_RETRY_Y + LOG_RETRY_H <= GFX_H,
+              "RETRY MOUNT runs off the panel");
+static_assert(LOG_TOGGLE_H >= UI_TAP_MIN && LOG_RETRY_H >= UI_TAP_MIN,
+              "a logging button is smaller than a fingertip");
 
 // Caught by a screenshot rather than by reading the code: the caption used to
-// sit at y=240, inside the 208..248 band the command row occupies, and
-// was drawn straight through them. Assert the gaps so it cannot recur.
+// sit at y=240, inside the band the command row occupies, and was drawn
+// straight through it. Assert the gaps so it cannot recur.
+static_assert(CFG_POLES_LBL >= UI_BODY_Y,
+              "the first settings caption runs into the strip");
+static_assert(CFG_MAXT_LBL >= CFG_POLES_Y + CFG_ROW_H,
+              "the ceiling caption overlaps the pole stepper");
+static_assert(CFG_CMD_Y >= CFG_MAXT_Y + CFG_ROW_H,
+              "BEEP overlaps the ceiling stepper");
 static_assert(CFG_HINT_Y >= CFG_CMD_Y + CFG_ROW_H,
               "settings caption overlaps the BEEP button");
-static_assert(CFG_AM32_Y >= CFG_HINT_Y + 7,
-              "AM32 button overlaps the caption");
-static_assert(CFG_BACK_Y >= CFG_AM32_Y + 38,
-              "BACK button overlaps the AM32 button");
-static_assert(CFG_BACK_Y + 18 <= GFX_H, "BACK button runs off the panel");
+static_assert(CFG_NAV_Y >= CFG_HINT_Y + 7,
+              "the AM32/LOG/SETUP row overlaps the caption");
+static_assert(CFG_NAV_Y + CFG_NAV_H <= GFX_H,
+              "the AM32/LOG/SETUP row runs off the panel");
+static_assert(CFG_ROW_H >= UI_TAP_MIN && CFG_NAV_H >= UI_TAP_MIN,
+              "a settings button is smaller than a fingertip");
 
 // ---------------------------------------------------------------------------
 // state
@@ -293,61 +314,21 @@ static struct {
 /** @brief Force every region to repaint on the next uiTick(). */
 static void invalidateAll() { memset(&s_shown, 0xFF, sizeof(s_shown)); }
 
-/** @brief Point-in-button test. @return true if (@p x, @p y) is inside @p b. */
-static bool hit(const Btn &b, int x, int y) {
-	return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
+// drawBtn(), hit(), pressing() and tapped() used to live here, and near-copies
+// of all four lived in ui_setup.cpp and ui_am32.cpp. They are uiButton(),
+// uiPressing() and uiTapped() now. @see ui_widgets.h
+//
+// These two adapt the shared helpers to this file's habit of passing the
+// TouchState by reference, which is worth keeping: every call site here already
+// has s_touch in scope and none of them can pass null.
+/** @brief True while @p b is touched by a press that began inside it. */
+static bool pressing(const UiRect &b, const TouchState &t) {
+	return uiPressing(b, &t);
 }
 
-/**
- * @brief Draw a rounded button with its label centred.
- *
- * The pressed look is deliberately additive -- a brighter frame and the label
- * nudged a pixel down and right -- rather than swapping the fill and foreground.
- * Every button here picks its label colour to suit its own fill (white on red,
- * cyan on panel, background-coloured on a flash), so a state that replaces the
- * fill would have to know about all of those to stay legible. Adding to what is
- * already there cannot break any of those pairings, and reads on every one.
- *
- * @param b       Target rectangle.
- * @param label   Text, centred.
- * @param fill    Resting fill colour.
- * @param fg      Label colour, chosen against @p fill.
- * @param scale   Text scale.
- * @param pressed True while a finger is on it.
- */
-static void drawBtn(const Btn &b, const char *label, uint16_t fill,
-                    uint16_t fg, int scale, bool pressed = false) {
-	gfxRoundRect(b.x, b.y, b.w, b.h, 6, fill);
-	gfxRoundFrame(b.x, b.y, b.w, b.h, 6, pressed ? C_INK : C_GRID);
-	if (pressed && b.w > 6 && b.h > 6)
-		gfxRoundFrame(b.x + 2, b.y + 2, b.w - 4, b.h - 4, 4, C_INK);
-	int tw = gfxTextW(label, scale);
-	int dx = pressed ? 1 : 0;
-	gfxText(b.x + dx + (b.w - tw) / 2, b.y + dx + (b.h - 7 * scale) / 2,
-	        label, fg, scale);
-}
-
-/**
- * @brief True while @p b is being touched by a press that began inside it.
- *
- * Both halves matter. Without the current position a finger that slid off still
- * looks held; without the start position a finger that slid *on* from elsewhere
- * looks pressed and would fire on release.
- */
-static bool pressing(const Btn &b, const TouchState &t) {
-	return t.down && hit(b, t.x, t.y) && hit(b, t.downX, t.downY);
-}
-
-/**
- * @brief True on the frame a tap completes: released inside, started inside.
- *
- * This is the escape hatch. Firing on touch-down means a mis-tap has already
- * happened by the time you notice it; firing on release means sliding a finger
- * off the button cancels, which is what every touch UI does and therefore what
- * nobody has to be told.
- */
-static bool tapped(const Btn &b, const TouchState &t) {
-	return t.released && hit(b, t.x, t.y) && hit(b, t.downX, t.downY);
+/** @brief True on the frame a tap of @p b completes. */
+static bool tapped(const UiRect &b, const TouchState &t) {
+	return uiTapped(b, &t);
 }
 
 /** @brief Draw one telemetry tile: dim caption above a larger value. */
@@ -702,12 +683,12 @@ static void drawButtons() {
 	// whole button band and nothing but it. It used to start a row early to
 	// cover a boundary row that belonged to neither region.
 	gfxRect(0, Z_BTN_Y0, GFX_W, Z_BTN_Y1 - Z_BTN_Y0 + 1, C_BG);
-	drawBtn(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
+	uiButton(BTN_ARM, s_armed ? "DISARM" : "HOLD TO ARM",
 	        s_armed ? C_RED : C_PANEL, s_armed ? C_ONACCENT : C_TEXT,
 	        s_armed ? 2 : 1, pressing(BTN_ARM, s_touch));
-	drawBtn(BTN_HOLD, "HOLD", s_hold ? C_BLUE : C_PANEL,
+	uiButton(BTN_HOLD, "HOLD", s_hold ? C_BLUE : C_PANEL,
 	        s_hold ? C_ONACCENT : C_DIM, 1, pressing(BTN_HOLD, s_touch));
-	drawBtn(BTN_CFG, "CFG", C_PANEL, C_DIM, 1, pressing(BTN_CFG, s_touch));
+	uiButton(BTN_CFG, "CFG", C_PANEL, C_DIM, 1, pressing(BTN_CFG, s_touch));
 }
 
 /** @} */
@@ -739,45 +720,47 @@ static void drawConfig() {
 	s_shown.edtActive = edtActive;
 
 	gfxFill(C_BG);
-	gfxRect(0, 0, GFX_W, 26, C_PANEL);
-	gfxText(8, 9, "SETTINGS", C_TEXT, 2);
+	uiHeader("SETTINGS", &s_touch);
+
+	uiStripClear();
 
 	// Poles and the throttle ceiling are persisted, but the button that persists
 	// them is on SETUP. Saying so here is the difference between "my settings
 	// reset themselves" and "I did not press save".
-	if (settingsDirty()) gfxText(112, 12, "UNSAVED", C_AMBER, 1);
+	if (settingsDirty()) uiStripText("UNSAVED", C_AMBER);
 
 	// Read-only: EDT needs no button any more, since the firmware enables it
 	// for each ESC as it appears. It is still worth showing, because "green"
 	// and "all four telemetry tiles read --" are the same fact and one of them
-	// is quicker to take in.
-	const char *edtTxt = edtActive ? "EDT ON" : "EDT OFF";
-	int chipW = gfxTextW(edtTxt, 1) + 12;
-	gfxRoundRect(GFX_W - 6 - chipW, 5, chipW, 16, 4,
-	             edtActive ? C_GREEN : C_RED);
-	gfxText(GFX_W - 6 - chipW + 6, 9, edtTxt, C_ONACCENT, 1);
-
+	// is quicker to take in. On the strip rather than in the header, because the
+	// header's right-hand end is BACK's on every screen now.
+	uiChip(edtActive ? "EDT ON" : "EDT OFF", edtActive ? C_GREEN : C_RED);
 
 	char buf[24];
 
-	gfxText(14, CFG_POLES_Y - 20, "MOTOR POLES", C_DIM, 1);
-	drawBtn(BTN_POLES_M, "-", C_PANEL, C_TEXT, 2, pressing(BTN_POLES_M, s_touch));
-	drawBtn(BTN_POLES_P, "+", C_PANEL, C_TEXT, 2, pressing(BTN_POLES_P, s_touch));
+	// Value text is centred in its row rather than placed at a literal y, so
+	// changing CFG_ROW_H moves the number with the buttons. It did not, and the
+	// number sat a few pixels high for two releases.
+	gfxText(14, CFG_POLES_LBL, "MOTOR POLES", C_DIM, 1);
+	uiButton(BTN_POLES_M, "-", C_PANEL, C_TEXT, 2, pressing(BTN_POLES_M, s_touch));
+	uiButton(BTN_POLES_P, "+", C_PANEL, C_TEXT, 2, pressing(BTN_POLES_P, s_touch));
 	snprintf(buf, sizeof(buf), "%d", s_poles);
-	gfxText(120 - gfxTextW(buf, 3) / 2, 82, buf, C_TEXT, 3);
+	gfxText(120 - gfxTextW(buf, 3) / 2, CFG_POLES_Y + (CFG_ROW_H - 21) / 2,
+	        buf, C_TEXT, 3);
 
-	gfxText(14, CFG_MAXT_Y - 20, "THROTTLE CEILING", C_DIM, 1);
-	drawBtn(BTN_MAXT_M, "-", C_PANEL, C_TEXT, 2, pressing(BTN_MAXT_M, s_touch));
-	drawBtn(BTN_MAXT_P, "+", C_PANEL, C_TEXT, 2, pressing(BTN_MAXT_P, s_touch));
+	gfxText(14, CFG_MAXT_LBL, "THROTTLE CEILING", C_DIM, 1);
+	uiButton(BTN_MAXT_M, "-", C_PANEL, C_TEXT, 2, pressing(BTN_MAXT_M, s_touch));
+	uiButton(BTN_MAXT_P, "+", C_PANEL, C_TEXT, 2, pressing(BTN_MAXT_P, s_touch));
 	snprintf(buf, sizeof(buf), "%d%%", (int)((uint32_t)s_maxThrottle * 100 / 2000));
-	gfxText(120 - gfxTextW(buf, 3) / 2, 158, buf, C_AMBER, 3);
+	gfxText(120 - gfxTextW(buf, 3) / 2, CFG_MAXT_Y + (CFG_ROW_H - 21) / 2,
+	        buf, C_AMBER, 3);
 
 	bool beepLit = cmdFlashActive();
 
 	// White for an accepted press, amber for a refused one.
 	// C_INK / C_PAPER rather than white / background: both of those flip with
 	// the theme, so an inverted button stays inverted in either palette.
-	drawBtn(BTN_BEEP, "BEEP", beepLit ? (s_cmdFlashOk ? C_INK : C_AMBER)
+	uiButton(BTN_BEEP, "BEEP", beepLit ? (s_cmdFlashOk ? C_INK : C_AMBER)
 	                                  : C_PANEL,
 	        beepLit ? C_PAPER : C_CYAN, 1, pressing(BTN_BEEP, s_touch));
 
@@ -789,18 +772,18 @@ static void drawConfig() {
 	                      : "BEEP NEEDS THE ESC DISARMED",
 	              refused ? C_RED : C_DIM, 1);
 
-	drawBtn(BTN_AM32, "AM32", C_PANEL, C_CYAN, 1, pressing(BTN_AM32, s_touch));
-	drawBtn(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1, pressing(BTN_LOG, s_touch));
-	drawBtn(BTN_SETUP, "SETUP", C_PANEL, C_CYAN, 1, pressing(BTN_SETUP, s_touch));
-	drawBtn(BTN_BACK, "BACK", C_PANEL, C_TEXT, 1, pressing(BTN_BACK, s_touch));
+	uiButton(BTN_AM32, "AM32", C_PANEL, C_CYAN, 1, pressing(BTN_AM32, s_touch));
+	uiButton(BTN_LOG, "SD LOG", C_PANEL, C_CYAN, 1, pressing(BTN_LOG, s_touch));
+	uiButton(BTN_SETUP, "SETUP", C_PANEL, C_CYAN, 1, pressing(BTN_SETUP, s_touch));
+	// No BACK here: uiHeader() drew it, in the same place as on every other
+	// screen. The 18 px strip that used to be along the bottom is what this
+	// whole rework started from.
 }
 
 /** @brief One label/value row on the logging screen. */
 static void drawLogRow(int row, const char *label, const char *value,
                        uint16_t vcol) {
-	int y = LOG_ROW0_Y + row * LOG_ROW_H;
-	gfxText(14, y, label, C_DIM, 1);
-	gfxText(GFX_W - 14 - gfxTextW(value, 1), y, value, vcol, 1);
+	uiRow(LOG_ROW0_Y + row * LOG_ROW_H, LOG_ROW_H, label, value, vcol, 1);
 }
 
 /**
@@ -833,8 +816,7 @@ static void drawLogScreen() {
 	s_shown.logWorstMs = st.worstFlushMs;
 
 	gfxFill(C_BG);
-	gfxRect(0, 0, GFX_W, 26, C_PANEL);
-	gfxText(8, 9, "SD LOG", C_TEXT, 2);
+	uiHeader("SD LOG", &s_touch);
 
 	char buf[32];
 	const char *stateTxt;
@@ -910,7 +892,7 @@ static void drawLogScreen() {
 
 	bool active = (st.state == SdLogState::Logging);
 	bool usable = (st.state != SdLogState::NoCard);
-	drawBtn(BTN_LOG_TOGGLE, active ? "STOP" : "START",
+	uiButton(BTN_LOG_TOGGLE, active ? "STOP" : "START",
 	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
 	        usable ? (active ? C_ONACCENT : C_LIME) : C_GRID, 2,
 	        pressing(BTN_LOG_TOGGLE, s_touch));
@@ -918,10 +900,8 @@ static void drawLogScreen() {
 	// The card is only mounted once, at boot, so one inserted afterwards needs
 	// this. Without it, "insert card, nothing happens" is indistinguishable
 	// from a card the firmware cannot read.
-	drawBtn(BTN_LOG_RETRY, "RETRY MOUNT", C_PANEL, C_CYAN, 1,
+	uiButton(BTN_LOG_RETRY, "RETRY MOUNT", C_PANEL, C_CYAN, 1,
 	        pressing(BTN_LOG_RETRY, s_touch));
-	drawBtn(BTN_LOG_BACK, "BACK", C_PANEL, C_TEXT, 1,
-	        pressing(BTN_LOG_BACK, s_touch));
 }
 
 /** @brief Touch handling for the logging screen. All three fire on release. */
@@ -935,7 +915,7 @@ static void handleLogTouch() {
 	} else if (tapped(BTN_LOG_RETRY, s_touch)) {
 		sdLogRemount();
 		s_shown.config = -1;
-	} else if (tapped(BTN_LOG_BACK, s_touch)) {
+	} else if (uiBackTapped(&s_touch)) {
 		s_logScreen = false;
 		invalidateAll();
 		gfxFill(C_BG);
@@ -1000,7 +980,7 @@ static void handleConfigTouch() {
 		s_setup = true;
 		gfxFill(C_BG);
 		uiSetupEnter();
-	} else if (tapped(BTN_BACK, s_touch)) {
+	} else if (uiBackTapped(&s_touch)) {
 		s_config = false;
 		invalidateAll();
 		gfxFill(C_BG);
@@ -1083,7 +1063,7 @@ static void handleMainTouch() {
 	if (!s_armed) s_throttle = 0;
 
 	// --- arm button: press and hold ---
-	if (s_touch.down && hit(BTN_ARM, x, y) && hit(BTN_ARM, s_touch.downX, s_touch.downY)) {
+	if (pressing(BTN_ARM, s_touch)) {
 		if (s_armed) {
 			// Disarm is instant, on press. The one control that deliberately
 			// does not wait for release: everything else here can afford the
