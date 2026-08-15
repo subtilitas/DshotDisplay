@@ -1,12 +1,14 @@
 #include "esc_task.h"
 #include "config.h"
+#include "esc_merge.h"
 #include "kiss_telem.h"
+#include "pio_uart_rx.h"
+#include "settings.h"
 
 #include "plat.h"
 #include <string.h>
 #include <PIO_DShot.h>
 #include <pico/critical_section.h>
-#include <hardware/uart.h>
 #include <hardware/gpio.h>
 
 /**
@@ -32,6 +34,26 @@ static volatile uint8_t  s_pendingReps = 0;   /**< Repeats left for that command
 static volatile bool     s_edtRequested = false; /**< EDT enable has been issued. */
 /** @} */
 
+/**
+ * @defgroup esc_wiring Live wiring (core0 writes, core1 latches on rebuild)
+ * @brief What escTaskConfigure() last set. Read only while building the driver.
+ *
+ * Latched at construction rather than read per frame, so a pin change cannot
+ * take effect halfway: the driver is destroyed, these are read once, and the
+ * new driver is built from a consistent set.
+ * @{
+ */
+// Seeded properly by escTaskInit() from the stored settings. These initialisers
+// only cover the window before that runs, which is why they are the safest
+// values rather than any particular board's: pin 0 drives nothing on either
+// board until escTaskInit() replaces it.
+static volatile uint8_t  s_dshotPin   = 0;                      /**< ESC signal GPIO. */
+static volatile uint16_t s_dshotKbaud = DSHOT_SPEED_KBAUD;      /**< DShot bitrate. */
+static volatile uint8_t  s_kissEnable = 0;                      /**< KISS wire expected. */
+static volatile uint8_t  s_kissPin    = 0;                      /**< KISS RX GPIO. */
+static volatile bool     s_rebuildReq = false;                  /**< Rebuild pending. */
+/** @} */
+
 /** @brief Telemetry block. Core1 writes, core0 reads via escSnapshot(). */
 static EscTelemetry s_tel;
 
@@ -43,7 +65,9 @@ static uint32_t s_nextSendUs = 0;   /**< Deadline for the next frame. */
 static uint32_t s_lastRateMs = 0;   /**< Last time the rate counters rolled up. */
 static uint32_t s_rateGoodMark = 0; /**< goodPackets at the last roll-up. */
 static uint32_t s_rateBadMark = 0;  /**< badPackets at the last roll-up. */
-static bool     s_edtAutoDone = false; /**< Enable sent to the ESC now connected. */
+static bool     s_edtTried = false;    /**< An enable has gone to this ESC. */
+static uint32_t s_edtLastTryMs = 0;    /**< millis() when it did. */
+static bool     s_edtArmedWas = false; /**< Arm state the last attempt saw. */
 /** @} */
 
 #if KISS_TELEM_ENABLE
@@ -57,18 +81,63 @@ static bool        s_kissPending = false; /**< A reply is outstanding. */
 static uint32_t    s_kissReqMs = 0;     /**< millis() of the outstanding request. */
 
 /**
- * @brief Drain whatever the UART has and fold any complete frame into @ref s_tel.
+ * @brief True while a PIO receiver is running on the KISS pin.
  *
- * Called from escTaskPoll() on core1. Bounded work: the RP2350 UART FIFO holds
- * 32 bytes, comfortably more than one 10-byte frame, so this reads at most a
- * FIFO's worth and never blocks. That is the whole reason it is safe to do here
- * rather than handing the UART to core0 — core1's only job is DShot timing.
+ * The receiver used to be one of the two hardware UARTs, picked from the pin,
+ * which meant the pin had to be one of the eight the RP2350 can receive on —
+ * and on the 2.8" board exactly one of those is free and it is the one the ESC
+ * signal wire is on. @see pio_uart_rx.h for what replaced it and why.
  */
-static void kissDrain(uint32_t ms) {
-	KissFrame f;
+static bool s_kissRx = false;
 
-	while (uart_is_readable(KISS_UART)) {
-		uint8_t c = uart_getc(KISS_UART);
+/**
+ * @brief Start receiving KISS on @p pin.
+ *
+ * Receive only: the ESC talks and we never answer, and driving a line the ESC
+ * is already driving is not a thing to do by accident.
+ *
+ * A refusal — every state machine already claimed — leaves @ref s_kissRx false,
+ * and the effect is the same as an unplugged telemetry wire: no KISS frames,
+ * the merged reading falls back to EDT, and the tiles say so. That is the right
+ * failure for something that cannot happen on a board this firmware builds for
+ * (two programs resident, twelve state machines) and must still not fault.
+ *
+ * @param pin GPIO to receive on. Any of them.
+ */
+static void kissUartBegin(uint8_t pin) {
+	memset(&s_kiss, 0, sizeof(s_kiss));
+	s_kissCountdown = 0;
+	s_kissPending = false;
+	s_kissRx = pioUartRxBegin(pin, KISS_BAUD);
+}
+
+/** @brief Release the KISS receiver and its pin, if one is running. */
+static void kissUartEnd() {
+	if (!s_kissRx) return;
+	pioUartRxEnd();
+	s_kissRx = false;
+	s_kissPending = false;
+}
+
+/**
+ * @brief Drain the receiver and fold any complete frame into @ref s_tel.
+ *
+ * Called from escTaskPoll() on core1, on every pass rather than once per frame
+ * slot. Bounded work either way — the FIFO is eight bytes deep and this never
+ * blocks — but eight bytes is 700 us at 115200 baud, against the 1 ms between
+ * DShot frames, so draining at the frame rate would lose the tail of most
+ * replies. The PL011 this replaced held 32 and could afford to wait.
+ *
+ * Doing it here at all, rather than handing the receiver to core0, is the same
+ * argument as before: it is a FIFO read and a byte of state machine, and core1
+ * has the cycles between frames.
+ */
+static void kissDrain() {
+	KissFrame f;
+	if (!s_kissRx) return;
+
+	while (pioUartRxReadable()) {
+		uint8_t c = pioUartRxGetc();
 		if (kissFeed(&s_kiss, c, &f)) {
 			s_kissPending = false;
 			critical_section_enter_blocking(&s_cs);
@@ -77,7 +146,7 @@ static void kissDrain(uint32_t ms) {
 			s_tel.kissTempC  = f.tempC;
 			s_tel.kissMah    = f.mah;
 			s_tel.kissErpm   = f.erpm;
-			s_tel.kissLastMs = ms;
+			s_tel.kissLastMs = millis();
 			s_tel.kissGood   = s_kiss.good;
 			s_tel.haveKiss   = true;
 			critical_section_exit(&s_cs);
@@ -86,7 +155,7 @@ static void kissDrain(uint32_t ms) {
 
 	// A reply that never completed. Count it and drop the partial frame, or the
 	// next request's bytes would append to it and decode at the wrong offset.
-	if (s_kissPending && (uint32_t)(ms - s_kissReqMs) > KISS_REPLY_TIMEOUT_MS) {
+	if (s_kissPending && (uint32_t)(millis() - s_kissReqMs) > KISS_REPLY_TIMEOUT_MS) {
 		s_kissPending = false;
 		kissExpectFrame(&s_kiss);
 		critical_section_enter_blocking(&s_cs);
@@ -163,23 +232,41 @@ void escTaskInit() {
 	// critical section, and it will get there long before core1 has booted.
 	critical_section_init(&s_cs);
 	memset((void *)&s_tel, 0, sizeof(s_tel));
+
+	// Seed the wiring from the stored settings, so core1's very first build uses
+	// the user's pins rather than the compiled defaults followed by a rebuild.
+	const Settings *cfg = settings();
+	s_dshotPin   = cfg->dshotPin;
+	s_dshotKbaud = cfg->dshotKbaud;
+	s_kissEnable = cfg->kissEnable;
+	s_kissPin    = cfg->kissPin;
+	s_rebuildReq = false;
 }
 
+void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
+                      bool kissEnable, uint8_t kissPin) {
+	if (s_dshotPin == dshotPin && s_dshotKbaud == dshotKbaud &&
+	    s_kissEnable == (kissEnable ? 1u : 0u) && s_kissPin == kissPin)
+		return;
+
+	// Disarm first, and through escSetArmed() so the throttle is zeroed too. The
+	// ESC on the old pin is about to stop hearing frames; leaving a non-zero
+	// throttle latched for whatever gets built next is not a state to pass
+	// through.
+	escSetArmed(false);
+	s_dshotPin   = dshotPin;
+	s_dshotKbaud = dshotKbaud;
+	s_kissEnable = kissEnable ? 1u : 0u;
+	s_kissPin    = kissPin;
+	s_rebuildReq = true;
+}
+
+uint8_t escTaskDshotPin() { return s_dshotPin; }
+
 void escTaskBegin() {
-	critical_section_enter_blocking(&s_cs);
-	s_tel.initError = s_esc->initError();
-	critical_section_exit(&s_cs);
-
-#if KISS_TELEM_ENABLE
-	memset(&s_kiss, 0, sizeof(s_kiss));
-	// RX only: the ESC talks, we never answer. Claiming a TX pin would drive a
-	// line the ESC is already driving.
-	uart_init(KISS_UART, KISS_BAUD);
-	gpio_set_function(KISS_TELEM_PIN, GPIO_FUNC_UART);
-	uart_set_format(KISS_UART, 8, 1, UART_PARITY_NONE);
-	uart_set_fifo_enabled(KISS_UART, true);
-#endif
-
+	// Nothing is claimed here. The driver and the UART are built by the first
+	// escTaskPoll(), which is also the path a suspend or a reconfigure returns
+	// through -- one construction site, so the two cannot drift apart.
 	s_nextSendUs = time_us_32();
 	s_lastRateMs = millis();
 }
@@ -249,36 +336,43 @@ static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
 }
 
 void escTaskPoll() {
-	// Handle a pin handover request before anything touches the driver. Both
-	// the teardown and the rebuild happen here so the PIO state machine is
-	// released and re-claimed by the core that owns it.
-	if (s_suspendReq && s_esc) {
-		delete s_esc;
-		s_esc = nullptr;
+	// Handle a handover or a reconfigure before anything touches the driver.
+	// Teardown and rebuild both happen here so the PIO state machine is released
+	// and re-claimed by the core that owns it.
+	//
+	// The teardown runs on the *request* rather than on `s_esc` being non-null.
+	// Gating it on the driver existing left a hole: a suspend arriving before
+	// core1 had ever built one satisfied neither branch, so `s_suspended` never
+	// became true and the AM32 screen waited on a handover that could not
+	// complete.
+	if (s_suspendReq || s_rebuildReq) {
+		if (s_esc) {
+			delete s_esc;
+			s_esc = nullptr;
+		}
 #if KISS_TELEM_ENABLE
-		// The AM32 bootloader owns the signal pin from here. Nothing will be
-		// requesting telemetry, so a UART left running would only accumulate
-		// noise into a decoder that has no way to tell it from a reply.
-		uart_deinit(KISS_UART);
-		s_kissPending = false;
+		// Whoever owns the pin next, it is not us. A UART left running would
+		// accumulate noise into a decoder with no way to tell it from a reply.
+		kissUartEnd();
 #endif
-		s_suspended = true;
-		return;
+		s_rebuildReq = false;
+		if (s_suspendReq) {
+			s_suspended = true;
+			return;
+		}
 	}
 	if (!s_suspendReq && !s_esc) {
-		s_esc = new BidirDShotX1(DSHOT_PIN, DSHOT_SPEED_KBAUD);
+		// Latch the wiring once, here, so a pin change cannot be observed
+		// half-applied. @see esc_wiring
+		uint8_t  pin   = s_dshotPin;
+		uint16_t kbaud = s_dshotKbaud;
+		s_esc = new BidirDShotX1(pin, kbaud);
 		s_armed = false;
 		s_throttle = 0;
-		s_edtAutoDone = false;
+		s_edtTried = false;
 		s_nextSendUs = time_us_32();
 #if KISS_TELEM_ENABLE
-		memset(&s_kiss, 0, sizeof(s_kiss));
-		s_kissCountdown = 0;
-		s_kissPending = false;
-		uart_init(KISS_UART, KISS_BAUD);
-		gpio_set_function(KISS_TELEM_PIN, GPIO_FUNC_UART);
-		uart_set_format(KISS_UART, 8, 1, UART_PARITY_NONE);
-		uart_set_fifo_enabled(KISS_UART, true);
+		if (s_kissEnable && s_kissPin != pin) kissUartBegin(s_kissPin);
 #endif
 		critical_section_enter_blocking(&s_cs);
 		s_tel.initError = s_esc->initError();
@@ -286,6 +380,13 @@ void escTaskPoll() {
 		s_suspended = false;
 	}
 	if (!s_esc) return;
+
+#if KISS_TELEM_ENABLE
+	// Ahead of the frame deadline, not after it: this loop runs far faster than
+	// the 1 kHz frame rate, and the receiver only holds eight bytes.
+	// @see kissDrain()
+	kissDrain();
+#endif
 
 	uint32_t now = time_us_32();
 	if ((int32_t)(now - s_nextSendUs) < 0) return;
@@ -304,42 +405,60 @@ void escTaskPoll() {
 	uint32_t ms = millis();
 	bool uiAlive = (uint32_t)(ms - s_heartbeatMs) < UI_HEARTBEAT_TIMEOUT_MS;
 
-	// Turn EDT on once per ESC, as soon as one actually answers. lastRpmMs is
-	// written by applyTelemetry() on this core, so reading it here needs no
-	// lock. See edtAutoAction() for why this waits for eRPM rather than a
-	// timer.
+	// Keep asking for EDT while an ESC is answering and EDT is not arriving.
+	// Every timestamp read here is written by applyTelemetry() on this core, so
+	// none of it needs the lock. See edtAutoAction() for the rule and for the
+	// two one-shot versions that came before it.
 	bool linkUp = s_tel.lastRpmMs != 0 &&
 	              (uint32_t)(ms - s_tel.lastRpmMs) < ESC_LINK_STALE_MS;
-	switch (edtAutoAction(linkUp, s_edtAutoDone)) {
+
+	// The success condition is the same fact the header chip shows, computed
+	// the same way: the retry stops exactly when the display says EDT ON, and
+	// starts again if that ever goes back to OFF with an ESC still connected.
+	bool edtFresh = escFieldFresh(s_tel.edtVoltsMs,  ms, EDT_STALE_MS) ||
+	                escFieldFresh(s_tel.edtAmpsMs,   ms, EDT_STALE_MS) ||
+	                escFieldFresh(s_tel.edtTempMs,   ms, EDT_STALE_MS) ||
+	                escFieldFresh(s_tel.edtStressMs, ms, EDT_STALE_MS) ||
+	                escFieldFresh(s_tel.edtStatusMs, ms, EDT_STALE_MS);
+
+	// Arming or disarming is a reason to ask now rather than at the next
+	// interval. Commands only go out while disarmed, so a disarm is the first
+	// chance an attempt deferred by `s_armed` below has had, and making it wait
+	// out the interval on top of that is time with the tiles blank for nothing.
+	if (s_armed != s_edtArmedWas) {
+		s_edtArmedWas = s_armed;
+		s_edtTried = false;
+	}
+
+	switch (edtAutoAction(linkUp, edtFresh, s_edtTried,
+	                      ms - s_edtLastTryMs, EDT_RETRY_MS)) {
 		case EdtAutoAction::Send:
 			// DShot commands only take while disarmed, so if the tester is
-			// armed when the ESC appears, leave the one-shot unfired and try
-			// again next frame rather than marking it done and never sending.
+			// armed, leave the attempt unmade and come back next frame rather
+			// than spending it on a frame that cannot carry it.
 			if (s_armed) break;
-			s_edtAutoDone  = true;
+			s_edtTried     = true;
+			s_edtLastTryMs = ms;
 			s_pendingCmd   = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
 			s_pendingReps  = 10;
 			s_edtRequested = true;
 			break;
 		case EdtAutoAction::Rearm:
 			// The ESC is gone. Whatever replaces it is a different ESC and
-			// needs its own enable, so put the one-shot back.
-			s_edtAutoDone = false;
+			// starts from nothing having been sent to it.
+			s_edtTried     = false;
+			s_edtRequested = false;
 			break;
 		case EdtAutoAction::None:
 			break;
 	}
 
 #if KISS_TELEM_ENABLE
-	// Drain before sending, so a reply to the previous request is banked before
-	// this frame potentially asks for another one.
-	kissDrain(ms);
-
 	// Commands own the frame when they are queued -- sendRaw11Bit() forces the
 	// telemetry bit set anyway, and a reply arriving mid-command sequence would
 	// just be noise.
 	bool wantKiss = false;
-	if (s_pendingReps == 0) {
+	if (s_kissRx && s_pendingReps == 0) {
 		if (s_kissCountdown) {
 			s_kissCountdown--;
 		} else {
@@ -348,19 +467,24 @@ void escTaskPoll() {
 		}
 	}
 #else
-	const bool wantKiss = false;
+	// Not const: escFrameAction() decides the final value below, and this branch
+	// still has to hold it even though nothing reads it afterwards.
+	bool wantKiss = false;
 #endif
 
-	if (s_pendingReps > 0 && !s_armed) {
-		s_esc->sendRaw11Bit(s_pendingCmd);
+	// The decision itself is escFrameAction(), which is pure and lives in the
+	// header so the host suite can reach it. This function only does the I/O.
+	EscFrame f = escFrameAction(s_armed, uiAlive, s_throttle,
+	                            s_pendingCmd, s_pendingReps, wantKiss);
+	if (f.sendCommand) {
+		s_esc->sendRaw11Bit(f.command);
 		s_pendingReps--;
 	} else {
-		// Zero throttle whenever disarmed or the UI has stopped talking to us.
-		uint16_t t = (!s_armed || !uiAlive) ? 0 : s_throttle;
 		// Built by hand rather than via sendThrottle(), which cannot set the
 		// telemetry-request bit. @see kissBuildDshotPayload()
-		s_esc->sendRaw12Bit(kissBuildDshotPayload(t, wantKiss));
+		s_esc->sendRaw12Bit(kissBuildDshotPayload(f.throttle, f.requestKiss));
 	}
+	wantKiss = f.requestKiss;
 
 #if KISS_TELEM_ENABLE
 	if (wantKiss) {

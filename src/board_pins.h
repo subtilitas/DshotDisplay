@@ -40,10 +40,18 @@
 #include "board_rp2350_touch_lcd_2.h"
 #elif BOARD == BOARD_RP2350_TOUCH_LCD_2_8
 #include "board_rp2350_touch_lcd_2_8.h"
+#elif BOARD == BOARD_UNIFIED
+// Nothing. A unified build has no single pin map to include -- that is the
+// point of it -- and everything that used to read these macros now reads
+// @ref g_board instead. The header is kept, and the two board headers with it,
+// because the single-board builds still use them and because they are where the
+// schematic-derived pin tables and their reasoning live.
 #else
 #error "BOARD is not a known board id -- see board.h"
 #endif
 
+#if BOARD != BOARD_UNIFIED
 #if defined(BOARD_TOUCH_CST816D) == defined(BOARD_TOUCH_CST328)
 #error "a board header must select exactly one touch driver"
+#endif
 #endif

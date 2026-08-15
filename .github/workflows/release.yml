@@ -16,9 +16,6 @@ on:
         description: "Existing tag to build and release"
         required: true
 
-permissions:
-  contents: write   # required to create the release and upload assets
-
 env:
   PICO_SDK_VERSION: "2.1.1"
 
@@ -52,11 +49,24 @@ jobs:
     strategy:
       fail-fast: true   # never publish a half-complete set of assets
       matrix:
+        # touch / other_touch / label drive the board-identity assertion below,
+        # exactly as in ci.yml. other_touch is empty for the unified image: it
+        # deliberately compiles both drivers in.
         board:
-          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
-          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
+          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2,
+              touch: cst816, other_touch: cst328, label: "RP2350-TOUCH-LCD-2" }
+          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8,
+              touch: cst328, other_touch: cst816, label: "RP2350-TOUCH-LCD-2.8" }
+          - { slug: "unified",       id: BOARD_UNIFIED,
+              touch: cst816, other_touch: "", label: "RP2350-TOUCH-LCD-2" }
     steps:
+      # ref: is load-bearing for workflow_dispatch. Without it a manual run
+      # checks out the branch it was launched from and attaches binaries built
+      # from that to a release named after an older tag -- and --verify-tag does
+      # not catch it, because the tag does exist. It is the build that is wrong.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
 
       - name: Install the ARM toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
@@ -66,12 +76,18 @@ jobs:
       - name: Install ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
+      # Same key scheme as ci.yml: not keyed on the board (neither cached path
+      # depends on it), with restore-keys so a CMakeLists.txt edit reuses the
+      # previous entry -- and so release builds share cache entries with CI
+      # instead of re-cloning the ~200 MB SDK.
       - uses: actions/cache@v4
         with:
           path: |
             ~/pico-sdk
             build/_deps
-          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ matrix.board.slug }}-${{ hashFiles('CMakeLists.txt') }}
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            picosdk-${{ env.PICO_SDK_VERSION }}-
 
       - name: Fetch the Pico SDK
         run: |
@@ -96,14 +112,65 @@ jobs:
           # env values -- CMake would receive the literal string "~/pico-sdk"
           # and report the SDK missing.
           export PICO_SDK_PATH="$HOME/pico-sdk"
+          # Mirror the CI build exactly: CMAKE_BUILD_TYPE=Release makes the
+          # intent explicit (and keeps DWARF present via the SDK's
+          # PICO_DEBUG_INFO_IN_RELEASE, which the identity assert below needs),
+          # and STRICT=ON applies the same -Werror CI proved the sources clean
+          # under -- released bits should be built the way CI tested them.
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
-                -DBOARD=${{ matrix.board.id }} .
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBOARD=${{ matrix.board.id }} -DSTRICT=ON .
           # Named target rather than a bare `ninja`. sdtest is a bench
           # diagnostic and is deliberately not part of a release: an unlabelled
           # second .uf2 beside the firmware is an invitation to flash the wrong
           # one, and it does nothing a user of the tester wants.
           ninja -C build DshotDisplay
-          arm-none-eabi-size build/DshotDisplay.elf
+          arm-none-eabi-size "build/DshotDisplay-${{ matrix.board.slug }}.elf"
+
+      # Same assertion CI runs: a UF2 structure check cannot tell the boards
+      # apart, and a release that ships the 2.0" image under the 2.8" name is
+      # exactly the mistake this exists to catch. The DWARF line table is the
+      # discriminator -- both touch drivers export identical symbols, so nm
+      # cannot tell the two images apart; the source file each was compiled
+      # from is the thing that differs.
+      - name: Assert the image is actually for this board
+        run: |
+          set -e
+          elf=build/DshotDisplay-${{ matrix.board.slug }}.elf
+          want='${{ matrix.board.touch }}.cpp'
+          other='${{ matrix.board.other_touch }}.cpp'
+
+          files=$(arm-none-eabi-objdump --dwarf=rawline "$elf" \
+                    | grep -oE 'cst(816|328)\.cpp' | sort -u || true)
+          if ! printf '%s\n' "$files" | grep -qx "$want"; then
+            echo "::error::$want was not compiled into this image (found: $files)"
+            exit 1
+          fi
+          if [ -n "$other" ] && printf '%s\n' "$files" | grep -qx "$other"; then
+            echo "::error::$other is in this image too"
+            exit 1
+          fi
+          # The unified image is the one that must contain *both*, and both
+          # board labels with it -- that is the whole claim it makes.
+          if [ "${{ matrix.board.slug }}" = "unified" ]; then
+            for f in cst816.cpp cst328.cpp; do
+              printf '%s\n' "$files" | grep -qx "$f" || {
+                echo "::error::unified image is missing $f"; exit 1; }
+            done
+            for l in RP2350-TOUCH-LCD-2 RP2350-TOUCH-LCD-2.8; do
+              strings "$elf" | grep -qx "$l" || {
+                echo "::error::unified image is missing the $l label"; exit 1; }
+            done
+            echo "unified: both drivers and both labels present"
+          fi
+
+          # Exact match. "RP2350-TOUCH-LCD-2" is a prefix of the 2.8" label, so
+          # a substring test passes on the wrong image.
+          if ! strings "$elf" | grep -qx '${{ matrix.board.label }}'; then
+            echo "::error::splash label ${{ matrix.board.label }} missing"
+            exit 1
+          fi
+          echo "compiled $want; splash says ${{ matrix.board.label }}"
 
       # Prove the validator works before trusting its verdict. The first version
       # of this check was inlined here, never executed, and rejected every
@@ -118,7 +185,7 @@ jobs:
         run: |
           mkdir -p dist
           out="dist/DshotDisplay-${TAG}-${SLUG}.uf2"
-          cp build/DshotDisplay.uf2 "$out"
+          cp "build/DshotDisplay-${SLUG}.uf2" "$out"
           bash test/check_uf2.sh "$out"
 
       - uses: actions/upload-artifact@v4
@@ -131,9 +198,15 @@ jobs:
     name: Publish release
     needs: [version, build]
     runs-on: ubuntu-latest
+    # Scoped to the job that needs it. Workflow-scoped, this token was also
+    # handed to the build matrix, which runs third-party actions and clones over
+    # the network.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.version.outputs.tag }}
           fetch-depth: 0   # generated notes need the history
 
       - uses: actions/download-artifact@v4
@@ -141,13 +214,12 @@ jobs:
           pattern: uf2-*
           path: dist
           merge-multiple: true
-          merge-multiple: true
 
       - name: Checksums
         working-directory: dist
         run: |
           ls -l
-          sha256sum *.uf2 > SHA256SUMS.txt
+          sha256sum ./*.uf2 > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Write release notes
@@ -155,14 +227,16 @@ jobs:
           cat > notes.md <<'EOF'
           ## Which image
 
-          | Board | File |
+          | File | Use it when |
           |---|---|
-          | Waveshare RP2350-Touch-LCD-2 (2.0") | `...-touch-lcd-2.uf2` |
-          | Waveshare RP2350-Touch-LCD-2.8 | `...-touch-lcd-2.8.uf2` |
+          | `DshotDisplay-VERSION-unified.uf2` | **Start here.** Runs on either board; the first boot detects which one it is on (a safe probe of the board's always-on I2C devices) and shows the answer under **CFG → SETUP** to confirm with a save |
+          | `DshotDisplay-VERSION-touch-lcd-2.uf2` | The 2.0" board only. A few kB smaller, and never asks |
+          | `DshotDisplay-VERSION-touch-lcd-2.8.uf2` | The 2.8" board only |
 
-          The two are not interchangeable: different SPI instance for the panel,
-          different I2C, a different touch controller and a different SD
-          interface.
+          The unified image costs about 3 kB of flash over a single-board one,
+          against 4 MB available. Take it unless you have a reason not to: the
+          single-board images are indistinguishable once flashed, and the 2.8"
+          one asserts a power latch the 2.0" does not.
 
           ## Flashing
 
@@ -174,12 +248,14 @@ jobs:
 
           | ESC | 2.0" board | 2.8" board |
           |---|---|---|
-          | Signal | **GP4** — P2 header, pin 11 | **GP28** — J4 pin 11 |
+          | Signal | **GP4** — P2 header, pin 11 | **GP29** — J4 pin 12 |
           | Ground | **GND** — P2 header, pin 13 | **GND** — J4 pin 1 or 5 |
 
-          The 2.8" brings out only GP28 and GP29, so build with `-DDSHOT_PIN=29`
-          if the wire is on the other one. An ESC on the wrong pin is silent, with
-          no error anywhere.
+          The 2.8" brings out only GP28 and GP29. Either works — change it on the
+          board itself from **CFG → SETUP**, which remembers the choice across
+          power cycles. An ESC on the wrong pin used to be silent with no error
+          anywhere; the SETUP screen now shows the live packet rate beside the
+          pin selector, so you can see it come off zero.
 
           Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output,
           and RP2350 GPIO is not 5 V tolerant.
@@ -228,6 +304,7 @@ jobs:
           # the guard would have passed a release with no firmware in it.
           for want in "DshotDisplay-${TAG}-touch-lcd-2.uf2" \
                       "DshotDisplay-${TAG}-touch-lcd-2.8.uf2" \
+                      "DshotDisplay-${TAG}-unified.uf2" \
                       "SHA256SUMS.txt"; do
             echo "$assets" | grep -qxF "$want" || {
               echo "::error::no asset named '$want' on $TAG"; exit 1; }

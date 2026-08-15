@@ -16,11 +16,14 @@
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 #include "hardware/i2c.h"
+#include "hardware/spi.h"
 #include "hardware/uart.h"
 #include "gfx.h"
 #include "st7789.h"
 #include "touch.h"
 #include "esc_task.h"
+#include "settings.h"
+#include "config.h"
 #include "am32_bl.h"
 #include "am32_eeprom.h"
 #include "sd_log.h"
@@ -65,6 +68,20 @@ uint32_t clock_get_hz(enum clock_index) { return 150000000u; }
 //     in this file drives the UI tests instead ---
 i2c_inst_t *i2c0 = nullptr;
 i2c_inst_t *i2c1 = nullptr;
+
+// The board descriptors name an SPI instance and a touch driver each. On the
+// host none of them is ever dialled -- the panel and the touch chip are both
+// faked -- but the descriptors are real objects whose fields have to resolve
+// at link time.
+spi_inst_t *spi0 = nullptr;
+spi_inst_t *spi1 = nullptr;
+
+static bool fakeTouchDriverInit() { return true; }
+static void fakeTouchDriverPoll(TouchState *) {}
+extern const TouchDriver TOUCH_DRIVER_CST816D;
+extern const TouchDriver TOUCH_DRIVER_CST816D = { "CST816D", fakeTouchDriverInit, fakeTouchDriverPoll };
+extern const TouchDriver TOUCH_DRIVER_CST328;
+extern const TouchDriver TOUCH_DRIVER_CST328  = { "CST328",  fakeTouchDriverInit, fakeTouchDriverPoll };
 void i2c_init(i2c_inst_t *, unsigned) {}
 int i2c_write_timeout_us(i2c_inst_t *, uint8_t, const uint8_t *, size_t, bool, unsigned) { return -1; }
 int i2c_read_timeout_us(i2c_inst_t *, uint8_t, uint8_t *, size_t, bool, unsigned) { return -1; }
@@ -83,7 +100,17 @@ void uart_set_fifo_enabled(uart_inst_t *, bool) {}
 // display: render into the real framebuffer, never push pixels anywhere
 // ---------------------------------------------------------------------------
 void st7789FlushDirty() { gfxClearDirty(); }
-void st7789SetBacklight(uint8_t) {}
+// Recorded rather than discarded: the arm-feedback dip is only observable as a
+// backlight level, so a fake that threw it away would make it untestable.
+static uint8_t g_backlight = 0;
+static uint8_t g_backlightMin = 255;
+uint8_t fakeBacklight() { return g_backlight; }
+uint8_t fakeBacklightMin() { return g_backlightMin; }
+void fakeBacklightResetMin() { g_backlightMin = 255; }
+void st7789SetBacklight(uint8_t level) {
+	g_backlight = level;
+	if (level < g_backlightMin) g_backlightMin = level;
+}
 
 // ---------------------------------------------------------------------------
 // scripted touch
@@ -174,18 +201,40 @@ bool fakeArmed() { return g_armed; }
 bool fakePinReturned() { return !g_suspended; }
 void fakeSetTelemetry(const EscTelemetry *t) { g_tel = *t; }
 
-void escSetThrottle(uint16_t t) { g_throttle = t; }
-void escSetArmed(bool a) { g_armed = a; }
-void escSetPoles(uint8_t) {}
+// These three mirror esc_task.cpp deliberately, clamp for clamp. They used not
+// to: escSetArmed() only set a flag, so "disarming zeroes the commanded
+// throttle" -- a rule production does enforce -- could not be observed by any
+// test, and escSetThrottle() had no clamp, so nothing checked the one in
+// production either.
+void escSetThrottle(uint16_t t) { g_throttle = t > 2000 ? 2000 : t; }
+void escSetArmed(bool a) {
+	if (!a) g_throttle = 0;
+	g_armed = a;
+}
+static uint8_t g_poles = 14;
+uint8_t fakePoles() { return g_poles; }
+void escSetPoles(uint8_t p) { g_poles = p < 2 ? 2 : p; }
 void escHeartbeat() {}
 // Mirrors the two-line rule in esc_task.cpp: the command is refused while
 // armed. esc_task.cpp cannot be linked here (PIO, UART), so this is a copy --
 // but the thing under test is what the UI does with the answer, and that is
 // the shipped code.
+// The counter now increments only when the command is actually queued, as
+// production does. Counting refused requests too meant a test asserting "the
+// button sent the command" passed for a request the ESC never saw.
 static int g_beepRequests = 0;
 int  fakeBeepRequests() { return g_beepRequests; }
-bool escRequestBeep(uint8_t) { g_beepRequests++; return !g_armed; }
-bool escEdtRequested() { return true; }
+bool escRequestBeep(uint8_t) {
+	if (g_armed) return false;
+	g_beepRequests++;
+	return true;
+}
+// Settable, because production only reports true once an ESC has answered and
+// been sent an enable -- so a hardcoded true made the DS600 chip's two states
+// indistinguishable and the settings screen's EDT indicator untestable.
+static bool g_edtRequested = true;
+void fakeSetEdtRequested(bool on) { g_edtRequested = on; }
+bool escEdtRequested() { return g_edtRequested; }
 // Verbatim, with no helpful stamping of arrival times. That stamping used to
 // be here, and it meant every test saw permanently fresh telemetry -- so the
 // bug where readings never expired could not have been caught by any of them.
@@ -194,6 +243,83 @@ void escSnapshot(EscTelemetry *o) { *o = g_tel; }
 void escTaskSuspend() { g_suspended = true; }
 void escTaskResume() { g_suspended = false; }
 bool escTaskSuspended() { return g_suspended; }
+
+// Mirrors esc_task.cpp: a wiring change disarms and zeroes the throttle,
+// because the ESC on the old pin stops hearing frames the moment it is
+// released. Tests assert on that, so the fake has to do it too.
+//
+// Seeded to a pin no board offers rather than to a default, and for the same
+// reason the real escTaskInit() seeds from the stored settings: the ESC pin is
+// per board now and lives in a descriptor, and reading a descriptor from a
+// static initialiser here would depend on the link order of two other
+// translation units. Every test enters through uiInit(), which configures this
+// before anything reads it; 255 is what a test that forgot would see, and it is
+// unmistakable. @see cfg_pin_defaults
+static uint8_t  g_dshotPin = 255;
+static uint16_t g_dshotKbaud = DSHOT_SPEED_KBAUD;
+static int      g_configures = 0;
+int fakeConfigureCount() { return g_configures; }
+uint16_t fakeDshotKbaud() { return g_dshotKbaud; }
+void escTaskConfigure(uint8_t pin, uint16_t kbaud, bool, uint8_t) {
+	if (g_dshotPin == pin && g_dshotKbaud == kbaud) return;
+	g_dshotPin = pin;
+	g_dshotKbaud = kbaud;
+	g_armed = false;
+	g_throttle = 0;
+	g_configures++;
+}
+uint8_t escTaskDshotPin() { return g_dshotPin; }
+
+// ---------------------------------------------------------------------------
+// Settings storage
+//
+// settings.cpp holds every rule -- defaults, validation, the CRC, and the
+// discard-whole-block fallback -- and none of the flash sequence, so it links
+// here against this RAM array instead of settings_flash.cpp. That split is what
+// makes the rules testable at all: the interesting behaviour is "what happens
+// to a block that does not validate", and answering it needs to be able to
+// write a bad one.
+// ---------------------------------------------------------------------------
+static uint8_t g_flash[256];
+static bool    g_flashWritable = true;
+static int     g_flashWrites = 0;
+
+void fakeFlashClear() { memset(g_flash, 0xFF, sizeof(g_flash)); }
+void fakeFlashSetWritable(bool on) { g_flashWritable = on; }
+uint8_t *fakeFlashBytes() { return g_flash; }
+int fakeFlashWrites() { return g_flashWrites; }
+
+bool settingsStorageRead(void *dst, uint32_t len) {
+	if (len > sizeof(g_flash)) return false;
+	memcpy(dst, g_flash, len);
+	return true;
+}
+
+bool settingsStorageWrite(const void *src, uint32_t len) {
+	// Counted even when refused: on the device the sector is erased before the
+	// program, so a write *attempt* is already wear and already the torn
+	// window. "How many attempts" is the number the no-op-save test cares
+	// about.
+	g_flashWrites++;
+	if (!g_flashWritable) return false;
+	if (len > sizeof(g_flash)) return false;
+	memcpy(g_flash, src, len);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Reboot
+//
+// platReboot() has no caller left. A saved *board* change used to take effect
+// by rebooting into it, and that is the mechanism that made one wrong tap on a
+// board picker cost a reflash; the board is detected every boot now. So this
+// counts a thing that must never happen -- see testBoardSelection().
+// ---------------------------------------------------------------------------
+static int g_reboots = 0;
+
+int fakeRebootCount() { return g_reboots; }
+
+extern "C" void watchdog_reboot(uint32_t, uint32_t, uint32_t) { g_reboots++; }
 
 // ---------------------------------------------------------------------------
 // Region fingerprint
@@ -212,6 +338,14 @@ uint32_t fakeRegionHash(int x, int y, int w, int h) {
 		}
 	}
 	return hash;
+}
+
+/** @brief Count framebuffer pixels of an exact colour. @see fakes.h */
+int fakeCountColour(uint16_t c) {
+	const uint16_t *fb = gfxBuffer();
+	int n = 0;
+	for (int i = 0; i < GFX_W * GFX_H; i++) if (fb[i] == c) n++;
+	return n;
 }
 
 // ---------------------------------------------------------------------------

@@ -124,6 +124,13 @@ static uint8_t updateCrc8(uint8_t data, uint8_t seed) {
 A frame whose CRC does not match is dropped whole. There is no partial credit —
 a bad CRC on a 10-byte frame could mean any byte is wrong.
 
+> **Since implemented:** the receiver is no longer one of the two hardware
+> UARTs. It is a UART built from one PIO state machine (`src/pio_uart_rx.pio`),
+> because "the KISS pin must be a GPIO one of the PL011s can receive on" ruled
+> out every pin on the 2.8" board — it frees two, only GP29 of them is a UART RX,
+> and GP29 carries the ESC signal. Everything below about *requesting* a frame
+> and decoding it is unchanged; only what turns the line into bytes is different.
+
 ## Requesting a frame
 
 This is the part that needs care, because the DShot library we use does not

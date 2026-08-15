@@ -26,6 +26,7 @@
 #include "hw_config.h"
 #include "sd_card.h"
 
+#include "board_desc.h"
 #include "board_pins.h"
 
 #if defined(SD_IFACE_SPI)
@@ -155,6 +156,13 @@ int main(void) {
                "is attempted below regardless -- a pin that drives both ways is\n"
                "all the card actually needs.\n");
     }
+
+    // The driver's pin fields start zeroed and are only filled from the board
+    // descriptor -- the firmware does this in sdLogBegin(). Without it every
+    // "SD pin" here is GP0, and the sweep below exercises the wrong wire on
+    // every board. A single-board build's descriptor list holds exactly this
+    // board, so no selection is needed first.
+    sdHwConfigApply();
 
     sd_card_t *card = sd_get_by_num(0);
     if (!card) { printf("no card object -- hw_config is not linked\n"); for (;;); }

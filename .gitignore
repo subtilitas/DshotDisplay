@@ -3,7 +3,7 @@ docs/html/
 docs/latex/
 # Local configuration files
 localdata
-# Arduino / PlatformIO build artefacts
+# Build trees (CMake, PlatformIO) and firmware artefacts
 build/
 .pio/
 *.uf2
@@ -16,6 +16,3 @@ test/dshot_tests
 test/gen_blackbox_log
 test/*.ppm
 test/*.BFL
-
-# CMake build tree
-build/

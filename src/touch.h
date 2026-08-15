@@ -2,8 +2,10 @@
  * @file touch.h
  * @brief Capacitive touch interface, independent of which controller is fitted.
  *
- * Two implementations exist and exactly one compiles. Which one is settled in
- * @ref board_pins.h by the board being built for:
+ * Both implementations always compile, and the board descriptor names which one
+ * to call. They used to be mutually exclusive `#if`s, each exporting exactly
+ * `touchInit` and `touchPoll` -- which is a duplicate-symbol error the moment
+ * an image has to be able to drive either board.
  *
  * | Board | Controller | Driver | Address |
  * |---|---|---|---|
@@ -20,6 +22,7 @@
 #include <stdint.h>
 
 #include "config.h"
+#include "board_desc.h"
 
 /** @brief Native panel width, in portrait, independent of @ref LCD_ROTATION. */
 #define TOUCH_NATIVE_W 240
@@ -82,10 +85,19 @@ struct TouchState {
 bool touchInit();
 
 /**
+ * @brief The driver the active board names, or nullptr before one is selected.
+ * @return Its TouchDriver.
+ */
+const TouchDriver *touchActiveDriver();
+
+/**
  * @brief Poll the controller and update @p t.
  *
- * Safe to call at any rate; ~60 Hz is plenty. On a failed I2C transaction the
- * position is left unchanged and the finger is reported as up.
+ * Safe to call at any rate; ~60 Hz is plenty. A single failed I2C transaction
+ * holds the previous contact state with the position unchanged — a one-poll
+ * glitch mid-press must not synthesise a release, because taps fire on
+ * release and a synthetic release *commits* whatever the finger is resting
+ * on. Only consecutive failures report the finger up.
  *
  * @param[in,out] t State to update. Must persist between calls.
  */

@@ -52,5 +52,53 @@ uint32_t fakeRegionHash(int x, int y, int w, int h);
 /** @brief How many times the UI has asked for a beep. */
 int fakeBeepRequests();
 
+/**
+ * @brief Count framebuffer pixels of an exact colour.
+ *
+ * Used to prove a screen left nothing of the previous one behind: the cyan of
+ * the settings screen's nav buttons is distinctive, so more than a trace of it
+ * surviving on the tester screen is a leftover.
+ */
+int fakeCountColour(uint16_t c);
+
 /** @brief Write the current framebuffer to a binary PPM, for eyeballing. */
 void fakeDumpFrame(const char *name);
+
+/** @brief Pole count most recently pushed to the fake pump. */
+uint8_t fakePoles();
+
+/** @brief Set what escEdtRequested() reports. */
+void fakeSetEdtRequested(bool on);
+
+/** @brief Backlight level most recently driven. */
+uint8_t fakeBacklight();
+
+/** @brief Lowest backlight level seen since fakeBacklightResetMin(). */
+uint8_t fakeBacklightMin();
+
+/** @brief Start watching for a new backlight minimum. */
+void fakeBacklightResetMin();
+
+/** @brief Erase the fake settings flash to 0xFF, as a blank part reads. */
+void fakeFlashClear();
+
+/** @brief Make the fake settings flash refuse writes, as a full image would. */
+void fakeFlashSetWritable(bool on);
+
+/** @brief Raw bytes of the fake settings flash, for corrupting on purpose. */
+uint8_t *fakeFlashBytes();
+
+/** @brief How many storage writes have been *attempted* since process start. */
+int fakeFlashWrites();
+
+/** @brief How many times platReboot() has fired. Asserted to stay put. */
+int fakeRebootCount();
+
+/** @brief How many times the UI has rebuilt the DShot pump's wiring. */
+int fakeConfigureCount();
+
+/** @brief DShot bitrate most recently pushed to the fake pump. */
+uint16_t fakeDshotKbaud();
+
+/** @brief GPIO most recently pushed to the fake pump. @see escTaskDshotPin() */
+uint8_t escTaskDshotPin();

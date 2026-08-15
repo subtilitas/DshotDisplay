@@ -17,7 +17,12 @@
  * the board sends bidirectional DShot to a single ESC while decoding the eRPM
  * and Extended DShot Telemetry that comes back on the same wire.
  *
- * One board per build, chosen with `-DBOARD=`. They are not interchangeable:
+ * Built either per board with `-DBOARD=`, or as one unified image that carries
+ * both board descriptions and works out which one it is on at boot, by probing
+ * for the board's always-on I2C devices (see board_probe.h). The board is not a
+ * setting and there is nothing to pick: it is detected every boot, because an
+ * answer that can be remembered is an answer that can be remembered wrongly,
+ * and the display is what it costs. The boards are genuinely different:
  * different SPI instance for the panel, different I2C, a different touch
  * controller, and a different SD interface — hardware SPI on the 2.0", PIO
  * SDIO on the 2.8".
@@ -63,16 +68,26 @@
 #include <stdio.h>
 
 #include "config.h"
-#include "board_pins.h"
+#include "board_desc.h"
+#include "board_probe.h"
 #include "gfx.h"
 #include "st7789.h"
 #include "touch.h"
 #include "esc_task.h"
 #include "ui.h"
 #include "sd_log.h"
+#include "settings.h"
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
 #define UI_PERIOD_MS 25
+
+/**
+ * @brief The power latch, asserted before the board is known.
+ *
+ * GP26 on the 2.8". SD_SCK on the 2.0", where it is released again as soon as
+ * the stored board id has been read. @see setup()
+ */
+#define BAT_EN_EARLY_PIN 26
 
 static uint32_t s_nextUiMs = 0;   /**< Deadline for the next UI frame. */
 #if SERIAL_TELEMETRY
@@ -86,19 +101,72 @@ static uint32_t s_nextLogMs = 0;  /**< Deadline for the next serial dump. */
  * shares, so touchInit() has to follow it.
  */
 void setup() {
-#ifdef PIN_BAT_EN
-	// First thing, before anything that could take a millisecond: on the 2.8"
-	// board this is the latch that keeps VBAT connected once the power button
-	// is released. Miss it and the board dies mid-boot on battery. Harmless on
-	// USB, and absent entirely on boards without the latch.
-	gpio_init(PIN_BAT_EN);
-	gpio_set_dir(PIN_BAT_EN, GPIO_OUT);
-	gpio_put(PIN_BAT_EN, 1);
-#endif
+	// First thing, before anything that could take a millisecond, and before we
+	// know which board this is.
+	//
+	// On the 2.8" GP26 is the latch that keeps VBAT connected once the power
+	// button is released; miss it and the board dies mid-boot on battery. That
+	// cannot wait for the stored board id, because reading it means reading
+	// flash, which takes longer than the button is held.
+	//
+	// On the 2.0" GP26 is SD_SCK. Driving an idle SD clock high with the card
+	// deselected is harmless -- no transaction is in progress and nothing has
+	// been initialised -- and it is released again below once the board is
+	// known. Asserting it unconditionally is the one thing a unified image
+	// cannot defer.
+	//
+	// @warning Validate this on a 2.0" board before relying on it. It is the
+	//          single step in the unified image that touches a pin whose
+	//          function differs between the two, and it is reasoned rather than
+	//          measured.
+	gpio_init(BAT_EN_EARLY_PIN);
+	gpio_set_dir(BAT_EN_EARLY_PIN, GPIO_OUT);
+	gpio_put(BAT_EN_EARLY_PIN, 1);
 
 #if SERIAL_TELEMETRY
 	stdio_init_all();
 #endif
+
+	// Which board this is, before anything reads a value that depends on it.
+	//
+	// A unified image asks the hardware itself, every boot, and nothing else
+	// gets a vote — see board_probe.h for why the two bus probes are safe on
+	// either board. There is deliberately no override and no picker: a stored
+	// board id used to outrank the hardware, and a wrong one was applied by the
+	// very boot that would have had to show the screen to undo it. Detection
+	// cannot go stale that way; a wrong detection fails here, before a pin is
+	// driven.
+	//
+	// A single-board image knows what it is — BOARDS[] holds one entry and
+	// g_board already points at it — so it does not probe at all.
+	if (boardCount() > 1) {
+		uint8_t probed = boardProbe();
+		if (!boardSelect(probed)) {
+			// Unknown hardware: nothing answered, or both buses did. Every
+			// option from here is a guess, and a guessed pin map drives outputs
+			// into other chips' pins — so hold what is safe and do nothing at
+			// all: latch kept asserted (releasing it powers off a battery-fed
+			// 2.8" mid-boot), no display, no touch, and above all no DShot.
+			// Recovery is a reflash over USB, which BOOTSEL provides regardless
+			// of how wedged the firmware is.
+			for (;;) tight_loop_contents();
+		}
+	}
+
+	// After the board, because the defaults this seeds are pin choices and those
+	// are per-board — and before escTaskInit(), which seeds core1's wiring from
+	// them, and before uiInit(), which reads the palette and backlight
+	// preference. A board with blank flash gets this board's defaults and never
+	// knows the difference; a block saved on the *other* board arrives as this
+	// board's settings, every pin in it re-judged. @see settingsValidate()
+	settingsLoad();
+
+	// Hand GP26 back if this board does not want it held. On the 2.0" it is
+	// SD_SCK and the card driver claims it shortly afterwards.
+	if (g_board->batEnPin != (int8_t)BAT_EN_EARLY_PIN) {
+		gpio_set_dir(BAT_EN_EARLY_PIN, GPIO_IN);
+		gpio_disable_pulls(BAT_EN_EARLY_PIN);
+	}
 
 	// Before anything can call escSnapshot(), and before core1 is launched.
 	escTaskInit();
@@ -172,8 +240,17 @@ void loop() {
 #endif
 }
 
-/** @brief Core1 setup: claim the PIO state machine for DShot. */
+/**
+ * @brief Core1 setup: opt in to being parked, then start the frame pump.
+ *
+ * `multicore_lockout_victim_init()` is what lets core0 write flash at all.
+ * Erasing a sector turns XIP off, and core1 executes from XIP, so core0 has to
+ * be able to hold it still first -- without this the settings save would fault
+ * core1 rather than fail, and it would do so only on the boards where somebody
+ * had actually pressed the button.
+ */
 void setup1() {
+	multicore_lockout_victim_init();
 	escTaskBegin();
 }
 

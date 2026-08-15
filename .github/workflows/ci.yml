@@ -26,8 +26,15 @@ jobs:
       fail-fast: false
       matrix:
         board:
-          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2 }
-          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8 }
+          - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2,
+              touch: cst816, other_touch: cst328, label: "RP2350-TOUCH-LCD-2" }
+          - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8,
+              touch: cst328, other_touch: cst816, label: "RP2350-TOUCH-LCD-2.8" }
+          # The image that drives either board. Both touch drivers and both
+          # descriptors are compiled in, so the "other driver must be absent"
+          # assertion below is skipped for it -- other_touch is empty.
+          - { slug: "unified", id: BOARD_UNIFIED,
+              touch: cst816, other_touch: "", label: "RP2350-TOUCH-LCD-2" }
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +52,13 @@ jobs:
           path: |
             ~/pico-sdk
             build/_deps
-          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ matrix.board.slug }}-${{ hashFiles('CMakeLists.txt') }}
+          # Not keyed on the board: neither path depends on it, so including it
+          # stored the same ~200 MB SDK clone twice. restore-keys means an edit
+          # to CMakeLists.txt -- including a comment -- reuses the previous
+          # entry instead of forcing a fresh clone and re-fetch on every job.
+          key: picosdk-${{ env.PICO_SDK_VERSION }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            picosdk-${{ env.PICO_SDK_VERSION }}-
 
       # tinyusb is needed for stdio over USB CDC; without the submodule the SDK
       # silently builds without USB support and SERIAL_TELEMETRY goes nowhere.
@@ -63,13 +76,147 @@ jobs:
           # env values -- CMake would receive the literal string "~/pico-sdk"
           # and report the SDK missing.
           export PICO_SDK_PATH="$HOME/pico-sdk"
+          # STRICT=ON puts -Werror on this project's own sources, and only
+          # those. Until it existed the cross build had no -Werror at all, so a
+          # warning only arm-none-eabi produces -- the newlib %lu/uint32_t class
+          # of thing this firmware has already been bitten by -- was printed
+          # here and ignored. The permutation job below cannot catch those: it
+          # is a different compiler.
+          # CMAKE_BUILD_TYPE=Release is explicit even though CMakeLists.txt
+          # defaults an empty build type to Release: the flag documents the
+          # intent, and the DWARF-based board-identity assert below depends on
+          # debug info being present (the SDK's PICO_DEBUG_INFO_IN_RELEASE
+          # keeps -g in Release builds).
           cmake -B build -G Ninja -DPICO_BOARD=pico2 -DPICO_PLATFORM=rp2350-arm-s \
-                -DBOARD=${{ matrix.board.id }} .
-          # Named target rather than a bare `ninja`. The tree also defines
-          # sdtest, a bench diagnostic that is nobody's firmware; building it
-          # here would only slow the job and tempt someone to flash it.
+                -DCMAKE_BUILD_TYPE=Release \
+                -DBOARD=${{ matrix.board.id }} -DSTRICT=ON .
           ninja -C build DshotDisplay
-          arm-none-eabi-size build/DshotDisplay.elf
+          # sdtest is deliberately NOT built here. It is a bench bring-up
+          # tool, never released, and it is not worth a red firmware leg: it
+          # still builds locally (a plain `ninja` produces it on the
+          # single-board configs, as README says), it is just not this
+          # pipeline's job to prove it.
+          arm-none-eabi-size build/DshotDisplay-${{ matrix.board.slug }}.elf
+
+      # A ceiling, not a printout. The framebuffer alone is 150 kB of the
+      # RP2350's 520 kB, and a regression that doubles a buffer otherwise passes
+      # CI and fails on the bench. Generous enough not to be a nuisance; tighten
+      # it when the numbers settle.
+      - name: Size budget
+        run: |
+          read -r text data bss _ <<<"$(arm-none-eabi-size \
+            build/DshotDisplay-${{ matrix.board.slug }}.elf | tail -1)"
+          flash=$((text + data))
+          ram=$((data + bss))
+          echo "flash=${flash}B ram=${ram}B"
+          # 1 MB of the 4 MB the linker script declares. The settings sector is
+          # the last 4 kB of the full 4 MB (PICO_FLASH_SIZE_BYTES -
+          # FLASH_SECTOR_SIZE -- see settings_flash.cpp), so a 1 MB image can
+          # never collide with it; this ceiling is purely a growth budget.
+          [ "$flash" -lt 1048576 ] || { echo "::error::flash budget exceeded"; exit 1; }
+          [ "$ram"   -lt 400000  ] || { echo "::error::RAM budget exceeded"; exit 1; }
+
+      # "It compiled" is all this job proved about the board split until now.
+      # The two targets differ in SPI instance, I2C instance, touch chip and SD
+      # interface, and swapping LCD_SPI_PORT between the two headers would have
+      # left every job green.
+      - name: Assert the image is actually for this board
+        run: |
+          set -e
+          elf=build/DshotDisplay-${{ matrix.board.slug }}.elf
+          want='${{ matrix.board.touch }}.cpp'
+          other='${{ matrix.board.other_touch }}.cpp'
+
+          # The DWARF line table, not the symbol table. Both touch drivers
+          # export exactly touchInit and touchPoll, and their file-statics share
+          # names too, so nm cannot tell the two images apart at all -- the
+          # source file each was compiled from is the thing that differs.
+          files=$(arm-none-eabi-objdump --dwarf=rawline "$elf" \
+                    | grep -oE 'cst(816|328)\.cpp' | sort -u || true)
+          if ! printf '%s\n' "$files" | grep -qx "$want"; then
+            echo "::error::$want was not compiled into this image (found: $files)"
+            exit 1
+          fi
+          if [ -n "$other" ] && printf '%s\n' "$files" | grep -qx "$other"; then
+            echo "::error::$other is in this image too"
+            exit 1
+          fi
+          # The unified image is the one that must contain *both*, and both
+          # board labels with it -- that is the whole claim it makes.
+          if [ "${{ matrix.board.slug }}" = "unified" ]; then
+            for f in cst816.cpp cst328.cpp; do
+              printf '%s\n' "$files" | grep -qx "$f" || {
+                echo "::error::unified image is missing $f"; exit 1; }
+            done
+            for l in RP2350-TOUCH-LCD-2 RP2350-TOUCH-LCD-2.8; do
+              strings "$elf" | grep -qx "$l" || {
+                echo "::error::unified image is missing the $l label"; exit 1; }
+            done
+            echo "unified: both drivers and both labels present"
+          fi
+
+          # Exact match. "RP2350-TOUCH-LCD-2" is a prefix of the 2.8" label, so
+          # a substring test passes on the wrong image.
+          if ! strings "$elf" | grep -qx '${{ matrix.board.label }}'; then
+            echo "::error::splash label ${{ matrix.board.label }} missing"
+            exit 1
+          fi
+          echo "compiled $want; splash says ${{ matrix.board.label }}"
+
+      # The pin options are documented build options that CI had never once
+      # passed. -DDSHOT_PIN=0 in particular used to be discarded silently,
+      # because CMake's if() treats the string "0" as false -- and once that was
+      # fixed the option still reached nothing, because config.h selected it
+      # with `#if BOARD == ...` and the descriptors carried literals. The job
+      # below passed throughout: it was grepping CMake's own output.
+      #
+      # It still is, and now says so. What this proves is the plumbing -- CMake
+      # accepts the option and reports what it did. That the value reaches the
+      # *firmware* is asserted in the host suite ("Pin overrides reach the
+      # descriptors"), which compiles the same descriptor sources this build
+      # does and is a great deal faster than a firmware build per permutation.
+      - name: Pin overrides are plumbed through
+        run: |
+          set -eo pipefail
+          export PICO_SDK_PATH="$HOME/pico-sdk"
+          # GP0 leads, for the if() reason above. The 2.8" pair has to move
+          # together: that board frees two pins and both defaults are spoken
+          # for, so overriding one alone collides and the descriptor's
+          # static_assert stops the build -- which is the intended behaviour,
+          # not something to test around.
+          for args in "-DDSHOT_PIN_LCD_2=0" "-DDSHOT_PIN_LCD_2=10" \
+                      "-DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29"; do
+            rm -rf build-pin
+            # An array, not an unquoted $args: the 2.8" case carries two -D
+            # flags that must reach cmake as two words, and leaving the shell to
+            # split them is the same word-splitting that would also glob.
+            read -ra pindefs <<< "$args"
+            # FETCHCONTENT_BASE_DIR points at the main build's _deps so the
+            # dependencies fetched (and cached) there are reused instead of
+            # being downloaded again for every permutation.
+            cmake -B build-pin -G Ninja -DPICO_BOARD=pico2 \
+                  -DPICO_PLATFORM=rp2350-arm-s -DBOARD=${{ matrix.board.id }} \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DFETCHCONTENT_BASE_DIR="$PWD/build/_deps" \
+                  "${pindefs[@]}" . 2>&1 | tee /tmp/cfg.txt
+            for a in "${pindefs[@]}"; do
+              nv=${a#-D}
+              grep -q "Pin override: ${nv%%=*}=GP${nv#*=}" /tmp/cfg.txt \
+                || { echo "::error::$a was ignored"; exit 1; }
+            done
+          done
+
+          # And the option this replaced is refused rather than accepted and
+          # ignored, which is what it did for several releases.
+          rm -rf build-pin
+          if cmake -B build-pin -G Ninja -DPICO_BOARD=pico2 \
+                   -DPICO_PLATFORM=rp2350-arm-s -DBOARD=${{ matrix.board.id }} \
+                   -DCMAKE_BUILD_TYPE=Release \
+                   -DFETCHCONTENT_BASE_DIR="$PWD/build/_deps" \
+                   -DDSHOT_PIN=28 . >/dev/null 2>&1; then
+            echo "::error::-DDSHOT_PIN was accepted; it must be refused"
+            exit 1
+          fi
 
       # Run the same validator the release uses, on every push. Releases are
       # rare, so a check that only runs at release time is a check that rots
@@ -77,7 +224,7 @@ jobs:
       - name: Validate the images
         run: |
           bash test/check_uf2_selftest.sh
-          bash test/check_uf2.sh build/DshotDisplay.uf2
+          bash test/check_uf2.sh build/DshotDisplay-${{ matrix.board.slug }}.uf2
 
       # Every green build produces a flashable image, so a change can be tried
       # on hardware without cutting a release first.
@@ -85,7 +232,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DshotDisplay-${{ matrix.board.slug }}
-          path: build/DshotDisplay.uf2
+          # The file inside carries the board too, not just the artifact. Both
+          # boards used to produce DshotDisplay.uf2, so extracting the two
+          # artifacts into one directory silently kept whichever came second.
+          path: |
+            build/DshotDisplay-${{ matrix.board.slug }}.uf2
+            build/DshotDisplay-${{ matrix.board.slug }}.elf
+            build/DshotDisplay-${{ matrix.board.slug }}.map
           if-no-files-found: error
 
   # Runs the firmware's own logic on the host, against stubs. Catches the
@@ -101,6 +254,17 @@ jobs:
       - name: Build and run
         working-directory: test
         run: make both
+      # The half of the pin-override check that looks at the firmware rather
+      # than at CMake's stdout. testPinDefaults() compares each descriptor's
+      # defaults against the macros, which is a tautology at the defaults and
+      # is not one here: a descriptor that went back to carrying literals fails
+      # this run and passes every other. @see cfg_pin_defaults
+      - name: Pin overrides reach the descriptors
+        working-directory: test
+        run: |
+          make BOARD=BOARD_UNIFIED run \
+               EXTRA_DEFINES="-DDSHOT_PIN_LCD_2=9 -DKISS_PIN_LCD_2=10 \
+                              -DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29"
       - name: Upload rendered frames on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -156,6 +320,19 @@ jobs:
                     sed -i "s/#define AM32_PUSH_PULL_TX      1/#define AM32_PUSH_PULL_TX      $tx/" "$work/src/config.h"
                     sed -i "s/#define AM32_FORCE_LOW_JUMP    0/#define AM32_FORCE_LOW_JUMP    $jump/" "$work/src/config.h"
                     sed -i "s/#define LCD_ROTATION           0/#define LCD_ROTATION           $rot/" "$work/src/config.h"
+                    # These substitutions match on exact whitespace. Re-align
+                    # one of those lines in config.h and sed matches nothing,
+                    # exits 0, and all 64 permutations compile the same default
+                    # configuration -- reporting ok 64 times. Assert the value
+                    # actually landed rather than trusting the pattern.
+                    for want in "AM32_PUSH_PULL_TX      $tx" \
+                                "AM32_FORCE_LOW_JUMP    $jump" \
+                                "LCD_ROTATION           $rot"; do
+                      grep -q "^#define $want\$" "$work/src/config.h" || {
+                        echo "::error::sed did not apply '$want' -- has config.h been reformatted?"
+                        exit 1
+                      }
+                    done
                     printf '%s TX=%s JUMP=%s ROT=%s KISS=%s SD=%s ... ' \
                       "${board#BOARD_RP2350_}" "$tx" "$jump" "$rot" "$kiss" "$sd"
                     if g++ -std=gnu++17 -fsyntax-only -Wall -Wextra -Wshadow -Werror \
@@ -188,6 +365,57 @@ jobs:
           fi
           exit $fail
 
+  # Both workflow files, parsed and linted on every push. release.yml only runs
+  # on v* tags, so nothing checked it between releases -- and it shipped with a
+  # duplicate mapping key, which GitHub rejects outright. The first tag push
+  # would have started no workflow at all.
+  workflows:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          # Pinned release tarball, verified by checksum -- not a script
+          # curl'd from the repo's main branch, which could change under us
+          # (or be tampered with) at any time. actionlint v1.7.7, linux/amd64;
+          # bump the version and checksum together.
+          set -euo pipefail
+          version="1.7.7"
+          sha256="023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+          curl -sSfL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz"
+          echo "${sha256}  actionlint.tar.gz" | sha256sum -c -
+          tar xzf actionlint.tar.gz actionlint
+          ./actionlint -color
+      - name: Reject duplicate keys
+        run: |
+          python3 - <<'EOF'
+          import sys, yaml
+          # PyYAML accepts duplicate mapping keys and silently keeps the last.
+          # GitHub does not. This is the check that would have caught it.
+          class Strict(yaml.SafeLoader): pass
+          def no_dupes(loader, node, deep=False):
+              seen, out = set(), {}
+              for k, v in node.value:
+                  key = loader.construct_object(k, deep=deep)
+                  if key in seen:
+                      raise ValueError(f"duplicate key {key!r} at {k.start_mark}")
+                  seen.add(key)
+                  out[key] = loader.construct_object(v, deep=deep)
+              return out
+          Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_dupes)
+          bad = 0
+          for f in (".github/workflows/ci.yml", ".github/workflows/release.yml"):
+              try:
+                  yaml.load(open(f), Strict)
+                  print(f"{f}: ok")
+              except Exception as e:
+                  print(f"::error::{f}: {e}")
+                  bad = 1
+          sys.exit(bad)
+          EOF
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
@@ -214,7 +442,11 @@ jobs:
         run: |
           set -o pipefail
           doxygen 2>doxygen.log || { echo "doxygen exited non-zero"; cat doxygen.log; exit 1; }
-          count=$(grep -ci 'warning' doxygen.log || true)
+          # Doxygen's own warnings are "<file>:<line>: warning: ...". Counting
+          # every line containing the substring instead matched source comments
+          # it quotes back -- and board.h, config.h and several others contain
+          # @warning blocks, so a perfectly clean run could fail this job.
+          count=$(grep -cE '^[^:]*:[0-9]+: *warning:|^ *warning:' doxygen.log || true)
           if [ "${count:-0}" -gt 0 ]; then
             echo "::error::Doxygen reported $count warning(s)"
             head -40 doxygen.log

@@ -25,12 +25,21 @@ INCLUDES := -Istubs -I../src -I.
 # default. Only the pin map and the splash board name differ on the host, but
 # the splash is length-checked and the 2.8" name is the longer one.
 BOARD  ?= BOARD_RP2350_TOUCH_LCD_2
-BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8
-DEFINES := -DBOARD=$(BOARD)
+BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8 BOARD_UNIFIED
+# EXTRA_DEFINES lets CI rebuild the suite with the per-board pin macros
+# overridden, which is what makes test_settings.cpp's testPinDefaults() more
+# than a tautology: a descriptor that went back to carrying literals passes at
+# the defaults and fails the moment a macro says something else.
+#
+#   make BOARD=BOARD_UNIFIED EXTRA_DEFINES=-DDSHOT_PIN_LCD_2=9 run
+DEFINES := -DBOARD=$(BOARD) $(EXTRA_DEFINES)
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
-        test_blackbox.cpp test_log_ring.cpp fakes.cpp \
-        ../src/gfx.cpp ../src/ui.cpp ../src/am32_eeprom.cpp \
+        test_blackbox.cpp test_log_ring.cpp test_settings.cpp fakes.cpp \
+        ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
+        ../src/ui_input.cpp ../src/board_desc.cpp \
+        ../src/board_desc_lcd2.cpp ../src/board_desc_lcd2_8.cpp \
+        ../src/settings.cpp ../src/am32_eeprom.cpp \
         ../src/kiss_telem.cpp ../src/esc_merge.cpp ../src/blackbox_encode.cpp \
         ../src/log_ring.cpp
 
@@ -41,9 +50,13 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
 #
 # The touch drivers matter most here: each compiles to nothing on the board it
 # is not for, so building only one board would leave the other untouched.
+# touch.cpp is here rather than in SRCS: it dispatches to a real driver, and the
+# host suite fakes touchInit/touchPoll outright so that tests can drive presses.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
+               ../src/touch.cpp ../src/board_probe.cpp \
                ../src/cst328.cpp ../src/am32_bl.cpp ../src/sd_log.cpp \
-               ../src/main.cpp
+               ../src/pio_uart_rx.cpp \
+               ../src/settings_flash.cpp ../src/main.cpp
 
 BIN := dshot_tests
 
