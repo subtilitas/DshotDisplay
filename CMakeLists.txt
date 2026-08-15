@@ -40,15 +40,36 @@ set(BOARD "BOARD_RP2350_TOUCH_LCD_2" CACHE STRING "Target board")
 set_property(CACHE BOARD PROPERTY STRINGS
     BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8 BOARD_UNIFIED)
 
-# Which GPIO the ESC signal wire lands on. Empty means "whatever board_pins.h
-# defaults to" -- GP4 on the 2.0", GP29 on the 2.8". Set it when the wire is
-# somewhere else:
+# Which GPIOs the ESC signal and telemetry wires land on -- per board, because
+# one image can carry both descriptors and "the ESC pin" is therefore not a
+# single value. Empty means "leave config.h's default alone".
 #
-#   cmake -B build -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8 -DDSHOT_PIN=28 ...
+#   cmake -B build -DBOARD=BOARD_UNIFIED -DDSHOT_PIN_LCD_2_8=28 ...
 #
-# The 2.8" brings out GP28 (J4 pin 11) and GP29 (J4 pin 12) and nothing else, so
-# those are the only two choices there.
-set(DSHOT_PIN "" CACHE STRING "GPIO for the ESC signal wire; blank = board default")
+# The 2.0" frees the camera bus (GP0-GP11, GP21-GP23). The 2.8" brings out GP28
+# (J4 pin 11) and GP29 (J4 pin 12) and nothing else, so those are the only two
+# choices there and the two wires take one each. An override outside a board's
+# free mask, or one putting both wires on the same pin, is a static_assert in
+# that board's descriptor -- it fails the build, it is not repaired at run time.
+#
+# There used to be one option, DSHOT_PIN, selected inside config.h with
+# `#if BOARD == ...`. That cannot name two boards, so the descriptors carried
+# literals and the option reached nothing at all: it configured, printed a
+# status line claiming it had taken, and left the image on the literal.
+set(DSHOT_PIN_LCD_2   "" CACHE STRING "ESC signal GPIO on the 2.0\" board; blank = config.h default")
+set(DSHOT_PIN_LCD_2_8 "" CACHE STRING "ESC signal GPIO on the 2.8\" board; blank = config.h default")
+set(KISS_PIN_LCD_2    "" CACHE STRING "Telemetry GPIO on the 2.0\" board; blank = config.h default")
+set(KISS_PIN_LCD_2_8  "" CACHE STRING "Telemetry GPIO on the 2.8\" board; blank = config.h default")
+
+# The old spelling, refused rather than ignored. It silently did nothing for
+# long enough to be documented in README and asserted in CI, and a build that
+# accepts it a second time is a build that lies about which pin it made.
+if(NOT "${DSHOT_PIN}" STREQUAL "")
+    message(FATAL_ERROR
+        "DSHOT_PIN is per board now. Use -DDSHOT_PIN_LCD_2=n for the 2.0\" "
+        "board or -DDSHOT_PIN_LCD_2_8=n for the 2.8\", so that a unified image "
+        "can name both.")
+endif()
 
 
 # Pinned by commit, not by tag. A tag is a movable reference, and README.md
@@ -155,17 +176,18 @@ pico_generate_pio_header(DshotDisplay ${CMAKE_CURRENT_LIST_DIR}/src/pio_uart_rx.
 
 target_include_directories(DshotDisplay PRIVATE src)
 target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})
-# STREQUAL against the empty string, not if(DSHOT_PIN): CMake's if() tests the
+# STREQUAL against the empty string, not if(${pinopt}): CMake's if() tests the
 # *value*, and "0" is one of its false constants -- so -DDSHOT_PIN=0 took the
 # else branch and silently built for the board default instead. GP0 is a real
-# pin on both boards, and the symptom of getting it is an ESC that never
-# answers with nothing reported anywhere.
-if(NOT DSHOT_PIN STREQUAL "")
-    target_compile_definitions(DshotDisplay PRIVATE DSHOT_PIN=${DSHOT_PIN})
-    message(STATUS "Board: ${BOARD}, DShot default GP${DSHOT_PIN}")
-else()
-    message(STATUS "Board: ${BOARD}, DShot default from board_pins.h")
-endif()
+# pin on the 2.0", and the symptom of getting it is an ESC that never answers
+# with nothing reported anywhere.
+message(STATUS "Board: ${BOARD}")
+foreach(pinopt DSHOT_PIN_LCD_2 DSHOT_PIN_LCD_2_8 KISS_PIN_LCD_2 KISS_PIN_LCD_2_8)
+    if(NOT "${${pinopt}}" STREQUAL "")
+        target_compile_definitions(DshotDisplay PRIVATE ${pinopt}=${${pinopt}})
+        message(STATUS "Pin override: ${pinopt}=GP${${pinopt}}")
+    endif()
+endforeach()
 
 target_link_libraries(DshotDisplay
     pico_stdlib

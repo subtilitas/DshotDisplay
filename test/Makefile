@@ -26,7 +26,13 @@ INCLUDES := -Istubs -I../src -I.
 # the splash is length-checked and the 2.8" name is the longer one.
 BOARD  ?= BOARD_RP2350_TOUCH_LCD_2
 BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8 BOARD_UNIFIED
-DEFINES := -DBOARD=$(BOARD)
+# EXTRA_DEFINES lets CI rebuild the suite with the per-board pin macros
+# overridden, which is what makes test_settings.cpp's testPinDefaults() more
+# than a tautology: a descriptor that went back to carrying literals passes at
+# the defaults and fails the moment a macro says something else.
+#
+#   make BOARD=BOARD_UNIFIED EXTRA_DEFINES=-DDSHOT_PIN_LCD_2=9 run
+DEFINES := -DBOARD=$(BOARD) $(EXTRA_DEFINES)
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
         test_blackbox.cpp test_log_ring.cpp test_settings.cpp fakes.cpp \

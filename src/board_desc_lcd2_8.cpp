@@ -4,6 +4,7 @@
  */
 
 #include "board_desc.h"
+#include "config.h"
 #include "board_rp2350_touch_lcd_2_8.h"
 #include "touch.h"
 
@@ -46,9 +47,9 @@ const BoardDesc BOARD_DESC_LCD_2_8 = {
 	/* sdD3       */ PIN_SD_D3,
 
 	/* freeGpio   */ BOARD_FREE_GPIO_MASK,
-	/* dshotPin   */ 29,
-	/* kissPin    */ 28,
-	/* kissEnable */ false,
+	/* dshotPin   */ DSHOT_PIN_LCD_2_8,
+	/* kissPin    */ KISS_PIN_LCD_2_8,
+	/* kissEnable */ KISS_ENABLE_LCD_2_8 != 0,
 };
 
 /*
@@ -62,3 +63,23 @@ static_assert(PIN_SD_D2 == PIN_SD_D0 + 2, "SDIO D2 must be D0 + 2");
 static_assert(PIN_SD_D3 == PIN_SD_D0 + 3, "SDIO D3 must be D0 + 3");
 static_assert(PIN_SD_SCK == (PIN_SD_D0 + 30) % 32,
               "SDIO CLK must be (D0 + 30) % 32; see rp2040_sdio.pio");
+
+/*
+ * The pin defaults are macros, so they are overridable from the build -- and an
+ * override that cannot work must fail here rather than be repaired in silence
+ * on the bench. settingsValidate() would quietly move an occupied ESC pin back
+ * to the board default and switch a colliding KISS wire off, which is right for
+ * a stored block nobody chose and wrong for a value someone typed on a command
+ * line. @see cfg_pin_defaults
+ *
+ * The `& 31` keeps the shift in range when the pin is nonsense, so the message
+ * that fires is this one rather than the compiler's own about the shift.
+ */
+static_assert(DSHOT_PIN_LCD_2_8 <= 29 &&
+              ((BOARD_FREE_GPIO_MASK >> (DSHOT_PIN_LCD_2_8 & 31)) & 1u),
+              "DSHOT_PIN_LCD_2_8 is not a free GPIO on the 2.8-inch board");
+static_assert(KISS_PIN_LCD_2_8 <= 29 &&
+              ((BOARD_FREE_GPIO_MASK >> (KISS_PIN_LCD_2_8 & 31)) & 1u),
+              "KISS_PIN_LCD_2_8 is not a free GPIO on the 2.8-inch board");
+static_assert(DSHOT_PIN_LCD_2_8 != KISS_PIN_LCD_2_8,
+              "the ESC and telemetry wires cannot share a pin");

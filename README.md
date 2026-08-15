@@ -99,8 +99,8 @@ Two wires. That's it.
 | Ground | **GND** — P2 header, pin 13 |
 
 Change it from **CFG → SETUP** on the board itself, and it is remembered across
-power cycles. `DSHOT_PIN` in `config.h` is only what a board with blank flash
-starts on. Any camera-bus pin (GP0–GP11, GP21–GP23) is free, and the picker
+power cycles. `DSHOT_PIN_LCD_2` in `config.h` is only what a board with blank
+flash starts on. Any camera-bus pin (GP0–GP11, GP21–GP23) is free, and the picker
 offers those and nothing else.
 
 Header pinout for reference:
@@ -143,11 +143,14 @@ If telemetry is flaky, drop `DSHOT_SPEED_KBAUD` to 300 before blaming the firmwa
 
 Its pin map is `src/board_rp2350_touch_lcd_2_8.h`. The short version: no 2.54 mm
 headers at all — everything comes out on JST-SH connectors — and of those, only
-**GP28** (J4 pin 11) and **GP29** (J4 pin 12) are free for an ESC. **GP29 is the
-default** — last pin on the connector, easiest to find and to solder. Build with
-`-DDSHOT_PIN=28` for the other one. An ESC on the wrong one of the two is simply
-silent, with nothing reported anywhere, because nothing is listening on the pin
-you wired.
+**GP28** (J4 pin 11) and **GP29** (J4 pin 12) are free. The ESC starts on
+**GP29** — last pin on the connector, easiest to find and to solder — and the
+KISS telemetry wire on **GP28**, one each, because two pins is exactly enough
+for two wires. Swap them with `-DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29`;
+they have to move together, and a build that puts both on one pin fails a
+`static_assert` rather than being quietly repaired on the bench. An ESC on the
+wrong one of the two is simply silent, with nothing reported anywhere, because
+nothing is listening on the pin you wired.
 
 It also carries a power-button latch on GP26 that the firmware asserts as the
 very first thing at boot. Without it the board drops dead mid-boot whenever it
@@ -190,11 +193,16 @@ Build options worth knowing:
 ```sh
 -DBOARD=BOARD_UNIFIED                # one image for both boards
 -DBOARD=BOARD_RP2350_TOUCH_LCD_2_8   # the 2.8" board only; default is the 2.0"
--DDSHOT_PIN=28                       # the ESC pin a blank board starts on
+-DDSHOT_PIN_LCD_2_8=28               # the ESC pin a blank board starts on
+-DKISS_PIN_LCD_2_8=29                # ...and the telemetry pin, per board
 -DSTRICT=ON                          # warnings fatal, for this project's sources
 ```
 
-`DSHOT_PIN` defaults to **GP4** on the 2.0" and **GP29** on the 2.8". The 2.8"
+The ESC pin defaults to **GP4** on the 2.0" (`DSHOT_PIN_LCD_2`) and **GP29** on
+the 2.8" (`DSHOT_PIN_LCD_2_8`). One option per board, not one per build: a
+unified image carries both descriptors, so there is no single "the ESC pin" for
+it to name — and *which* set a running board uses is settled at boot by the same
+hardware detection that picks the descriptor, not at compile time. The 2.8"
 brings out only GP28 (J4 pin 11) and GP29 (J4 pin 12), so those are the two
 choices there — and an ESC on the wrong one is simply silent, with no error
 anywhere, because nothing is listening on the pin you wired.
@@ -531,9 +539,13 @@ at.
 
 | Setting | Default | What it does |
 |---|---|---|
+| `DSHOT_PIN_LCD_2` | `4` | ESC signal GPIO the 2.0" board starts on |
+| `DSHOT_PIN_LCD_2_8` | `29` | ESC signal GPIO the 2.8" board starts on |
 | `KISS_TELEM_ENABLE` | `1` | Compile the KISS path in at all |
-| `DEFAULT_KISS_ENABLE` | `1` / `0` | Whether the KISS wire is expected. **Off on the 2.8"**: that board frees two pins and the ESC takes one, so defaulting to on would spend the spare on a wire most people have not soldered. One tap turns it on |
-| `DEFAULT_KISS_PIN` | `5` / `28` | GPIO the telemetry wire lands on, receive only. Any free one; runtime-adjustable |
+| `KISS_ENABLE_LCD_2` | `1` | Whether the 2.0" board expects a KISS wire. It has a camera header's worth of spare pins |
+| `KISS_ENABLE_LCD_2_8` | `0` | Whether the 2.8" board does. **Off**: that board frees two pins and the ESC takes one, so defaulting to on spends the spare on a wire most people have not soldered. One tap turns it on |
+| `KISS_PIN_LCD_2` | `5` | GPIO the telemetry wire lands on, 2.0" board. Receive only, any free one, runtime-adjustable |
+| `KISS_PIN_LCD_2_8` | `28` | Same for the 2.8". The other of its two free pins; `DSHOT_PIN_LCD_2_8` has GP29 |
 | `KISS_REQUEST_EVERY_N` | `20` | Request every Nth DShot frame; 20 at 1 kHz is 50 Hz. Must be ≥ 2 or replies overlap, and there is an `#error` that says so |
 | `KISS_STALE_MS` | `500` | How long a KISS frame stays authoritative before the display falls back to EDT |
 | `EDT_STALE_MS` | `1000` | How long an EDT field stays valid after its last frame. Past this the tile blanks to `--` rather than holding a reading from an ESC that may no longer be attached |
@@ -647,7 +659,7 @@ success but lands wrong is worse than one that fails loudly, so the screen only 
 
 | | |
 |---|---|
-| Link | one-wire half-duplex serial, 19200 8N1, on `DSHOT_PIN` |
+| Link | one-wire half-duplex serial, 19200 8N1, on the ESC signal pin |
 | Init string | 21 bytes: twelve `0x00`, `0x0D`, `"BLHeli"`, `0xF4 0x7D` |
 | Commands | `SET_ADDRESS 0xFF 00 hi lo`, `SET_BUFFER 0xFE 00 00 len`, `PROG_FLASH 0x01 0x01`, `READ_FLASH 0x03 len`, `ERASE 0x02`, `RUN 0x00` |
 | Checksum | CRC-16/ARC — polynomial `0xA001`, init 0, appended low byte first |
@@ -828,8 +840,11 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 The firmware job also asserts the image belongs to the board it claims: which
 touch driver was compiled in, read out of the DWARF line table because both
 drivers export exactly `touchInit` and `touchPoll` and the symbol table cannot
-tell them apart. It checks the size against a ceiling, and that `-DDSHOT_PIN`
-is honoured — a documented option CI had never once passed.
+tell them apart. It checks the size against a ceiling, and that the per-board
+pin options are honoured — documented options CI had never once passed, and
+then passed vacuously for a while by grepping CMake's own output. The half that
+proves a value reaches the firmware is in the host job, which rebuilds the suite
+with the macros overridden.
 
 The permutation job exists because those options are exactly the ones nobody compiles by
 hand. `check_docs.py` enforces documentation precisely — public API documented, `@param`
