@@ -149,14 +149,29 @@ settings screen, but the button that writes them to flash is `HOLD TO SAVE` on
 
 ---
 
-## KISS telemetry cannot be enabled
+## KISS telemetry is off on my 2.8" board
 
-On the 2.8" board only two GPIOs are free, and the ESC signal is on one of them.
-Turning KISS on moves it to the other automatically. If both are already spoken
-for, the pin stepper will refuse to land on the ESC's pin rather than create a
-collision.
+It ships that way. It is one tap to turn on: **CFG → SETUP → KISS TELEM**.
 
-If it switches itself off with `KISS OFF: NEEDS A PIN OF ITS OWN`, that is this.
+The 2.8" brings out exactly two free GPIOs, and the ESC signal starts on one of
+them — so defaulting KISS to on would spend the only spare pin on a wire most
+people have not soldered. The 2.0" has a camera header's worth of spare pins and
+defaults to on for the same reason in reverse.
+
+Turning it on moves it to the free pin by itself; you do not have to pick. The
+pin stepper also refuses to land on whichever pin the ESC signal is using, so
+the two cannot collide.
+
+> **This was once genuinely impossible on the 2.8", and is not any more.** While
+> the receiver was a hardware UART it needed a pin with a UART-RX function, and
+> the only free one on that board was GP29 — the pin the ESC was already on.
+> Enabling KISS found no pin at all and validation switched it straight back
+> off. The receiver is a PIO state machine now and samples any GPIO. If you have
+> read somewhere that KISS does not work on the 2.8", that is what it was about.
+
+If it does switch itself off with `KISS OFF: NEEDS A PIN OF ITS OWN`, then both
+pins really are spoken for: move the ESC signal to the other one first, then
+enable KISS.
 
 ---
 
