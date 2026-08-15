@@ -443,44 +443,55 @@ static void testEdtAutoEnable() {
 	section("Automatic EDT enable");
 
 	const uint32_t RETRY = 1000;
+	const bool CAN = true, CANNOT = false;
 
 	// Nothing connected: nothing to do, however long we wait.
 	checkTrue("no ESC, nothing sent",
-	          edtAutoAction(false, false, false, 0, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(false, false, CAN, false, 0, RETRY) == EdtAutoAction::None);
 
 	// An ESC answers eRPM but sends no EDT.
 	checkTrue("ESC appears, enable is sent",
-	          edtAutoAction(true, false, false, 0, RETRY) == EdtAutoAction::Send);
+	          edtAutoAction(true, false, CAN, false, 0, RETRY) == EdtAutoAction::Send);
 	checkTrue("not again on the next frame",
-	          edtAutoAction(true, false, true, 1, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(true, false, CAN, true, 1, RETRY) == EdtAutoAction::None);
 	checkTrue("nor a moment before the interval is up",
-	          edtAutoAction(true, false, true, RETRY - 1, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(true, false, CAN, true, RETRY - 1, RETRY) == EdtAutoAction::None);
 
 	// This is the fix: an enable that was not acted on goes out again.
 	checkTrue("but again once the interval has passed",
-	          edtAutoAction(true, false, true, RETRY, RETRY) == EdtAutoAction::Send);
+	          edtAutoAction(true, false, CAN, true, RETRY, RETRY) == EdtAutoAction::Send);
 
 	// And this is the success condition -- EDT frames arriving, not an enable
 	// having been sent. The two came apart exactly once and cost a bug report.
 	checkTrue("EDT arriving stops the asking",
-	          edtAutoAction(true, true, true, RETRY * 10, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(true, true, CAN, true, RETRY * 10, RETRY) == EdtAutoAction::None);
 	checkTrue("and nothing is sent to an ESC already sending EDT",
-	          edtAutoAction(true, true, false, 0, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(true, true, CAN, false, 0, RETRY) == EdtAutoAction::None);
 
 	// It goes away. The state must re-arm, or the replacement never gets one.
 	checkTrue("ESC leaves, the attempt re-arms",
-	          edtAutoAction(false, false, true, 0, RETRY) == EdtAutoAction::Rearm);
+	          edtAutoAction(false, false, CAN, true, 0, RETRY) == EdtAutoAction::Rearm);
 	checkTrue("and re-arms once, not every frame",
-	          edtAutoAction(false, false, false, 0, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(false, false, CAN, false, 0, RETRY) == EdtAutoAction::None);
+
+	// A moment the ESC cannot be commanded in is not an attempt. This is the
+	// whole point of the fourth version of the rule: the third one fired at
+	// exactly these moments, counted them, and then sat out a full interval.
+	checkTrue("an ESC that cannot take a command is not sent one",
+	          edtAutoAction(true, false, CANNOT, false, 0, RETRY) == EdtAutoAction::None);
+	checkTrue("and the moment it can, the enable goes out with no wait",
+	          edtAutoAction(true, false, CAN, false, 0, RETRY) == EdtAutoAction::Send);
+	checkTrue("a lost link still re-arms even when uncommandable",
+	          edtAutoAction(false, false, CANNOT, true, 0, RETRY) == EdtAutoAction::Rearm);
 
 	// Full cycle through the state the firmware actually keeps: an ESC that
 	// ignores the enable, then takes it, then is swapped for another.
-	bool tried = false, edt = false;
+	bool tried = false, edt = false, can = true;
 	uint32_t now = 0, lastTry = 0;
 	int sends = 0;
 	auto step = [&](bool linkUp) {
 		now += 100;
-		switch (edtAutoAction(linkUp, edt, tried, now - lastTry, RETRY)) {
+		switch (edtAutoAction(linkUp, edt, can, tried, now - lastTry, RETRY)) {
 			case EdtAutoAction::Send:  tried = true; lastTry = now; sends++; break;
 			case EdtAutoAction::Rearm: tried = false;                        break;
 			case EdtAutoAction::None:                                        break;
@@ -490,6 +501,16 @@ static void testEdtAutoEnable() {
 	for (int i = 0; i < 50; i++) step(true);     // 5 s of an ESC ignoring it
 	checkTrue("an ESC that does not answer is asked more than once", sends > 1);
 	checkInt("about once per interval, not once per frame", sends, 5, 1);
+
+	// Armed, or a prop still coasting down: no attempt, and no clock started
+	// either -- so the first frame it becomes possible again, one goes out.
+	int atStall = sends;
+	can = false;
+	for (int i = 0; i < 50; i++) step(true);
+	checkInt("nothing is spent while the ESC cannot act on it", sends, atStall);
+	can = true;
+	step(true);
+	checkInt("and it goes out on the first frame that it can", sends, atStall + 1);
 
 	edt = true;                                  // it finally took
 	int atSuccess = sends;

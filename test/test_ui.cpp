@@ -1147,15 +1147,20 @@ static void testEdtAutoRule() {
 
 	const uint32_t RETRY = 1000;
 	checkTrue("an ESC that just appeared is sent one",
-	          edtAutoAction(true, false, false, 0, RETRY) == EdtAutoAction::Send);
+	          edtAutoAction(true, false, true, false, 0, RETRY) == EdtAutoAction::Send);
 	checkTrue("and asked again if it did not take",
-	          edtAutoAction(true, false, true, RETRY, RETRY) == EdtAutoAction::Send);
+	          edtAutoAction(true, false, true, true, RETRY, RETRY) == EdtAutoAction::Send);
 	checkTrue("but left alone once EDT is actually arriving",
-	          edtAutoAction(true, true, true, RETRY, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(true, true, true, true, RETRY, RETRY) == EdtAutoAction::None);
 	checkTrue("losing the link re-arms it for the next ESC",
-	          edtAutoAction(false, false, true, 0, RETRY) == EdtAutoAction::Rearm);
+	          edtAutoAction(false, false, true, true, 0, RETRY) == EdtAutoAction::Rearm);
 	checkTrue("no link and nothing sent is nothing to do",
-	          edtAutoAction(false, false, false, 0, RETRY) == EdtAutoAction::None);
+	          edtAutoAction(false, false, true, false, 0, RETRY) == EdtAutoAction::None);
+	// Armed, mid-burst, or a prop still turning: no attempt is made and, just as
+	// importantly, none is recorded -- so the retry clock is not started by a
+	// frame the ESC was never going to act on.
+	checkTrue("an ESC that cannot execute a command is not sent one",
+	          edtAutoAction(true, false, false, false, 0, RETRY) == EdtAutoAction::None);
 }
 
 
