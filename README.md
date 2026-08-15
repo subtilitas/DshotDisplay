@@ -432,12 +432,25 @@ the temperature tile and is KISS-only — EDT does not carry it.
 
 ## Telemetry and logging
 
-EDT is enabled automatically — you should not normally need that button. The enable
-goes out once per ESC, triggered by the first eRPM frame rather than by a timer: an ESC
-that has answered a frame is demonstrably powered, booted and listening. Lose eRPM for
-`ESC_LINK_STALE_MS` and the one-shot re-arms, so an ESC connected later, power-cycled,
-or swapped for a different one gets its own enable instead of silently running without
-EDT for the rest of the session.
+EDT is enabled automatically — there is no button for it. The rule is not "have we
+asked" but "is it working": while an ESC is answering eRPM and no EDT frame has arrived
+for `EDT_STALE_MS`, the enable goes out again every `EDT_RETRY_MS`. Lose eRPM for
+`ESC_LINK_STALE_MS` and the state resets, so an ESC connected later, power-cycled, or
+swapped for a different one starts from scratch instead of silently running without EDT
+for the rest of the session.
+
+An attempt is only made when the ESC could actually act on one, and only counted when it
+went out in full. Three conditions gate it, and each of them was a way EDT ended up off
+with a disarm-and-re-arm as the only cure:
+
+- the link has been up for `EDT_SETTLE_MS`, because an ESC answers eRPM within
+  milliseconds of power-up but will not execute a command until it has seen a run of
+  valid zero-throttle frames;
+- the motor is stopped and the tester is disarmed, since DShot commands are only
+  executed with the motor stopped and a disarm leaves a prop coasting for seconds;
+- and no other command is on the wire. A command is only executed after arriving in a
+  run of identical frames, so a BEEP press landing inside an enable used to truncate it
+  and the ESC counted neither to completion.
 
 Every reading expires. A value that has not been refreshed for `EDT_STALE_MS` (1 s)
 blanks to `--` rather than holding its last number, and eRPM does the same after 500 ms.
