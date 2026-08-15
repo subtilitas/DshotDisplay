@@ -121,14 +121,21 @@ static void testGlyphs() {
 	gfxText(10, 10, " ", TEST_FG, 1);
 	checkInt("space dirties nothing", gfxDirtyCount(), 0);
 
-	// '0' at scale 1 lights rows 1..5 in every column, so its band starts one
-	// row below the glyph top and ends on the glyph's last row.
+	// '0' is {0x3E,0x51,0x49,0x45,0x3E}: column 0 lights rows 1..5, but column 1
+	// lights rows 0, 4 and 6, so the glyph as a whole occupies all seven rows.
+	//
+	// This used to expect 11, and that was the bug rather than the rule. The
+	// band was taken from the first lit row of the first non-empty column, so
+	// the pixel column 1 puts on row 0 was written to the framebuffer and left
+	// outside the dirty band -- drawn, and never flushed to the panel. Only
+	// visible on a glyph whose first column starts lower than a later one, and
+	// only for the top row of it, which is why it survived this long.
 	resetGfx();
 	gfxText(10, 10, "0", TEST_FG, 1);
 	checkInt("glyph creates one band", gfxDirtyCount(), 1);
 	int y0, y1;
 	gfxDirtyBand(0, &y0, &y1);
-	checkInt("glyph band starts on its first lit row", y0, 11);
+	checkInt("glyph band starts on its first lit row", y0, 10);
 	checkInt("glyph band ends on its last row", y1, 16);
 
 	// Partially visible at the bottom edge: clipped, not dropped.
@@ -151,7 +158,8 @@ static void testGlyphs() {
 	checkInt("scaled pixel block, top-left", gfxBuffer()[2 * GFX_W + 0], TEST_FG);
 	checkInt("scaled pixel block, bottom-right", gfxBuffer()[3 * GFX_W + 1], TEST_FG);
 	gfxDirtyBand(0, &y0, &y1);
-	checkInt("scaled band starts on its first lit row", y0, 2);
+	// Row 0 of column 1 again, two pixels tall at this scale.
+	checkInt("scaled band starts on its first lit row", y0, 0);
 	checkInt("scaled band ends on its last row", y1, 13);
 
 	// Left edge: '0' at x = -2 drops its first two columns, so screen
@@ -182,7 +190,92 @@ static void testGlyphs() {
 	checkInt("unknown char draws nothing", gfxDirtyCount(), 0);
 }
 
+/**
+ * @brief The clip box, tested the way the AM32 list uses it.
+ *
+ * That list scrolls by the pixel, so its top and bottom rows are always partly
+ * outside the viewport, and a partial row drawn in full lands on the header or
+ * the editor bar. Every check here is that shape: draw something that overhangs
+ * the box and confirm nothing outside it moved.
+ */
+static void testClip() {
+	section("Clip rectangle");
+
+	// A fill that straddles the box keeps the part inside and drops the rest.
+	resetGfx();
+	gfxSetClip(0, 100, GFX_W, 20);          // rows 100..119
+	gfxRect(0, 90, GFX_W, 40, TEST_FG);     // rows 90..129
+	gfxClearClip();
+	checkInt("row above the clip is untouched", gfxBuffer()[99 * GFX_W], 0);
+	checkInt("first row inside is drawn",       gfxBuffer()[100 * GFX_W], TEST_FG);
+	checkInt("last row inside is drawn",        gfxBuffer()[119 * GFX_W], TEST_FG);
+	checkInt("row below the clip is untouched", gfxBuffer()[120 * GFX_W], 0);
+
+	// And the dirty band follows the clip, not the requested rectangle: a band
+	// covering rows nothing was written to would flush stale framebuffer.
+	int y0, y1;
+	checkInt("clipped fill makes one band", gfxDirtyCount(), 1);
+	gfxDirtyBand(0, &y0, &y1);
+	checkInt("band starts at the clip top", y0, 100);
+	checkInt("band ends at the clip bottom", y1, 119);
+
+	// Horizontal clipping, which the list needs for nothing but which a caller
+	// setting a narrow box would rely on.
+	resetGfx();
+	gfxSetClip(50, 0, 10, GFX_H);           // columns 50..59
+	gfxRect(0, 0, GFX_W, 4, TEST_FG);
+	gfxClearClip();
+	checkInt("column left of the clip is untouched", gfxBuffer()[49], 0);
+	checkInt("column inside the clip is drawn",      gfxBuffer()[50], TEST_FG);
+	checkInt("column right of the clip is untouched", gfxBuffer()[60], 0);
+
+	// Text obeys it too. This is the half that matters: a row's caption is text,
+	// and clipping only the fills would leave labels floating over the header.
+	resetGfx();
+	gfxSetClip(0, 4, GFX_W, GFX_H - 4);
+	gfxText(0, 0, "0", TEST_FG, 1);          // rows 0..6, so rows 0..3 are cut
+	gfxClearClip();
+	checkInt("glyph row above the clip is cut", gfxBuffer()[1 * GFX_W + 0], 0);
+	checkInt("glyph row inside the clip draws", gfxBuffer()[4 * GFX_W + 0], TEST_FG);
+	gfxDirtyBand(0, &y0, &y1);
+	checkInt("clipped glyph band starts at the clip", y0, 4);
+
+	// Text entirely outside draws nothing and dirties nothing, so a scrolled-off
+	// row costs no flush.
+	resetGfx();
+	gfxSetClip(0, 100, GFX_W, 20);
+	gfxText(0, 0, "0", TEST_FG, 1);
+	gfxClearClip();
+	checkInt("text outside the clip dirties nothing", gfxDirtyCount(), 0);
+
+	// gfxFill() deliberately ignores the box: every caller uses it to start a
+	// screen from nothing, and a clip left set would make that a partial wipe.
+	resetGfx();
+	gfxSetClip(0, 100, GFX_W, 20);
+	gfxFill(TEST_FG);
+	gfxClearClip();
+	checkInt("fill ignores the clip, top", gfxBuffer()[0], TEST_FG);
+	checkInt("fill ignores the clip, bottom", gfxBuffer()[(GFX_H - 1) * GFX_W], TEST_FG);
+
+	// Clearing it restores the whole panel.
+	resetGfx();
+	gfxSetClip(0, 100, GFX_W, 20);
+	gfxClearClip();
+	gfxRect(0, 0, GFX_W, 4, TEST_FG);
+	checkInt("cleared clip draws anywhere again", gfxBuffer()[0], TEST_FG);
+
+	// A degenerate box clips everything rather than inverting into a fill of the
+	// whole panel, which is what unchecked reversed bounds would do.
+	resetGfx();
+	gfxSetClip(0, 100, GFX_W, 0);
+	gfxRect(0, 0, GFX_W, GFX_H, TEST_FG);
+	gfxClearClip();
+	checkInt("an empty clip draws nothing", gfxDirtyCount(), 0);
+	checkInt("and leaves the buffer alone", gfxBuffer()[100 * GFX_W], 0);
+}
+
 void runGfxTests() {
 	testBands();
 	testGlyphs();
+	testClip();
 }

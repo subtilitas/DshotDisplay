@@ -326,7 +326,7 @@ and the badge changing colour in a corner is not.
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
   what's spinning.
-- **EDT ON / EDT OFF** — the chip in the title bar. Green while EDT frames are arriving,
+- **EDT ON / EDT OFF** — the chip under the title. Green while EDT frames are arriving,
   red while they are not. Read-only: there is no enable button, because the firmware
   sends one to each ESC as it appears. It follows *received frames* rather than whether
   the command was sent — the enable is fire-and-forget and the ESC never acknowledges
@@ -337,7 +337,7 @@ and the badge changing colour in a corner is not.
 - **SETUP** — which pins the ESC and telemetry wire are on, the DShot bitrate,
   high contrast, backlight, and the one button that writes all of it to flash.
   See below.
-- **UNSAVED** in the title bar means something on this screen or SETUP differs
+- **UNSAVED** on the strip under the title means something on this screen or SETUP differs
   from what is stored. The button that stores it is on SETUP.
 
 BEEP flashes for a moment when pressed. The command itself lasts about six milliseconds
@@ -432,12 +432,25 @@ the temperature tile and is KISS-only — EDT does not carry it.
 
 ## Telemetry and logging
 
-EDT is enabled automatically — you should not normally need that button. The enable
-goes out once per ESC, triggered by the first eRPM frame rather than by a timer: an ESC
-that has answered a frame is demonstrably powered, booted and listening. Lose eRPM for
-`ESC_LINK_STALE_MS` and the one-shot re-arms, so an ESC connected later, power-cycled,
-or swapped for a different one gets its own enable instead of silently running without
-EDT for the rest of the session.
+EDT is enabled automatically — there is no button for it. The rule is not "have we
+asked" but "is it working": while an ESC is answering eRPM and no EDT frame has arrived
+for `EDT_STALE_MS`, the enable goes out again every `EDT_RETRY_MS`. Lose eRPM for
+`ESC_LINK_STALE_MS` and the state resets, so an ESC connected later, power-cycled, or
+swapped for a different one starts from scratch instead of silently running without EDT
+for the rest of the session.
+
+An attempt is only made when the ESC could actually act on one, and only counted when it
+went out in full. Three conditions gate it, and each of them was a way EDT ended up off
+with a disarm-and-re-arm as the only cure:
+
+- the link has been up for `EDT_SETTLE_MS`, because an ESC answers eRPM within
+  milliseconds of power-up but will not execute a command until it has seen a run of
+  valid zero-throttle frames;
+- the motor is stopped and the tester is disarmed, since DShot commands are only
+  executed with the motor stopped and a disarm leaves a prop coasting for seconds;
+- and no other command is on the wire. A command is only executed after arriving in a
+  run of identical frames, so a BEEP press landing inside an enable used to truncate it
+  and the ESC counted neither to completion.
 
 Every reading expires. A value that has not been refreshed for `EDT_STALE_MS` (1 s)
 blanks to `--` rather than holding its last number, and eRPM does the same after 500 ms.
@@ -639,12 +652,20 @@ Two gestures, coarse and fine:
 | Tap a row | Selects it; the editor bar at the bottom shows its name and value |
 | **Swipe the row sideways** | **Coarse** — one full-width swipe covers the field's entire range |
 | `-` / `+` buttons | **Fine** — one step per press; hold to repeat, accelerating |
-| Drag up/down | Scrolls the list |
+| Drag up/down | Scrolls the list, by the pixel, following the finger |
 
-Axes are locked exclusively after 10 px of travel, so a swipe is either a scroll or an edit
-and never both. Coarse swipes snap to each field's own step, so motor poles stay even, and
-they re-anchor at the ends — overshoot the top and a small swipe back responds immediately
-instead of unwinding.
+A press commits nothing. It records the row under the finger and waits: that becomes a
+selection on release if the finger never travelled, or at the moment a sideways swipe is
+recognised, so press-and-swipe still adjusts the row you actually touched. A vertical
+drag never selects anything. Dragging is the common gesture in a list and tapping the
+rare one, and the previous order — select on touch-down, then start scrolling in
+whole-row jumps once you had dragged 36 px — had it backwards.
+
+Axes are locked exclusively after 6 px of travel, so a swipe is either a scroll or an
+edit and never both, and the scroll is measured from where the finger landed rather than
+from the lock, so none of that travel is lost. Coarse swipes snap to each field's own
+step, so motor poles stay even, and they re-anchor at the ends — overshoot the top and a
+small swipe back responds immediately instead of unwinding.
 
 Changed rows are marked amber down the left edge. **REVERT** restores everything to what
 was read. **HEX** shows the raw 48 bytes, which is the escape hatch if a field is ever

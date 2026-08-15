@@ -64,7 +64,7 @@ jobs:
       # checks out the branch it was launched from and attaches binaries built
       # from that to a release named after an older tag -- and --verify-tag does
       # not catch it, because the tag does exist. It is the build that is wrong.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -188,7 +188,7 @@ jobs:
           cp "build/DshotDisplay-${SLUG}.uf2" "$out"
           bash test/check_uf2.sh "$out"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: uf2-${{ matrix.board.slug }}
           path: dist/*.uf2
@@ -204,12 +204,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.version.outputs.tag }}
           fetch-depth: 0   # generated notes need the history
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: uf2-*
           path: dist
