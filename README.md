@@ -652,12 +652,20 @@ Two gestures, coarse and fine:
 | Tap a row | Selects it; the editor bar at the bottom shows its name and value |
 | **Swipe the row sideways** | **Coarse** — one full-width swipe covers the field's entire range |
 | `-` / `+` buttons | **Fine** — one step per press; hold to repeat, accelerating |
-| Drag up/down | Scrolls the list |
+| Drag up/down | Scrolls the list, by the pixel, following the finger |
 
-Axes are locked exclusively after 10 px of travel, so a swipe is either a scroll or an edit
-and never both. Coarse swipes snap to each field's own step, so motor poles stay even, and
-they re-anchor at the ends — overshoot the top and a small swipe back responds immediately
-instead of unwinding.
+A press commits nothing. It records the row under the finger and waits: that becomes a
+selection on release if the finger never travelled, or at the moment a sideways swipe is
+recognised, so press-and-swipe still adjusts the row you actually touched. A vertical
+drag never selects anything. Dragging is the common gesture in a list and tapping the
+rare one, and the previous order — select on touch-down, then start scrolling in
+whole-row jumps once you had dragged 36 px — had it backwards.
+
+Axes are locked exclusively after 6 px of travel, so a swipe is either a scroll or an
+edit and never both, and the scroll is measured from where the finger landed rather than
+from the lock, so none of that travel is lost. Coarse swipes snap to each field's own
+step, so motor poles stay even, and they re-anchor at the ends — overshoot the top and a
+small swipe back responds immediately instead of unwinding.
 
 Changed rows are marked amber down the left edge. **REVERT** restores everything to what
 was read. **HEX** shows the raw 48 bytes, which is the escape hatch if a field is ever

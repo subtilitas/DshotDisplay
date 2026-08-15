@@ -27,17 +27,23 @@
 // --- probes into the included translation unit ---
 static uint8_t uiByte(int o)     { return s_eeprom[o]; }
 static int     uiSelected()      { return s_selected; }
-static int     uiScroll()        { return s_scroll; }
+static int     uiScroll()        { return s_scrollPx; }
 static int     uiVisibleCount()  { return (int)s_visibleCount; }
 
-/** @brief Scroll a named field to the top row and return a y inside it. */
+/**
+ * @brief Scroll a named field into view and return a y inside its row.
+ *
+ * The scroll offset is in pixels now, so the row the field lands on has to be
+ * computed from the offset that actually took effect: asking to put a field at
+ * the top when there is not a viewport's worth of list below it leaves the
+ * scroll clamped, and the row ends up further down than requested.
+ */
 static int uiRowY(const char *name) {
 	for (uint16_t v = 0; v < s_visibleCount; v++) {
 		if (strcmp(AM32_FIELDS[s_visible[v]].name, name) == 0) {
-			int maxScroll = (int)s_visibleCount - LIST_ROWS;
-			if (maxScroll < 0) maxScroll = 0;
-			s_scroll = (int)v > maxScroll ? maxScroll : (int)v;
-			return LIST_Y0 + ((int)v - s_scroll) * ROW_H + 13;
+			s_scrollPx = (int)v * ROW_H;
+			clampScroll();
+			return LIST_Y0 + ((int)v * ROW_H - s_scrollPx) + 13;
 		}
 	}
 	return -1;
@@ -1735,6 +1741,80 @@ void runUiTests() {
 		int before = uiSelected();
 		tap(AM32_PLUS_X, AM32_EDIT_Y);
 		checkInt("editor bar does not re-select a row", uiSelected(), before);
+	}
+
+	/*
+	 * Reported as "scrolling first selects the item touched and scrolls then
+	 * with delay". Both halves were real and they had different causes: the
+	 * selection fired on touch-down, and the scroll needed 10 px of axis lock
+	 * plus a whole 26 px row before anything moved. So this section asserts the
+	 * order of events, not just the end state.
+	 */
+	section("AM32 list: scrolls first, selects only on a tap that stayed put");
+	{
+		s_scrollPx = 0;
+		s_selected = -1;
+		frames(2);
+
+		// 1. A press on a row commits nothing.
+		fakePress(60, LIST_Y0 + 10); frames(1);
+		checkInt("a press alone selects nothing", uiSelected(), -1);
+
+		// 2. Dragging up scrolls, and still selects nothing.
+		for (int y = LIST_Y0 + 10; y >= LIST_Y0 - 40; y -= 5) {
+			fakeHold(60, y); frames(1);
+		}
+		checkTrue("the drag scrolled", uiScroll() > 0);
+		checkInt("a drag never selects", uiSelected(), -1);
+		fakeRelease(); frames(1);
+		checkInt("and releasing after a drag does not either", uiSelected(), -1);
+
+		// 3. The list tracks the finger 1:1, including the pixels spent
+		//    deciding this was a scroll rather than a tap.
+		int mark = uiScroll();
+		fakePress(60, 150); frames(1);
+		fakeHold(60, 110); frames(1);
+		checkInt("the list moves exactly as far as the finger", uiScroll(),
+		         mark + 40);
+		fakeRelease(); frames(2);
+
+		// 4. Which means the offset is normally mid-row, so the top and bottom
+		//    rows are partial -- the case gfxSetClip() exists for. Nothing the
+		//    list draws may reach the header strip above it.
+		checkTrue("the scroll offset is mid-row", uiScroll() % ROW_H != 0);
+		uint32_t above = fakeRegionHash(0, 0, GFX_W, LIST_Y0);
+		fakePress(60, 150); frames(1);
+		fakeHold(60, 143); frames(1);          // 7 px, so still mid-row
+		fakeRelease(); frames(2);
+		checkTrue("a partial row paints nothing above the viewport",
+		          fakeRegionHash(0, 0, GFX_W, LIST_Y0) == above);
+		fakeDumpFrame("shot_am32_scrolled.ppm");
+
+		// 5. A tap that goes nowhere selects, and selects the row actually
+		//    under the finger -- which with a mid-row offset is not the row a
+		//    slot-index calculation would have named.
+		int y = LIST_Y0 + 40;
+		int want = (int)s_visible[(uiScroll() + (y - LIST_Y0)) / ROW_H];
+		fakePress(60, y); frames(2); fakeRelease(); frames(1);
+		checkInt("a tap that stayed put selects the row under it",
+		         uiSelected(), want);
+
+		// 6. And a horizontal swipe still adjusts the row it started on, even
+		//    though the press no longer selected it. Selection has to happen at
+		//    the axis lock, before the value anchor is taken, or the first
+		//    swipe writes the old selection's value into the new field.
+		s_selected = -1;
+		frames(2);
+		int y2 = LIST_Y0 + 70;
+		int want2 = (int)s_visible[(uiScroll() + (y2 - LIST_Y0)) / ROW_H];
+		uint8_t raw2 = s_eeprom[AM32_FIELDS[want2].offset];
+		fakePress(40, y2); frames(1);
+		for (int x = 40; x <= 200; x += 10) { fakeHold(x, y2); frames(1); }
+		checkInt("a coarse swipe selects the row it began on", uiSelected(),
+		         want2);
+		checkTrue("and it is that row's value that moved",
+		          s_eeprom[AM32_FIELDS[want2].offset] != raw2);
+		fakeRelease(); frames(1);
 	}
 
 	section("Write: interlock, commit, verify, hand back");
