@@ -160,15 +160,32 @@ Hinweis darauf.
 
 ---
 
-## KISS-Telemetrie lässt sich nicht einschalten
+## KISS-Telemetrie ist auf meiner 2,8"-Platine aus
 
-Auf der 2,8"-Platine sind nur zwei GPIOs frei, und das ESC-Signal liegt auf
-einem davon. KISS einzuschalten verschiebt es automatisch auf den anderen. Sind
-beide bereits vergeben, weigert sich der Pin-Schrittschalter, auf dem Pin des
-ESC zu landen, statt eine Kollision zu erzeugen.
+So wird sie ausgeliefert. Ein Tippen schaltet sie ein:
+**CFG → SETUP → KISS TELEM**.
 
-Schaltet es sich mit `KISS OFF: NEEDS A PIN OF ITS OWN` selbst ab, ist das der
-Grund.
+Die 2,8"-Platine führt genau zwei freie GPIOs heraus, und das ESC-Signal liegt
+anfangs auf einem davon — KISS standardmäßig einzuschalten würde also den
+einzigen übrigen Pin für ein Kabel verbrauchen, das die meisten gar nicht
+angelötet haben. Die 2,0"-Platine hat eine ganze Kameraleiste voll freier Pins
+und ist aus demselben Grund umgekehrt standardmäßig an.
+
+Beim Einschalten wandert KISS von selbst auf den freien Pin; du musst nichts
+auswählen. Der Pin-Schrittschalter weigert sich außerdem, auf dem Pin des
+ESC-Signals zu landen, sodass beide nicht kollidieren können.
+
+> **Auf der 2,8" war das einmal wirklich unmöglich, und ist es nicht mehr.**
+> Solange der Empfänger ein Hardware-UART war, brauchte er einen Pin mit
+> UART-RX-Funktion, und der einzige freie auf dieser Platine war GP29 — der Pin,
+> auf dem das ESC bereits lag. KISS einzuschalten fand überhaupt keinen Pin, und
+> die Prüfung schaltete es sofort wieder ab. Der Empfänger ist inzwischen eine
+> PIO-Zustandsmaschine und tastet jeden GPIO ab. Wenn du irgendwo gelesen hast,
+> dass KISS auf der 2,8" nicht funktioniert: darum ging es.
+
+Schaltet es sich tatsächlich mit `KISS OFF: NEEDS A PIN OF ITS OWN` selbst ab,
+sind wirklich beide Pins vergeben: verschiebe zuerst das ESC-Signal auf den
+anderen und schalte dann KISS ein.
 
 ---
 
