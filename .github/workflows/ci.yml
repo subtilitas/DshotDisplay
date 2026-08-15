@@ -265,6 +265,17 @@ jobs:
           make BOARD=BOARD_UNIFIED run \
                EXTRA_DEFINES="-DDSHOT_PIN_LCD_2=9 -DKISS_PIN_LCD_2=10 \
                               -DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29"
+      # The wiki is only *published* on release, but its links and its
+      # screenshots break on ordinary pushes -- renaming a page, or dropping a
+      # fakeDumpFrame() call a manual page happens to show. Catching that here
+      # rather than at release time means the failure lands on the commit that
+      # caused it. This job is the right home for it because it is the one that
+      # has just run the suite, so the screens actually exist to be checked.
+      - name: Wiki links and screenshots
+        run: |
+          python3 tools/make_previews.py --wiki
+          python3 tools/check_wiki.py
+
       - name: Upload rendered frames on failure
         if: failure()
         uses: actions/upload-artifact@v7

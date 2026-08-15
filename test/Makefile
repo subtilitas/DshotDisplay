@@ -7,6 +7,7 @@
 #   make syntax   typecheck the device-only sources, both boards
 #   make bbcheck  round-trip a log through the upstream blackbox_decode
 #   make previews rebuild the screenshots in docs/ from this run's frames
+#   make wiki     rebuild the wiki's screenshots and check its links
 #   make clean
 #
 # Needs nothing but a C++17 compiler: the firmware is compiled against the
@@ -60,7 +61,7 @@ DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
 
 BIN := dshot_tests
 
-.PHONY: all build run both syntax bbcheck previews clean
+.PHONY: all build run both syntax bbcheck previews wiki clean
 
 all: syntax run bbcheck
 
@@ -127,6 +128,14 @@ bbcheck:
 # what let the published screenshots go stale for several releases.
 previews: run
 	python3 ../tools/make_previews.py
+
+# Render the wiki's screenshots and check every page still resolves. Same
+# relationship to wiki/ that `previews` has to docs/, and the same reason for
+# existing: the manual claims its pictures come from the real UI code, and a
+# claim nobody can re-run in one command is a claim that goes stale.
+wiki: run
+	python3 ../tools/make_previews.py --wiki
+	python3 ../tools/check_wiki.py
 
 clean:
 	rm -f $(BIN) gen_blackbox_log *.ppm *.BFL

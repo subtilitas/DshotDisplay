@@ -318,3 +318,76 @@ jobs:
             echo "::error::unexpected assets on $TAG: $unexpected"; exit 1
           fi
           echo "all expected assets present, and only those"
+
+  # The user manual lives in wiki/ in this repository and is mirrored to the
+  # GitHub wiki from here, on release, so that what the wiki describes is a
+  # firmware you can actually download rather than whatever main happened to
+  # contain that afternoon.
+  #
+  # The screenshots are not committed. They are re-rendered here from the host
+  # test suite, which draws them with the real UI code -- the same guarantee the
+  # README's previews carry, extended to the manual. A page referencing a screen
+  # nobody captured fails the link check below rather than publishing a broken
+  # image.
+  wiki:
+    name: Publish wiki
+    needs: [version, publish]
+    runs-on: ubuntu-latest
+    # The wiki is a second git repository behind the same slug, and pushing to
+    # it is a contents write. Scoped to this job for the same reason the publish
+    # job scopes its token.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Render the screens from the host suite
+        run: |
+          make -C test run
+          python3 tools/make_previews.py --wiki
+
+      # Cheap, and it catches the two failures that are invisible until someone
+      # is reading the published page: a link to a page that was renamed, and an
+      # image that no test captures any more.
+      - name: Check every internal link and image resolves
+        run: python3 tools/check_wiki.py
+
+      - name: Push to the wiki
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+
+          # A wiki that has never had a page created has no .wiki.git to clone,
+          # and the clone fails with a bare "repository not found" that reads
+          # like a permissions problem. Say what it actually is.
+          if ! git clone --depth 1 \
+                 "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.wiki.git" wiki-repo 2>clone.log; then
+            cat clone.log
+            echo "::error::Could not clone ${REPO}.wiki.git. If this is the first \
+          run, create one page in the repository's Wiki tab by hand -- GitHub does \
+          not create the wiki repository until a page exists."
+            exit 1
+          fi
+
+          # Mirror rather than merge: wiki/ in the source tree is the only
+          # author. Anything edited in the browser is meant to lose, and the
+          # footer on every page says so.
+          find wiki-repo -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
+          cp -r wiki/. wiki-repo/
+
+          cd wiki-repo
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "wiki already matches ${TAG}; nothing to push"
+            exit 0
+          fi
+          git commit -m "docs: publish the manual for ${TAG}"
+          git push
+          echo "wiki updated for ${TAG}"
