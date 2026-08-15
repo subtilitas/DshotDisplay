@@ -72,10 +72,13 @@ static void swipe(int x0, int x1, int y, int step) {
 #define BTN_AM32_X    48   // BTN_AM32  spans x  14..81
 #define BTN_LOG_X    120   // BTN_LOG   spans x  86..153
 #define BTN_SETUP_X  192   // BTN_SETUP spans x 158..225
-#define BTN_AM32_Y   275   // all three span y 256..293
-// --- config-screen coordinates ---
-#define AM32_BACK_X 216
-#define AM32_BACK_Y  23
+// --- the shared BACK button, which is now the same rectangle on SETTINGS,
+//     SD LOG, SETUP and AM32. One constant for all four is the point: when
+//     these were four different rectangles, this file had three of them and
+//     was missing the fourth. @see ui_widgets.h ---
+#define BACK_X      (UI_BACK_X + UI_BACK_W / 2)   // x 184..233
+#define BACK_Y      (UI_BACK_Y + UI_BACK_H / 2)   // y   4..25
+// --- AM32 screen ---
 #define AM32_MINUS_X 34
 #define AM32_PLUS_X 205
 #define AM32_EDIT_Y 240
@@ -83,21 +86,22 @@ static void swipe(int x0, int x1, int y, int step) {
 #define AM32_WRITE_Y 290
 // --- settings-screen command buttons, mirroring ui.cpp ---
 #define CFG_BEEP_X  120   // BTN_BEEP spans the full row, x 14..225
-#define CFG_CMD_Y_T 219   // y 200..237
+#define CFG_CMD_Y_T 214   // y 192..235
 #define CFG_BEEP_Y  CFG_CMD_Y_T
 // --- settings-screen steppers: BTN_*_M x 14..59, BTN_*_P x 180..225 ---
 #define CFG_POLES_M_X  37
 #define CFG_POLES_P_X 203
-#define CFG_POLES_Y    92   // BTN_POLES_* y 72..111
+#define CFG_POLES_Y    90   // BTN_POLES_* y  68..111
 #define CFG_MAXT_M_X   37
 #define CFG_MAXT_P_X  203
-#define CFG_MAXT_Y    168   // BTN_MAXT_* y 148..187
+#define CFG_MAXT_Y    156   // BTN_MAXT_*  y 134..177
+// --- the AM32/LOG/SETUP row: three 68 px buttons with 4 px gaps, from x=14 ---
+#define BTN_AM32_Y   282   // all three span y 258..305
 // --- throttle gauge: THR_TRACK_Y 248, height 26 ---
 #define THR_Y         260
 // --- logging-screen coordinates, mirroring ui.cpp ---
-#define LOG_TOGGLE_Y 232
-#define LOG_RETRY_Y  270
-#define LOG_BACK_Y   296
+#define LOG_TOGGLE_Y 258   // BTN_LOG_TOGGLE y 236..279
+#define LOG_RETRY_Y  301   // BTN_LOG_RETRY  y 286..315
 
 /**
  * @brief The standard "ESC is talking" fixture, stamped as having just arrived.
@@ -164,13 +168,13 @@ static void testLogScreen() {
 	checkTrue("not recording on arrival", !sdLogActive());
 	fakeDumpFrame("shot_log_ready.ppm");
 
-	tap(120, LOG_TOGGLE_Y + 20);
+	tap(120, LOG_TOGGLE_Y);
 	checkTrue("START begins a log", sdLogActive());
 
 	sdLogStatus(&st);
 	checkTrue("a file number is assigned", st.fileNumber != 0);
 
-	tap(120, LOG_TOGGLE_Y + 20);
+	tap(120, LOG_TOGGLE_Y);
 	checkTrue("STOP ends it", !sdLogActive());
 
 	// Counters worth showing: a full buffer and lost frames are the two things
@@ -197,13 +201,13 @@ static void testLogScreen() {
 	frames(2);
 	// The first thing anyone sees, since the card slot is empty by default.
 	fakeDumpFrame("shot_log_nocard.ppm");
-	tap(120, LOG_TOGGLE_Y + 20);
+	tap(120, LOG_TOGGLE_Y);
 	checkTrue("START does nothing without a card", !sdLogActive());
 
 	// A card inserted after boot. sdLogBegin() only runs once, so without this
 	// button the card would stay invisible until a power cycle -- which looks
 	// exactly like a card the firmware cannot read.
-	tap(120, LOG_RETRY_Y + 11);
+	tap(120, LOG_RETRY_Y);
 	frames(2);
 	sdLogStatus(&st);
 	checkTrue("RETRY finds a card inserted later",
@@ -213,7 +217,7 @@ static void testLogScreen() {
 	checkTrue("and its size", st.cardSizeMB > 100000);
 	fakeDumpFrame("shot_log_mounted.ppm");
 
-	tap(120, LOG_BACK_Y + 9);
+	tap(BACK_X, BACK_Y);
 	frames(2);
 }
 
@@ -235,11 +239,11 @@ static void testManualLogSurvivesArming() {
 	fakeSdLogSet(&st);
 
 	enterLogScreen();
-	tap(120, LOG_TOGGLE_Y + 17);
+	tap(120, LOG_TOGGLE_Y);
 	checkTrue("manual START begins a log", sdLogActive());
 
 	// Back to the main screen and arm.
-	tap(120, LOG_BACK_Y + 9);
+	tap(BACK_X, BACK_Y);
 	frames(2);
 	// A tap will not arm: it takes a one-second hold, and using tap() here is
 	// how an earlier version of this test passed against the broken rule.
@@ -255,9 +259,9 @@ static void testManualLogSurvivesArming() {
 	checkTrue("manual log survives the force-disarm", sdLogActive());
 
 	// STOP is still the operator's to press.
-	tap(120, LOG_TOGGLE_Y + 17);
+	tap(120, LOG_TOGGLE_Y);
 	checkTrue("manual STOP ends it", !sdLogActive());
-	tap(120, LOG_BACK_Y + 9);
+	tap(BACK_X, BACK_Y);
 	frames(2);
 }
 
@@ -471,8 +475,8 @@ static void testSettingsCommandRow() {
 	feedLiveTelemetry();
 	tap(BTN_CFG_X, BTN_ARM_Y);          // into settings (this force-disarms)
 	frames(2);
-	uint32_t chipOn = fakeRegionHash(120, 0, 120, 26);
-	uint32_t idle   = fakeRegionHash(0, 195, 240, 55);
+	uint32_t chipOn = fakeRegionHash(120, UI_STRIP_Y, 120, UI_STRIP_H);
+	uint32_t idle   = fakeRegionHash(0, CFG_BEEP_Y - 24, 240, 60);
 	fakeDumpFrame("shot_config_edt_on.ppm");
 
 	// Letting telemetry expire has to change the chip, or the colour is
@@ -482,29 +486,32 @@ static void testSettingsCommandRow() {
 	fakeSetTelemetry(&none);
 	frames(2);
 	checkTrue("EDT chip changes when telemetry stops",
-	          fakeRegionHash(120, 0, 120, 26) != chipOn);
+	          fakeRegionHash(120, UI_STRIP_Y, 120, UI_STRIP_H) != chipOn);
 	fakeDumpFrame("shot_config_edt_off.ppm");
 	feedLiveTelemetry();
 	frames(2);
 	checkTrue("and changes back when it returns",
-	          fakeRegionHash(120, 0, 120, 26) == chipOn);
+	          fakeRegionHash(120, UI_STRIP_Y, 120, UI_STRIP_H) == chipOn);
 
-	// The chip is not a button. Tapping it must not be mistaken for one.
+	// The chip is not a button. Tapping it must not be mistaken for one. It
+	// lives on the strip under the title now, not in the header: the header's
+	// right-hand end is BACK's on every screen. Tapping the old spot would
+	// leave the screen, which is a better reason to move it than tidiness.
 	int beepBefore = fakeBeepRequests();
-	tap(200, 12);
+	tap(200, UI_STRIP_Y + UI_STRIP_H / 2);
 	checkInt("tapping the chip does nothing", fakeBeepRequests(), beepBefore);
 
 	// BEEP now has the row to itself, so a tap anywhere along it lands.
 	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
 	checkInt("tapping BEEP sends the command", fakeBeepRequests(), beepBefore + 1);
-	uint32_t lit = fakeRegionHash(0, 195, 240, 55);
+	uint32_t lit = fakeRegionHash(0, CFG_BEEP_Y - 24, 240, 60);
 	checkTrue("and the button acknowledges it", lit != idle);
 	fakeDumpFrame("shot_config_beep_flash.ppm");
 
 	fakeAdvance(400);
 	frames(2);
 	checkTrue("the flash clears itself",
-	          fakeRegionHash(0, 195, 240, 55) == idle);
+	          fakeRegionHash(0, CFG_BEEP_Y - 24, 240, 60) == idle);
 
 	// Left-hand end of the row, where the EDT button used to be.
 	fakePress(40, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
@@ -517,21 +524,20 @@ static void testSettingsCommandRow() {
 	// user can currently make it.
 	escSetArmed(true);
 	fakePress(CFG_BEEP_X, CFG_CMD_Y_T); frames(1); fakeRelease(); frames(1);
-	uint32_t refused = fakeRegionHash(0, 195, 240, 55);
+	uint32_t refused = fakeRegionHash(0, CFG_BEEP_Y - 24, 240, 60);
 	checkTrue("a refused command looks different from an accepted one",
 	          refused != lit && refused != idle);
 	fakeDumpFrame("shot_config_beep_refused.ppm");
 	escSetArmed(false);
 	fakeAdvance(400); frames(2);
 
-	tap(120, 308);                      // BACK, spans y 300..317
+	tap(BACK_X, BACK_Y);               // BACK, now in the header
 	frames(2);
 }
 
 
-// --- SETUP screen coordinates, mirroring ui_setup.cpp ---
-#define SET_BACK_X  (GFX_W - 30)
-#define SET_BACK_Y   16
+// --- SETUP screen coordinates, mirroring ui_setup.cpp. BACK is BACK_X/BACK_Y
+//     above, the same rectangle as on every other screen. ---
 #define SET_MINUS_X 168   // BTN_M_X 148 + BTN_W 40 -> centre 168
 #define SET_PLUS_X  212   // BTN_P_X 192 + BTN_W 40 -> centre 212
 #define SET_TOGGLE_X 190  // the wide toggle spans 148..231
@@ -697,9 +703,9 @@ static void testSetupDisplay() {
 	// The screen worth checking in high contrast is not this one: it is the
 	// tester, which is what you are looking at outdoors with a motor running.
 	// Rendering it here is what puts it in the published preview.
-	tap(SET_BACK_X, SET_BACK_Y);
+	tap(BACK_X, BACK_Y);
 	frames(2);
-	tap(120, 308);                      // BACK, out of settings
+	tap(BACK_X, BACK_Y);               // BACK, out of settings
 	// Live data in both halves of the published pair. A dark screen full of
 	// numbers next to a light screen reading "--" compares two different things.
 	feedLiveTelemetry();
@@ -789,7 +795,7 @@ static void testSetupSave() {
 	checkTrue("RESET alone leaves flash as it was", settingsStored());
 
 	// BACK returns to the settings screen.
-	tap(SET_BACK_X, SET_BACK_Y);
+	tap(BACK_X, BACK_Y);
 	frames(2);
 	checkTrue("BACK leaves SETUP", true);
 	fakeDumpFrame("shot_settings_unsaved.ppm");
@@ -834,15 +840,16 @@ static void testTapCancels() {
 	tap(BTN_HOLD_X, BTN_ARM_Y);       // back off, which zeroes it
 	tap(BTN_CFG_X, BTN_ARM_Y);        // into settings for the rest
 
-	// The settings screen: press BEEP, slide to BACK, release. Neither fires.
+	// The settings screen: press BEEP, slide off it, release. Neither fires.
 	int beeps = fakeBeepRequests();
 	fakePress(120, CFG_BEEP_Y);  frames(2);
-	fakeHold(120, 308);          frames(2);
+	fakeHold(120, CFG_BEEP_Y + 60); frames(2);
 	fakeRelease();               frames(2);
 	checkInt("sliding off BEEP sent nothing", fakeBeepRequests(), beeps);
 
-	// Still on the settings screen, which the next tap proves by working: BACK
-	// is only hit-tested here, so if the slide had activated it this fails.
+	// Still on the settings screen, which the next tap proves by working: the
+	// row the finger slid onto is only hit-tested, so if the slide had
+	// activated anything this fails.
 	fakePress(120, CFG_BEEP_Y);  frames(2);
 	fakeRelease();               frames(2);
 	checkInt("released in place, it fires", fakeBeepRequests(), beeps + 1);
@@ -1461,7 +1468,7 @@ static void testBoardSelection() {
 	checkInt("the saved block records the live board",
 	         settings()->boardId, live);
 
-	tap(SET_BACK_X, SET_BACK_Y);
+	tap(BACK_X, BACK_Y);
 	frames(2);
 
 	fakeFlashClear();
@@ -1562,7 +1569,7 @@ static void testPressedLookClears() {
 	checkTrue("and returns to rest on release",
 	          fakeRegionHash(148, 62, 40, 24) == idle);
 
-	tap(SET_BACK_X, SET_BACK_Y);
+	tap(BACK_X, BACK_Y);
 	frames(2);
 	tap(120, 309);                       // CFG BACK, to the tester screen
 	frames(2);
@@ -1593,7 +1600,7 @@ static void testScreenChangeResidue() {
 	int onSettings = fakeCountColour(C_CYAN);
 	checkTrue("the settings screen shows more cyan", onSettings > before);
 
-	tap(120, 309);                       // BACK, to the tester screen
+	tap(BACK_X, BACK_Y);                 // BACK, to the tester screen
 	frames(3);
 	int after = fakeCountColour(C_CYAN);
 	checkTrue("no settings cyan survives on the tester screen",
@@ -1679,6 +1686,11 @@ void runUiTests() {
 	{
 		tap(BTN_CFG_X, BTN_ARM_Y);
 		checkTrue("entering settings force-disarms", !fakeArmed());
+		// One more frame before the dump. The tap that navigates is handled by
+		// the *outgoing* screen's handler, so the incoming one is not painted
+		// until the following tick -- and this screenshot, which docs/ publishes,
+		// was of the tester screen for as long as it has existed.
+		frames(2);
 		fakeDumpFrame("shot_settings.ppm");
 		tap(BTN_AM32_X, BTN_AM32_Y);
 		for (int i = 0; i < 8; i++) frames(1);
@@ -1749,8 +1761,14 @@ void runUiTests() {
 		frames(2);
 		fakeDumpFrame("shot_am32_hex.ppm");
 		tap(180 + 27, 268 + 23);                         // back to fields
-		tap(AM32_BACK_X, AM32_BACK_Y);                   // leave config
+		tap(BACK_X, BACK_Y);                   // leave AM32, back to SETTINGS
 		checkTrue("DShot pin handed back", fakePinReturned());
+		// And back to the main screen, which is what the sections after this
+		// one assume. It used to be left on SETTINGS and get away with it: the
+		// settings nav row stopped at y=293, so enterLogScreen()'s first tap at
+		// y=299 fell into dead space and was harmlessly ignored. The row is
+		// 48 px tall now and that tap lands on SETUP.
+		tap(BACK_X, BACK_Y);
 	}
 
 	section("Splash fits the panel");

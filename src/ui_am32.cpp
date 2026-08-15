@@ -13,6 +13,7 @@
 #include "esc_task.h"
 #include "touch.h"
 #include "ui_input.h"
+#include "ui_widgets.h"
 #include "gfx.h"
 #include "config.h"
 
@@ -22,8 +23,8 @@
 #include <string.h>
 
 #define ROW_H        26      /**< Height of one settings row. */
-#define LIST_Y0      54      /**< First pixel row of the list viewport. */
-#define LIST_Y1      213     /**< Last pixel row of the list viewport. */
+#define LIST_Y0      UI_BODY_Y  /**< First pixel row of the list viewport. */
+#define LIST_Y1      215     /**< Last pixel row of the list viewport. */
 #define LIST_ROWS    ((LIST_Y1 - LIST_Y0 + 1) / ROW_H)
 #define WRITE_HOLD_MS 1000   /**< Hold this long to commit a write. */
 
@@ -46,12 +47,25 @@
 #define FOOT_Y       268     /**< Top of the write/revert/hex row. */
 #define FOOT_H       46
 
+/** @brief The three footer targets. */
+static const UiRect BTN_WRITE  = { 6, FOOT_Y, 110, FOOT_H };
+static const UiRect BTN_REVERT = { 122, FOOT_Y, 52, FOOT_H };
+static const UiRect BTN_HEX    = { 180, FOOT_Y, 54, FOOT_H };
+/** @brief The editor bar's two steppers. */
+static const UiRect BTN_MINUS  = { BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H };
+static const UiRect BTN_PLUS   = { BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H };
+/** @brief The OK button on the write-result screen. */
+static const UiRect BTN_OK     = { 70, 200, 100, 36 };
+
 // Layout invariants, asserted rather than eyeballed. A caption that runs under
 // a button is invisible in code review and obvious only in a screenshot.
+static_assert(LIST_Y0 >= UI_BODY_Y, "the list overlaps the header strip");
 static_assert(LIST_Y1 < EDIT_Y, "list overlaps the editor bar");
 static_assert(EDIT_Y + EDIT_H <= FOOT_Y, "editor bar overlaps the footer");
 static_assert(FOOT_Y + FOOT_H <= GFX_H, "footer runs off the panel");
 static_assert(BTN_MINUS_X + EDIT_BTN_W < BTN_PLUS_X, "editor buttons overlap");
+static_assert(EDIT_H >= UI_TAP_MIN && FOOT_H >= UI_TAP_MIN,
+              "an AM32 button is smaller than a fingertip");
 
 /** @brief Screen states. */
 enum Am32Screen : uint8_t {
@@ -115,32 +129,9 @@ static bool anyDirty() {
 	return memcmp(s_eeprom, s_original, AM32_SETTINGS_SIZE) != 0;
 }
 
-static bool hit(int x, int y, int bx, int by, int bw, int bh) {
-	return x >= bx && x < bx + bw && y >= by && y < by + bh;
-}
-
-/**
- * @brief Draw a button, optionally in its pressed state.
- *
- * Additive, exactly as on the main screens: a brighter frame and the label
- * nudged, never a swapped fill, so no fill/foreground pairing can be broken by
- * it. @see drawBtn() in ui.cpp
- */
-static void button(int x, int y, int w, int h, const char *label,
-                   uint16_t fill, uint16_t fg, bool pressed = false) {
-	gfxRoundRect(x, y, w, h, 5, fill);
-	gfxRoundFrame(x, y, w, h, 5, pressed ? C_INK : C_GRID);
-	if (pressed && w > 6 && h > 6)
-		gfxRoundFrame(x + 2, y + 2, w - 4, h - 4, 3, C_INK);
-	int d = pressed ? 1 : 0;
-	gfxText(x + d + (w - gfxTextW(label, 1)) / 2, y + d + (h - 7) / 2, label, fg, 1);
-}
-
-/** @brief True while a press that began inside this rectangle is still on it. */
-static bool pressingBtn(const TouchState *t, int x, int y, int w, int h) {
-	return t && t->down && hit(t->x, t->y, x, y, w, h) &&
-	       hit(t->downX, t->downY, x, y, w, h);
-}
+// hit(), button() and pressingBtn() used to live here. They were a third copy
+// of the same three functions and are uiPressing() and uiButton() now.
+// @see ui_widgets.h
 
 /** @brief Touch state for the frame being drawn. Set at the top of uiAm32Tick(). */
 static const TouchState *s_frameTouch = nullptr;
@@ -149,9 +140,13 @@ static const TouchState *s_frameTouch = nullptr;
 // drawing
 // ---------------------------------------------------------------------------
 static void drawHeader() {
-	gfxRect(0, 0, GFX_W, 50, C_PANEL);
-	gfxText(6, 6, "AM32 CONFIG", C_TEXT, 2);
+	uiHeader("AM32 CONFIG", s_frameTouch);
 
+	// The device name qualifies the title rather than being part of it, so it
+	// goes on the shared strip -- the same row SETTINGS puts its EDT chip on.
+	// It used to be a second line inside a 50 px header this screen had to
+	// itself, which is why BACK ended up 8 px lower here than on SETUP.
+	uiStripClear();
 	char name[AM32_NAME_LEN + 1];
 	if (s_state == S_LIST || s_state == S_WRITING) {
 		am32DeviceName(s_eeprom, name);
@@ -164,17 +159,14 @@ static void drawHeader() {
 			         s_eeprom[AM32_OFF_MAIN_REVISION], s_eeprom[AM32_OFF_SUB_REVISION],
 			         s_layoutRev);
 		}
-		gfxText(6, 26, buf, C_DIM, 1);
+		uiStripText(buf, C_DIM);
 	} else if (s_status[0]) {
-		gfxText(6, 26, s_status, C_DIM, 1);
+		uiStripText(s_status, C_DIM);
 	}
-
-	button(GFX_W - 54, 8, 48, 30, "BACK", C_PANEL, C_TEXT,
-	       pressingBtn(s_frameTouch, GFX_W - 54, 8, 48, 30));
 }
 
 static void drawConnect() {
-	gfxRect(0, 50, GFX_W, GFX_H - 50, C_BG);
+	gfxRect(0, LIST_Y0, GFX_W, GFX_H - LIST_Y0, C_BG);
 
 	gfxTextCenter(84, "POWER-CYCLE THE ESC", C_LIME, 2);
 	gfxTextCenter(116, "THE BOOTLOADER ONLY LISTENS", C_DIM, 1);
@@ -260,10 +252,10 @@ static void drawList() {
 	                           ? &AM32_FIELDS[s_selected] : nullptr;
 
 	if (sel && !s_hexView) {
-		button(BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H, "-", C_GRID, C_ONACCENT,
-		       pressingBtn(s_frameTouch, BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H));
-		button(BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H, "+", C_GRID, C_ONACCENT,
-		       pressingBtn(s_frameTouch, BTN_PLUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H));
+		uiButton(BTN_MINUS, "-", C_GRID, C_ONACCENT, 1,
+		         uiPressing(BTN_MINUS, s_frameTouch));
+		uiButton(BTN_PLUS,  "+", C_GRID, C_ONACCENT, 1,
+		         uiPressing(BTN_PLUS, s_frameTouch));
 		// The label is worth the space: the buttons are far from the row they
 		// act on, so the bar has to say what it is editing.
 		int cx = BTN_MINUS_X + EDIT_BTN_W;
@@ -296,20 +288,20 @@ static void drawList() {
 		if (pct > 100) pct = 100;
 		gfxRect(6, FOOT_Y - 4, 110 * pct / 100, 3, C_LIME);
 	}
-	button(6, FOOT_Y, 110, FOOT_H,
-	       dirty ? "HOLD TO WRITE" : "NO CHANGES",
-	       dirty ? writeFill : C_PANEL,
-	       dirty ? (s_writeHolding ? C_ONACCENT : C_TEXT) : C_GRID);
-	button(122, FOOT_Y, 52, FOOT_H, "REVERT", C_PANEL, dirty ? C_AMBER : C_GRID,
-	       pressingBtn(s_frameTouch, 122, FOOT_Y, 52, FOOT_H));
-	button(180, FOOT_Y, 54, FOOT_H, s_hexView ? "FIELDS" : "HEX", C_PANEL, C_CYAN,
-	       pressingBtn(s_frameTouch, 180, FOOT_Y, 54, FOOT_H));
+	uiButton(BTN_WRITE, dirty ? "HOLD TO WRITE" : "NO CHANGES",
+	         dirty ? writeFill : C_PANEL,
+	         dirty ? (s_writeHolding ? C_ONACCENT : C_TEXT) : C_GRID, 1,
+	         s_writeHolding);
+	uiButton(BTN_REVERT, "REVERT", C_PANEL, dirty ? C_AMBER : C_GRID, 1,
+	         uiPressing(BTN_REVERT, s_frameTouch));
+	uiButton(BTN_HEX, s_hexView ? "FIELDS" : "HEX", C_PANEL, C_CYAN, 1,
+	         uiPressing(BTN_HEX, s_frameTouch));
 }
 
 static void drawWriting() {
-	gfxRect(0, 50, GFX_W, GFX_H - 50, C_BG);
+	gfxRect(0, LIST_Y0, GFX_W, GFX_H - LIST_Y0, C_BG);
 	gfxTextCenter(140, s_status, C_TEXT, 2);
-	button(70, 200, 100, 36, "OK", C_PANEL, C_TEXT);
+	uiButton(BTN_OK, "OK", C_PANEL, C_TEXT, 1, uiPressing(BTN_OK, s_frameTouch));
 }
 
 // ---------------------------------------------------------------------------
@@ -438,12 +430,12 @@ static void doWrite() {
 static void handleListTouch(const TouchState *t) {
 	// --- write button: needs every frame, including finger-off, to time the
 	//     hold and to cancel it the moment the finger moves away. Press-origin
-	//     gated (inputPressing), so a drag that strays in from the list cannot
+	//     gated (uiPressing), so a drag that strays in from the list cannot
 	//     start a hold it never announced -- the drawn pressed state already
 	//     required the press to begin on the button, and firing has to agree
 	//     with feedback ---
 	bool dirty = anyDirty();
-	if (dirty && inputPressing(t, 6, FOOT_Y, 110, FOOT_H)) {
+	if (dirty && uiPressing(BTN_WRITE, t)) {
 		if (!s_writeHolding) { s_writeHolding = true; s_writeHoldStart = millis(); }
 		if (millis() - s_writeHoldStart >= WRITE_HOLD_MS) {
 			s_writeHolding = false;
@@ -465,8 +457,8 @@ static void handleListTouch(const TouchState *t) {
 	const Am32Field *sel = (!s_hexView && s_selected >= 0 &&
 	                        s_selected < (int)AM32_FIELD_COUNT)
 	                           ? &AM32_FIELDS[s_selected] : nullptr;
-	bool onMinus = inputPressing(t, BTN_MINUS_X, EDIT_Y, EDIT_BTN_W, EDIT_H);
-	bool onPlus  = inputPressing(t, BTN_PLUS_X,  EDIT_Y, EDIT_BTN_W, EDIT_H);
+	bool onMinus = uiPressing(BTN_MINUS, t);
+	bool onPlus  = uiPressing(BTN_PLUS, t);
 
 	if (sel && (onMinus || onPlus)) {
 		int dir = onMinus ? -1 : +1;
@@ -496,10 +488,10 @@ static void handleListTouch(const TouchState *t) {
 	// --- destructive taps fire on release, inside, having started inside, so
 	//     a mis-tap can slide off. REVERT throws away every unsaved edit; it
 	//     used to do so on touch-down ---
-	if (inputTapped(t, 122, FOOT_Y, 52, FOOT_H)) {
+	if (uiTapped(BTN_REVERT, t)) {
 		memcpy(s_eeprom, s_original, sizeof(s_eeprom));
 		s_redraw = true;
-	} else if (inputTapped(t, 180, FOOT_Y, 54, FOOT_H)) {
+	} else if (uiTapped(BTN_HEX, t)) {
 		s_hexView = !s_hexView;
 		s_scroll = 0;
 		s_redraw = true;
@@ -616,7 +608,7 @@ bool uiAm32Tick(const TouchState *t) {
 	// every state. Doing it here rather than per-state stops it being a button
 	// that is visible but inert on whichever screen forgot to check for it.
 	// On release, like every navigation tap.
-	if (inputTapped(t, GFX_W - 54, 8, 48, 30)) {
+	if (uiBackTapped(t)) {
 		s_leaving = true;
 		uiAm32Exit();
 		return false;
@@ -656,7 +648,7 @@ bool uiAm32Tick(const TouchState *t) {
 				drawWriting();
 				doWrite();
 				s_redraw = true;
-			} else if (inputTapped(t, 70, 200, 100, 36)) {
+			} else if (uiTapped(BTN_OK, t)) {
 				s_state = S_LIST;
 				s_redraw = true;
 			}

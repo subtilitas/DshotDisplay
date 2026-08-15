@@ -326,7 +326,7 @@ and the badge changing colour in a corner is not.
   quad motor is 14.
 - **Throttle ceiling** — defaults to a deliberately timid 20 %. Raise it when you know
   what's spinning.
-- **EDT ON / EDT OFF** — the chip in the title bar. Green while EDT frames are arriving,
+- **EDT ON / EDT OFF** — the chip under the title. Green while EDT frames are arriving,
   red while they are not. Read-only: there is no enable button, because the firmware
   sends one to each ESC as it appears. It follows *received frames* rather than whether
   the command was sent — the enable is fire-and-forget and the ESC never acknowledges
@@ -337,7 +337,7 @@ and the badge changing colour in a corner is not.
 - **SETUP** — which pins the ESC and telemetry wire are on, the DShot bitrate,
   high contrast, backlight, and the one button that writes all of it to flash.
   See below.
-- **UNSAVED** in the title bar means something on this screen or SETUP differs
+- **UNSAVED** on the strip under the title means something on this screen or SETUP differs
   from what is stored. The button that stores it is on SETUP.
 
 BEEP flashes for a moment when pressed. The command itself lasts about six milliseconds
