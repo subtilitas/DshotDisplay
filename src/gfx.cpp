@@ -95,19 +95,53 @@ void gfxDirtyBand(int i, int *y0, int *y1) {
 void gfxClearDirty() { s_bands = 0; }
 
 // --------------------------------------------------------------------------
+// clip box
+// --------------------------------------------------------------------------
+/**
+ * @name Clip bounds
+ * Half-open: x0/y0 inclusive, x1/y1 exclusive, always within the panel. The
+ * default is the whole panel, so every primitive can test against these alone
+ * rather than against these *and* the panel.
+ * @{
+ */
+static int s_clipX0 = 0, s_clipY0 = 0, s_clipX1 = GFX_W, s_clipY1 = GFX_H;
+/** @} */
+
+void gfxSetClip(int x, int y, int w, int h) {
+	s_clipX0 = x < 0 ? 0 : x;
+	s_clipY0 = y < 0 ? 0 : y;
+	s_clipX1 = x + w > GFX_W ? GFX_W : x + w;
+	s_clipY1 = y + h > GFX_H ? GFX_H : y + h;
+	// A box with no area clips everything away rather than inverting, which is
+	// what an unchecked x1 < x0 would do to the loops below.
+	if (s_clipX1 < s_clipX0) s_clipX1 = s_clipX0;
+	if (s_clipY1 < s_clipY0) s_clipY1 = s_clipY0;
+}
+
+void gfxClearClip() {
+	s_clipX0 = 0;
+	s_clipY0 = 0;
+	s_clipX1 = GFX_W;
+	s_clipY1 = GFX_H;
+}
+
+// --------------------------------------------------------------------------
 // primitives
 // --------------------------------------------------------------------------
 void gfxFill(uint16_t c) {
+	// Deliberately ignores the clip box. Its whole job is "start again from
+	// nothing", every caller uses it on a screen change, and a clip left set
+	// would turn that into a partial wipe with the old screen showing round it.
 	for (int i = 0; i < GFX_W * GFX_H; i++) s_fb[i] = c;
 	gfxMarkAllDirty();
 }
 
 void gfxRect(int x, int y, int w, int h, uint16_t c) {
 	if (w <= 0 || h <= 0) return;
-	int x0 = x < 0 ? 0 : x;
-	int y0 = y < 0 ? 0 : y;
-	int x1 = x + w; if (x1 > GFX_W) x1 = GFX_W;
-	int y1 = y + h; if (y1 > GFX_H) y1 = GFX_H;
+	int x0 = x < s_clipX0 ? s_clipX0 : x;
+	int y0 = y < s_clipY0 ? s_clipY0 : y;
+	int x1 = x + w; if (x1 > s_clipX1) x1 = s_clipX1;
+	int y1 = y + h; if (y1 > s_clipY1) y1 = s_clipY1;
 	if (x0 >= x1 || y0 >= y1) return;
 	for (int yy = y0; yy < y1; yy++) {
 		uint16_t *p = &s_fb[yy * GFX_W + x0];
@@ -277,52 +311,47 @@ static void gfxChar(int x, int y, char ch, uint16_t fg, int scale) {
 	if (ch < 0x20 || ch > 0x60) ch = 0x20;
 	const uint8_t *g = FONT5X7[(uint8_t)ch - 0x20];
 
-	// Clip the whole character once rather than clipping each pixel through
-	// gfxRect: a steady screen can redraw hundreds of pixels per frame, and
-	// the per-rect route costs bounds checks and up to MAX_BANDS merges per
-	// pixel for zero benefit.
-	if (x + 5 * scale <= 0 || x > GFX_W - 1 || y > GFX_H - 1) return;
-	int w = 5 * scale;
-	int h = 7 * scale;
-	// Clip on the left: the glyph shifts right by however many pixels are
-	// off-screen, and its columns are renumbered to match.
-	int colOff = 0;
-	if (x < 0) {
-		colOff = (-x + scale - 1) / scale;
-		x += colOff * scale;
-		w -= colOff * scale;
-	}
-	int colEnd = (x + w > GFX_W) ? (GFX_W - x + scale - 1) / scale : 5 - colOff;
-	int rowEnd = (y + h > GFX_H) ? (GFX_H - y + scale - 1) / scale : 7;
-	int rowDrawn = -1;   // first row with a lit pixel
-
 	// One extra pixel row per lit pixel in high contrast. Vertical only: the
 	// glyph cell is 6 px wide for a 5 px glyph, so smearing sideways would close
 	// the inter-character gap and run words together. Downward costs no advance
 	// width, so not one label moves.
 	int extra = themeBold() ? 1 : 0;
 
-	for (int col = colOff; col < colOff + colEnd; col++) {
+	// Reject the whole glyph against the clip box first, so a line of text
+	// entirely outside it costs one comparison per character rather than a pass
+	// over 35 glyph bits. Everything past this point clips per scaled pixel.
+	if (x + 5 * scale <= s_clipX0 || x >= s_clipX1 ||
+	    y + 7 * scale + extra <= s_clipY0 || y >= s_clipY1) return;
+
+	// Tracked rather than derived from y and the glyph height, so the dirty band
+	// covers exactly the rows that were written -- which after clipping is not
+	// the same thing.
+	int dirtyTop = GFX_H, dirtyBot = -1;
+
+	for (int col = 0; col < 5; col++) {
 		uint8_t bits = g[col];
-		for (int row = 0; row < rowEnd; row++) {
+		if (!bits) continue;
+		int px = x + col * scale;
+		// Horizontal clip, per column: a glyph straddling the edge keeps the
+		// columns that are inside and drops the ones that are not.
+		int sx0 = px < s_clipX0 ? s_clipX0 - px : 0;
+		int sx1 = px + scale > s_clipX1 ? s_clipX1 - px : scale;
+		if (sx0 >= sx1) continue;
+		for (int row = 0; row < 7; row++) {
 			if (!(bits & (1 << row))) continue;
-			if (rowDrawn < 0) rowDrawn = row;
-			int px = x + (col - colOff) * scale;
-			// rowEnd is a ceiling division, so the last scaled row can still run
-			// past the panel by up to scale-1. Checking each row is what makes
-			// that safe -- and it was already reachable before the smear, for
-			// any text drawn at scale 2 within 13 px of the bottom edge.
 			for (int sy = 0; sy < scale + extra; sy++) {
 				int yy = y + row * scale + sy;
-				if (yy < 0) continue;
-				if (yy >= GFX_H) break;
+				if (yy < s_clipY0) continue;
+				if (yy >= s_clipY1) break;
 				uint16_t *p = &s_fb[yy * GFX_W + px];
-				for (int sx = 0; sx < scale; sx++) p[sx] = fg;
+				for (int sx = sx0; sx < sx1; sx++) p[sx] = fg;
+				if (yy < dirtyTop) dirtyTop = yy;
+				if (yy > dirtyBot) dirtyBot = yy;
 			}
 		}
 	}
-	if (rowDrawn < 0) return;   // nothing visible was drawn
-	gfxMarkDirty(y + rowDrawn * scale, y + rowEnd * scale - 1 + extra);
+	if (dirtyBot < 0) return;   // nothing visible was drawn
+	gfxMarkDirty(dirtyTop, dirtyBot);
 }
 
 void gfxText(int x, int y, const char *s, uint16_t fg, int scale) {

@@ -16,3 +16,6 @@ test/dshot_tests
 test/gen_blackbox_log
 test/*.ppm
 test/*.BFL
+
+# Scratch space for files being retired
+_to_delete/

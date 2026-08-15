@@ -23,14 +23,23 @@ static critical_section_t s_cs;
 
 /**
  * @defgroup esc_cmd Command state (core0 writes, core1 reads)
+ *
+ * There are two command sources and they no longer share a queue slot. They
+ * used to, and the failure was silent in exactly the way that makes it hard to
+ * find: a DShot command is only executed after it arrives in a run of identical
+ * frames, so a beacon press landing in the middle of an EDT enable replaced the
+ * tail of it and the ESC counted neither to completion. Nothing reported
+ * anything; EDT simply stayed off, sometimes.
+ *
+ * So the beacon is a request core0 raises and core1 latches, the EDT burst is
+ * core1's alone, and EDT takes the wire first. @see escTaskPoll()
  * @{
  */
 static volatile uint16_t s_throttle    = 0;   /**< Commanded throttle, 0..2000. */
 static volatile bool     s_armed       = false; /**< Arm state. */
 static volatile uint8_t  s_poles       = DEFAULT_MOTOR_POLES; /**< Pole count. */
 static volatile uint32_t s_heartbeatMs = 0;   /**< millis() of the last heartbeat. */
-static volatile uint8_t  s_pendingCmd  = 0;   /**< Queued DShot command. */
-static volatile uint8_t  s_pendingReps = 0;   /**< Repeats left for that command. */
+static volatile uint8_t  s_beepReq     = 0;   /**< Beacon 1..5 core0 wants; 0 none. */
 static volatile bool     s_edtRequested = false; /**< EDT enable has been issued. */
 /** @} */
 
@@ -65,9 +74,13 @@ static uint32_t s_nextSendUs = 0;   /**< Deadline for the next frame. */
 static uint32_t s_lastRateMs = 0;   /**< Last time the rate counters rolled up. */
 static uint32_t s_rateGoodMark = 0; /**< goodPackets at the last roll-up. */
 static uint32_t s_rateBadMark = 0;  /**< badPackets at the last roll-up. */
-static bool     s_edtTried = false;    /**< An enable has gone to this ESC. */
-static uint32_t s_edtLastTryMs = 0;    /**< millis() when it did. */
+static bool     s_edtTried = false;    /**< A full enable burst has gone to this ESC. */
+static uint32_t s_edtLastTryMs = 0;    /**< millis() when the last one finished. */
 static bool     s_edtArmedWas = false; /**< Arm state the last attempt saw. */
+static uint8_t  s_edtReps = 0;         /**< Enable repeats still owed. */
+static uint32_t s_linkUpSinceMs = 0;   /**< When the current ESC started answering. */
+static uint8_t  s_beepCmd = 0;         /**< Latched beacon command. */
+static uint8_t  s_beepReps = 0;        /**< Beacon repeats still owed. */
 /** @} */
 
 #if KISS_TELEM_ENABLE
@@ -193,8 +206,10 @@ bool escRequestBeep(uint8_t n) {
 	if (s_armed) return false;
 	if (n < 1) n = 1;
 	if (n > 5) n = 5;
-	s_pendingCmd  = (uint8_t)(DSHOT_CMD_BEACON1 + (n - 1));
-	s_pendingReps = 6;
+	// A request, not a queue write. Core1 latches it into its own repeat
+	// counter when the wire is free, so a press cannot land in the middle of an
+	// EDT enable and truncate it. @see esc_cmd
+	s_beepReq = n;
 	return true;
 }
 
@@ -369,7 +384,14 @@ void escTaskPoll() {
 		s_esc = new BidirDShotX1(pin, kbaud);
 		s_armed = false;
 		s_throttle = 0;
+		// A rebuild is a new ESC as far as this pump is concerned: nothing has
+		// been sent to whatever is on the new pin, no burst is owed, and the
+		// settle window has not started.
 		s_edtTried = false;
+		s_edtReps = 0;
+		s_edtRequested = false;
+		s_linkUpSinceMs = 0;
+		s_beepReps = 0;
 		s_nextSendUs = time_us_32();
 #if KISS_TELEM_ENABLE
 		if (s_kissEnable && s_kissPin != pin) kissUartBegin(s_kissPin);
@@ -408,9 +430,15 @@ void escTaskPoll() {
 	// Keep asking for EDT while an ESC is answering and EDT is not arriving.
 	// Every timestamp read here is written by applyTelemetry() on this core, so
 	// none of it needs the lock. See edtAutoAction() for the rule and for the
-	// two one-shot versions that came before it.
+	// three versions that came before it.
 	bool linkUp = s_tel.lastRpmMs != 0 &&
 	              (uint32_t)(ms - s_tel.lastRpmMs) < ESC_LINK_STALE_MS;
+
+	// When this ESC started answering, so the first enable can wait for it to be
+	// ready to take one. Zero means "not answering"; the `ms ? ms : 1` keeps
+	// that sentinel distinct from a genuine millis() of 0 at boot.
+	if (!linkUp)                  s_linkUpSinceMs = 0;
+	else if (!s_linkUpSinceMs)    s_linkUpSinceMs = ms ? ms : 1;
 
 	// The success condition is the same fact the header chip shows, computed
 	// the same way: the retry stops exactly when the display says EDT ON, and
@@ -421,44 +449,72 @@ void escTaskPoll() {
 	                escFieldFresh(s_tel.edtStressMs, ms, EDT_STALE_MS) ||
 	                escFieldFresh(s_tel.edtStatusMs, ms, EDT_STALE_MS);
 
-	// Arming or disarming is a reason to ask now rather than at the next
-	// interval. Commands only go out while disarmed, so a disarm is the first
-	// chance an attempt deferred by `s_armed` below has had, and making it wait
-	// out the interval on top of that is time with the tiles blank for nothing.
+	// Every condition under which an ESC would actually execute the enable, and
+	// under which the burst carrying it will not be cut short. An attempt made
+	// without all of these is an attempt thrown away, and — this is the part
+	// that made EDT "sometimes off" — one that started the retry clock anyway.
+	//
+	// erpm == 0 is the motor-stopped check. DShot commands are only executed
+	// with the motor stopped, and a disarm leaves a prop coasting for seconds,
+	// which is precisely when the old rule fired its most eager attempt.
+	bool settled = s_linkUpSinceMs &&
+	               (uint32_t)(ms - s_linkUpSinceMs) >= EDT_SETTLE_MS;
+	bool canCommand = settled && !s_armed && s_tel.erpm == 0 &&
+	                  s_edtReps == 0 && s_beepReps == 0;
+
+	// An arm transition abandons whatever burst was going out: it will not have
+	// reached the ESC's repeat count, so it is not an attempt, and the next
+	// chance should not have to wait out the interval behind a fiction.
 	if (s_armed != s_edtArmedWas) {
 		s_edtArmedWas = s_armed;
 		s_edtTried = false;
+		s_edtReps = 0;
 	}
 
-	switch (edtAutoAction(linkUp, edtFresh, s_edtTried,
+	switch (edtAutoAction(linkUp, edtFresh, canCommand, s_edtTried,
 	                      ms - s_edtLastTryMs, EDT_RETRY_MS)) {
 		case EdtAutoAction::Send:
-			// DShot commands only take while disarmed, so if the tester is
-			// armed, leave the attempt unmade and come back next frame rather
-			// than spending it on a frame that cannot carry it.
-			if (s_armed) break;
-			s_edtTried     = true;
-			s_edtLastTryMs = ms;
-			s_pendingCmd   = DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE;
-			s_pendingReps  = 10;
+			// Only the burst is armed here. `s_edtTried` and the retry clock are
+			// set where the last repetition actually leaves, below.
+			s_edtReps      = EDT_ENABLE_REPEATS;
 			s_edtRequested = true;
 			break;
 		case EdtAutoAction::Rearm:
 			// The ESC is gone. Whatever replaces it is a different ESC and
-			// starts from nothing having been sent to it.
+			// starts from nothing having been sent to it -- including the
+			// timestamps, or the old one's last second of telemetry would make
+			// the new one look like it had EDT on and suppress the enable.
 			s_edtTried     = false;
 			s_edtRequested = false;
+			s_edtReps      = 0;
+			critical_section_enter_blocking(&s_cs);
+			s_tel.edtVoltsMs = s_tel.edtAmpsMs = s_tel.edtTempMs = 0;
+			s_tel.edtStressMs = s_tel.edtStatusMs = 0;
+			critical_section_exit(&s_cs);
 			break;
 		case EdtAutoAction::None:
 			break;
 	}
+
+	// Latch a beacon request only when the wire is free. EDT goes first: it is
+	// the one the user cannot re-request, and a beep deferred by ten frames is
+	// a beep nobody notices was deferred.
+	if (!s_edtReps && !s_beepReps && s_beepReq) {
+		s_beepCmd  = (uint8_t)(DSHOT_CMD_BEACON1 + (s_beepReq - 1));
+		s_beepReps = BEEP_REPEATS;
+		s_beepReq  = 0;
+	}
+
+	uint8_t pendingCmd  = s_edtReps ? (uint8_t)DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE
+	                                : s_beepCmd;
+	uint8_t pendingReps = s_edtReps ? s_edtReps : s_beepReps;
 
 #if KISS_TELEM_ENABLE
 	// Commands own the frame when they are queued -- sendRaw11Bit() forces the
 	// telemetry bit set anyway, and a reply arriving mid-command sequence would
 	// just be noise.
 	bool wantKiss = false;
-	if (s_kissRx && s_pendingReps == 0) {
+	if (s_kissRx && pendingReps == 0) {
 		if (s_kissCountdown) {
 			s_kissCountdown--;
 		} else {
@@ -475,10 +531,21 @@ void escTaskPoll() {
 	// The decision itself is escFrameAction(), which is pure and lives in the
 	// header so the host suite can reach it. This function only does the I/O.
 	EscFrame f = escFrameAction(s_armed, uiAlive, s_throttle,
-	                            s_pendingCmd, s_pendingReps, wantKiss);
+	                            pendingCmd, pendingReps, wantKiss);
 	if (f.sendCommand) {
 		s_esc->sendRaw11Bit(f.command);
-		s_pendingReps--;
+		if (s_edtReps) {
+			// The attempt is stamped by its *last* frame. Stamping the first one
+			// is what let a burst that never completed -- truncated by a beacon
+			// press, or by an arm -- hold the retry off for a full interval as
+			// though a whole enable had gone out.
+			if (--s_edtReps == 0) {
+				s_edtTried     = true;
+				s_edtLastTryMs = millis();
+			}
+		} else if (s_beepReps) {
+			s_beepReps--;
+		}
 	} else {
 		// Built by hand rather than via sendThrottle(), which cannot set the
 		// telemetry-request bit. @see kissBuildDshotPayload()

@@ -31,6 +31,7 @@
 #include "esc_task.h"
 #include "ui.h"
 #include "ui_input.h"
+#include "ui_widgets.h"
 #include "gfx.h"
 #include "st7789.h"
 #include "touch.h"
@@ -44,13 +45,13 @@
 /**
  * @defgroup setup_layout Layout (240x320 portrait)
  * @brief Asserted rather than eyeballed, as everywhere else in this UI.
+ *
+ * The header band and BACK are no longer defined here. They are
+ * @ref UI_HDR_H and uiBackRect(), shared with every other screen, because this
+ * screen's 48x22 BACK at (GFX_W-54, 5) and AM32's 48x30 at (GFX_W-54, 8) were
+ * two attempts at the same button.
  * @{
  */
-#define HDR_H       30   /**< Header band height. */
-#define BACK_X      (GFX_W - 54)
-#define BACK_Y      5
-#define BACK_W      48
-#define BACK_H      22
 
 /*
  * One layout, always seven rows, with no section captions.
@@ -94,7 +95,7 @@
 #define TOGGLE_W    (BTN_P_X + BTN_W - BTN_M_X)
 /** @} */
 
-static_assert(R_BOARD >= HDR_H, "the first row overlaps the header");
+static_assert(R_BOARD >= UI_HDR_H, "the first row overlaps the header");
 static_assert(LINK_Y >= R_BACKLIGHT + ROW_H, "LINK overlaps the last row");
 static_assert(NOTE_Y >= LINK_Y + 7, "note overlaps LINK");
 static_assert(FOOT_Y >= NOTE_Y + 7, "footer overlaps the note");
@@ -102,6 +103,10 @@ static_assert(FOOT_Y + FOOT_H <= GFX_H, "footer runs off the panel");
 static_assert(BTN_M_X + BTN_W < BTN_P_X, "row buttons overlap");
 static_assert(BTN_P_X + BTN_W <= GFX_W - 8, "row buttons run off the panel");
 static_assert(DEF_X + DEF_W <= GFX_W - 8 + 1, "DEFAULTS runs off the panel");
+
+/** @brief The two footer buttons, as targets rather than four numbers each. */
+static const UiRect BTN_SAVE     = {SAVE_X, FOOT_Y, SAVE_W, FOOT_H};
+static const UiRect BTN_DEFAULTS = {DEF_X,  FOOT_Y, DEF_W,  FOOT_H};
 
 /** @brief Hold this long to commit the settings to flash. */
 #define SAVE_HOLD_MS 1000
@@ -145,19 +150,18 @@ static Repeat s_pinRep, s_speedRep, s_kissPinRep, s_backlightRep;
  */
 static TouchState s_touchSnap;
 
-static void button(int x, int y, int w, int h, const char *label,
-                   uint16_t fill, uint16_t fg, int scale, bool pressed = false) {
-	gfxRoundRect(x, y, w, h, 5, fill);
-	gfxRoundFrame(x, y, w, h, 5, pressed ? C_INK : C_GRID);
-	if (pressed && w > 6 && h > 6)
-		gfxRoundFrame(x + 2, y + 2, w - 4, h - 4, 4, C_INK);
-	int dx = pressed ? 1 : 0;
-	gfxText(x + dx + (w - gfxTextW(label, scale)) / 2,
-	        y + dx + (h - 7 * scale) / 2, label, fg, scale);
-}
+/** @brief The `-` target on the row starting at @p y. */
+static UiRect minusAt(int y) { return UiRect{BTN_M_X, (int16_t)y, BTN_W, ROW_H}; }
+/** @brief The `+` target on the row starting at @p y. */
+static UiRect plusAt(int y)  { return UiRect{BTN_P_X, (int16_t)y, BTN_W, ROW_H}; }
+/** @brief The full-width toggle on the row starting at @p y. */
+static UiRect toggleAt(int y) { return UiRect{BTN_M_X, (int16_t)y, TOGGLE_W, ROW_H}; }
 
 /**
  * @brief Draw one label / value row with a `-` and `+` pair.
+ *
+ * Not uiRow(): the value is right-aligned to @ref VAL_R rather than to the
+ * panel edge, because the two buttons take the rest of the row.
  *
  * @param y     Row top.
  * @param label Left-hand caption.
@@ -166,12 +170,10 @@ static void button(int x, int y, int w, int h, const char *label,
  */
 static void drawStepRow(int y, const char *label, const char *value, uint16_t vcol) {
 	gfxRect(0, y, GFX_W, ROW_H, C_BG);
-	gfxText(8, y + 8, label, C_DIM, 1);
-	gfxText(VAL_R - gfxTextW(value, 2), y + 5, value, vcol, 2);
-	button(BTN_M_X, y, BTN_W, ROW_H, "-", C_PANEL, C_TEXT, 2,
-	       inputPressing(&s_touchSnap, BTN_M_X, y, BTN_W, ROW_H));
-	button(BTN_P_X, y, BTN_W, ROW_H, "+", C_PANEL, C_TEXT, 2,
-	       inputPressing(&s_touchSnap, BTN_P_X, y, BTN_W, ROW_H));
+	gfxText(UI_MARGIN, y + (ROW_H - 7) / 2, label, C_DIM, 1);
+	gfxText(VAL_R - gfxTextW(value, 2), y + (ROW_H - 14) / 2, value, vcol, 2);
+	uiButton(minusAt(y), "-", C_PANEL, C_TEXT, 2, uiPressing(minusAt(y), &s_touchSnap));
+	uiButton(plusAt(y),  "+", C_PANEL, C_TEXT, 2, uiPressing(plusAt(y),  &s_touchSnap));
 }
 
 /**
@@ -184,10 +186,9 @@ static void drawStepRow(int y, const char *label, const char *value, uint16_t vc
  */
 static void drawToggleRow(int y, const char *label, const char *value, bool on) {
 	gfxRect(0, y, GFX_W, ROW_H, C_BG);
-	gfxText(8, y + 8, label, C_DIM, 1);
-	button(BTN_M_X, y, TOGGLE_W, ROW_H, value,
-	       on ? C_BLUE : C_PANEL, on ? C_ONACCENT : C_DIM, 1,
-	       inputPressing(&s_touchSnap, BTN_M_X, y, TOGGLE_W, ROW_H));
+	gfxText(UI_MARGIN, y + (ROW_H - 7) / 2, label, C_DIM, 1);
+	uiButton(toggleAt(y), value, on ? C_BLUE : C_PANEL, on ? C_ONACCENT : C_DIM,
+	         1, uiPressing(toggleAt(y), &s_touchSnap));
 }
 
 /**
@@ -255,18 +256,12 @@ static void drawAll() {
 	char buf[24];
 
 	gfxFill(C_BG);
-	gfxRect(0, 0, GFX_W, HDR_H, C_PANEL);
-	gfxText(6, 8, "SETUP", C_TEXT, 2);
-	button(BACK_X, BACK_Y, BACK_W, BACK_H, "BACK", C_PANEL, C_TEXT, 1,
-	       inputPressing(&s_touchSnap, BACK_X, BACK_Y, BACK_W, BACK_H));
+	uiHeader("SETUP", &s_touchSnap);
 
 	// Read-only on every image: the board is what the hardware answered at
-	// boot, not something to pick. Drawn as text rather than a dead-looking
-	// button so that nothing invites the tap.
-	gfxRect(0, R_BOARD, GFX_W, ROW_H, C_BG);
-	gfxText(8, R_BOARD + 8, "BOARD", C_DIM, 1);
-	gfxText(GFX_W - 8 - gfxTextW(g_board->label, 1), R_BOARD + 8,
-	        g_board->label, C_GRID, 1);
+	// boot, not something to pick. Drawn as a plain row rather than a
+	// dead-looking button so that nothing invites the tap.
+	uiRow(R_BOARD, ROW_H, "BOARD", g_board->label, C_GRID, 1);
 
 	snprintf(buf, sizeof(buf), "GP%u", (unsigned)s->dshotPin);
 	drawStepRow(R_PIN, "ESC PIN", buf, C_LIME);
@@ -305,10 +300,10 @@ static void drawAll() {
 		saveFill = C_BLUE;
 		gfxRect(SAVE_X, FOOT_Y - 4, SAVE_W * pct / 100, 3, C_LIME);
 	}
-	button(SAVE_X, FOOT_Y, SAVE_W, FOOT_H, "HOLD TO SAVE", saveFill,
-	       s_saveHolding ? C_ONACCENT : C_TEXT, 1, s_saveHolding);
-	button(DEF_X, FOOT_Y, DEF_W, FOOT_H, "RESET", C_PANEL, C_AMBER, 1,
-	       inputPressing(&s_touchSnap, DEF_X, FOOT_Y, DEF_W, FOOT_H));
+	uiButton(BTN_SAVE, "HOLD TO SAVE", saveFill,
+	         s_saveHolding ? C_ONACCENT : C_TEXT, 1, s_saveHolding);
+	uiButton(BTN_DEFAULTS, "RESET", C_PANEL, C_AMBER, 1,
+	         uiPressing(BTN_DEFAULTS, &s_touchSnap));
 }
 
 /**
@@ -377,8 +372,8 @@ static uint8_t stepPinAvoiding(uint8_t from, int dir, uint8_t avoid, bool active
 
 /** @brief Which direction a stepper row is being held in: -1, +1 or 0. */
 static int stepDir(const TouchState *t, int rowY) {
-	return inputPressing(t, BTN_M_X, rowY, BTN_W, ROW_H) ? -1
-	     : inputPressing(t, BTN_P_X, rowY, BTN_W, ROW_H) ? +1 : 0;
+	return uiPressing(minusAt(rowY), t) ? -1
+	     : uiPressing(plusAt(rowY), t)  ? +1 : 0;
 }
 
 bool uiSetupTick(const TouchState *t) {
@@ -393,7 +388,7 @@ bool uiSetupTick(const TouchState *t) {
 	// not an early return: the hold's progress bar is drawn by the block at the
 	// bottom of this function, so returning here would make the one control that
 	// needs continuous feedback the only one that never repaints.
-	bool onSave = inputPressing(t, SAVE_X, FOOT_Y, SAVE_W, FOOT_H);
+	bool onSave = uiPressing(BTN_SAVE, t);
 	if (!t->down) s_saveLatched = false;
 	if (onSave && !s_saveLatched) {
 		if (!s_saveHolding) { s_saveHolding = true; s_saveHoldStart = millis(); }
@@ -455,10 +450,10 @@ bool uiSetupTick(const TouchState *t) {
 	}
 
 	// --- everything else: fires on release, inside, having started inside ---
-	if (inputTapped(t, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+	if (uiBackTapped(t)) {
 		s_leaving = true;
 		return false;
-	} else if (inputTapped(t, BTN_M_X, R_KISS, TOGGLE_W, ROW_H)) {
+	} else if (uiTapped(toggleAt(R_KISS), t)) {
 		// Turning KISS on moves it off the ESC's pin rather than enabling it
 		// against a collision and letting validation switch it straight back
 		// off. That refusal is what "KISS cannot be enabled on the 2.8\"" was:
@@ -473,10 +468,10 @@ bool uiSetupTick(const TouchState *t) {
 				s->kissPin = settingsNextPinOn(s->boardId, s->kissPin, +1);
 		}
 		changed = true;
-	} else if (inputTapped(t, BTN_M_X, R_CONTRAST, TOGGLE_W, ROW_H)) {
+	} else if (uiTapped(toggleAt(R_CONTRAST), t)) {
 		s->highContrast = s->highContrast ? 0 : 1;
 		changed = true;
-	} else if (inputTapped(t, DEF_X, FOOT_Y, DEF_W, FOOT_H)) {
+	} else if (uiTapped(BTN_DEFAULTS, t)) {
 		// Restores the compiled defaults into the live settings only. Flash
 		// is untouched until SAVE, so this is undoable by walking away. The
 		// defaults are this board's -- settingsDefaults() reads them out of the

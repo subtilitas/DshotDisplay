@@ -293,6 +293,38 @@
 #define EDT_RETRY_MS          1000
 
 /**
+ * @brief How long an ESC must have been answering before the first enable, in ms.
+ *
+ * The third version of this rule, and the reason for it is the criticism the
+ * second one wrote down about the first and then repeated. An ESC answers eRPM
+ * within milliseconds of power-up and will not act on a DShot command until it
+ * has seen a run of valid zero-throttle frames, so firing on the very first
+ * eRPM frame spends the attempt at close to the least likely moment for it to
+ * be taken — and the retry loop that was supposed to cover for that inherited
+ * a `tried` flag saying an attempt had been made, so the next one was a whole
+ * @ref EDT_RETRY_MS away.
+ *
+ * Waiting instead costs a third of a second on connect and makes the first
+ * attempt the one most likely to work, which matters because every attempt
+ * after it is one the user is already watching a blank tile through.
+ */
+#define EDT_SETTLE_MS          300
+
+/**
+ * @brief How many consecutive frames one EDT enable is sent for.
+ *
+ * The spec asks for the same command in ten successive frames. The number
+ * matters less than the "successive" — a burst broken part-way through is a
+ * burst no ESC counts, and this used to share one queue slot with the beacon
+ * command, so pressing BEEP while an enable was going out replaced the tail of
+ * it and neither command reached its repeat count. @see esc_cmd
+ */
+#define EDT_ENABLE_REPEATS      10
+
+/** @brief How many consecutive frames one beacon command is sent for. */
+#define BEEP_REPEATS             6
+
+/**
  * @brief Abandon a reply that has not completed this long after the request.
  *
  * Only matters for the timeout counter and for discarding a partial frame; the

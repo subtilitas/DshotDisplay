@@ -206,29 +206,49 @@ enum class EdtAutoAction : uint8_t {
  * which cleared the flag and sent a second enable at a moment the ESC was ready
  * for. "EDT only comes on if I toggle KISS" is that accident, reported.
  *
- * So the condition is no longer "have we asked" but "is it working". While an
- * ESC is demonstrably alive and demonstrably not sending EDT, ask again. An
- * arm or disarm counts as a reason to ask now rather than at the next interval,
- * because commands only go out while disarmed and the moment of disarming is
- * the first chance a deferred attempt has had. @see EDT_RETRY_MS
+ * The third version made the condition "is it working" rather than "have we
+ * asked", and retried on an interval — and still went off sometimes, with a
+ * disarm and re-arm as the reliable way to get it back. That is a tell, because
+ * an arm transition is the one event that clears the `tried` flag, so what it
+ * bought was an attempt *now* instead of one up to @ref EDT_RETRY_MS away. The
+ * attempts themselves were the problem, not their number:
+ *
+ * - the first went out on the first eRPM frame, before the ESC would take it,
+ *   and still counted as an attempt (@ref EDT_SETTLE_MS);
+ * - a burst could be truncated by the beacon command sharing the same queue
+ *   slot, and a truncated burst also counted (@ref EDT_ENABLE_REPEATS);
+ * - and one could go out with the motor still coasting down after a disarm,
+ *   which no ESC executes.
+ *
+ * Hence @p canCommand: the caller asserts the ESC is in a state where the
+ * enable can actually be executed and where a burst will not be cut short. The
+ * interval then governs genuine attempts rather than counting discarded ones.
+ * @see EDT_RETRY_MS
  *
  * Split out as a pure function so the rule is testable — esc_task.cpp pulls in
  * the PIO library and cannot be linked into the host suite.
  *
- * @param linkUp   True if an eRPM frame arrived within @ref ESC_LINK_STALE_MS.
- * @param edtFresh True if any EDT frame arrived within @ref EDT_STALE_MS.
- * @param tried    True if an enable has gone out to the ESC now connected.
- * @param sinceMs  Milliseconds since that enable. Ignored when @p tried is false.
- * @param retryMs  How long an unanswered enable is left before repeating it.
- * @return         What to do.
+ * @param linkUp     True if an eRPM frame arrived within @ref ESC_LINK_STALE_MS.
+ * @param edtFresh   True if any EDT frame arrived within @ref EDT_STALE_MS.
+ * @param canCommand True if the ESC would act on a command sent now: disarmed,
+ *                   motor stopped, link settled, and no burst already going out.
+ * @param tried      True if an enable has gone out in full to the ESC now connected.
+ * @param sinceMs    Milliseconds since that enable. Ignored when @p tried is false.
+ * @param retryMs    How long an unanswered enable is left before repeating it.
+ * @return           What to do.
  */
-static inline EdtAutoAction edtAutoAction(bool linkUp, bool edtFresh, bool tried,
+static inline EdtAutoAction edtAutoAction(bool linkUp, bool edtFresh,
+                                          bool canCommand, bool tried,
                                           uint32_t sinceMs, uint32_t retryMs) {
 	// No ESC. Forget what was sent to the last one, once.
 	if (!linkUp) return tried ? EdtAutoAction::Rearm : EdtAutoAction::None;
 	// It is working. That is the whole success condition; nothing else to do
 	// until the link drops.
 	if (edtFresh) return EdtAutoAction::None;
+	// Deliberately ahead of the interval check, and it leaves `tried` alone:
+	// a moment the ESC cannot be commanded in is not an attempt, and must not
+	// start the clock on the next one.
+	if (!canCommand) return EdtAutoAction::None;
 	if (tried && sinceMs < retryMs) return EdtAutoAction::None;
 	return EdtAutoAction::Send;
 }
