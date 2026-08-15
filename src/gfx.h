@@ -103,6 +103,39 @@ void gfxClearDirty();
 /** @} */
 
 /**
+ * @defgroup gfx_clip Clip rectangle
+ * @brief A second bound, inside the panel, that every primitive respects.
+ *
+ * The panel edge has always been clipped against. This adds a caller-set box on
+ * top of it, and it exists for one reason: a list that scrolls by the pixel has
+ * partial rows at both ends, and a partial row drawn in full paints over
+ * whatever is above and below the viewport — on the AM32 screen, the header and
+ * the editor bar.
+ *
+ * The alternative is for every caller to work out how much of each row is
+ * visible and draw only that, per primitive, per row, and get it right for text
+ * as well as fills. That arithmetic belongs here once rather than at each call
+ * site, where it would be wrong in a different way each time.
+ *
+ * Set it, draw, clear it. It is deliberately not saved and restored: nesting it
+ * would invite leaving it set, and a stray clip is a screen that silently stops
+ * painting parts of itself.
+ * @{
+ */
+
+/**
+ * @brief Restrict drawing to the given rectangle until gfxClearClip().
+ * @param x,y Top-left corner. Clamped to the panel.
+ * @param w,h Size. A degenerate box clips everything away.
+ */
+void gfxSetClip(int x, int y, int w, int h);
+
+/** @brief Drop the clip box, restoring the whole panel. */
+void gfxClearClip();
+
+/** @} */
+
+/**
  * @defgroup gfx_prims Primitives
  * @brief All coordinates are clipped; off-screen draws are silently dropped.
  * @{
