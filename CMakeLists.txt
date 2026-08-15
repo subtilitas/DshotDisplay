@@ -139,12 +139,19 @@ add_executable(DshotDisplay
     src/am32_bl.cpp
     src/am32_eeprom.cpp
     src/kiss_telem.cpp
+    src/pio_uart_rx.cpp
     src/esc_merge.cpp
     src/blackbox_encode.cpp
     src/log_ring.cpp
     src/sd_log.cpp
     src/sd_hw_config.c
 )
+
+# The KISS receiver is a PIO program (see pio_uart_rx.h for why it is not one
+# of the two hardware UARTs). pioasm assembles it into the build tree, and this
+# also puts that directory on the include path so `#include "pio_uart_rx.pio.h"`
+# resolves.
+pico_generate_pio_header(DshotDisplay ${CMAKE_CURRENT_LIST_DIR}/src/pio_uart_rx.pio)
 
 target_include_directories(DshotDisplay PRIVATE src)
 target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})

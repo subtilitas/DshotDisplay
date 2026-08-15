@@ -73,26 +73,7 @@ bool settingsPinFree(uint8_t pin) {
 	return settingsPinFreeOn(boardId(), pin);
 }
 
-/**
- * @brief Which UART instance owns the RX function in each group of four GPIOs.
- *
- * RP2350 lays the UARTs out in blocks of four — TX, RX, CTS, RTS — and the
- * instance alternates in *pairs* of blocks rather than every block, which is
- * why this is a table and not arithmetic. Index is `pin / 4`.
- *
- *     GP1 GP5 GP9 GP13 GP17 GP21 GP25 GP29
- *      u0  u1  u1   u0   u0   u1   u1   u0
- */
-static const uint8_t UART_BY_GROUP[8] = { 0, 1, 1, 0, 0, 1, 1, 0 };
-
-int settingsUartForPin(uint8_t pin) {
-	if (pin > 29) return -1;
-	// Only the second pin of each block of four is an RX function.
-	if ((pin & 3u) != 1u) return -1;
-	return (int)UART_BY_GROUP[pin >> 2];
-}
-
-uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir, bool uartOnly) {
+uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir) {
 	if (dir == 0) return from;
 	int step = dir > 0 ? 1 : -1;
 	int p = (int)from;
@@ -102,15 +83,13 @@ uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir, bool uartOn
 		p += step;
 		if (p > 29) p = 0;
 		if (p < 0) p = 29;
-		if (!settingsPinFreeOn(boardIdArg, (uint8_t)p)) continue;
-		if (uartOnly && settingsUartForPin((uint8_t)p) < 0) continue;
-		return (uint8_t)p;
+		if (settingsPinFreeOn(boardIdArg, (uint8_t)p)) return (uint8_t)p;
 	}
 	return from;
 }
 
-uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly) {
-	return settingsNextPinOn(boardId(), from, dir, uartOnly);
+uint8_t settingsNextPin(uint8_t from, int dir) {
+	return settingsNextPinOn(boardId(), from, dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -189,12 +168,18 @@ bool settingsValidate(Settings *s) {
 	}
 
 	// --- KISS ---
-	// Switched off rather than moved. Moving it would silently start listening
-	// on a pin the user never connected anything to, and a telemetry wire that
-	// reads "ON" against the wrong pin is worse than one that reads "OFF".
+	// Two rules left, now that the receiver is a PIO state machine and any free
+	// GPIO can take it: the pin must be free on this board, and it must not be
+	// the ESC's. The third — "and it must be one of the eight the hardware
+	// UARTs can receive on" — is gone with the hardware UART. @see pio_uart_rx.h
+	//
+	// Switched off rather than moved, still. Moving it would silently start
+	// listening on a pin the user never connected anything to, and a telemetry
+	// wire that reads "ON" against the wrong pin is worse than one reading
+	// "OFF". The SETUP screen does move it, because there the pin change is the
+	// thing being asked for. @see uiSetupTick()
 	if (s->kissEnable) {
 		if (!settingsPinFreeOn(s->boardId, s->kissPin) ||
-		    settingsUartForPin(s->kissPin) < 0 ||
 		    s->kissPin == s->dshotPin) {
 			s->kissEnable = 0;
 			ok = false;

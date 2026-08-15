@@ -5,8 +5,9 @@
  * Six rows and two buttons. The interesting parts are not the widgets:
  *
  * - **Only legal values can be selected.** The `-`/`+` buttons step through the
- *   board's free-GPIO mask, so there is no invalid pin to reject and no error
- *   state to design. @see settingsNextPinOn()
+ *   board's free-GPIO mask and past whichever pin the other wire is on, so
+ *   there is no invalid pin to reject and no error state to design.
+ *   @see stepPinAvoiding()
  * - **LINK is on this screen.** Changing the ESC pin is otherwise unverifiable
  *   without walking back to the main screen, and "the ESC is silent" is exactly
  *   the failure this screen exists to fix.
@@ -211,7 +212,7 @@ static const char *noteText(uint16_t *col) {
 	}
 	if (s_repaired) {
 		*col = C_AMBER;
-		return s_repairKiss ? "KISS OFF: NEEDS ITS OWN UART RX PIN"
+		return s_repairKiss ? "KISS OFF: NEEDS A PIN OF ITS OWN"
 		                    : "ADJUSTED TO THIS BOARD'S LIMITS";
 	}
 	if (settingsDirty()) {
@@ -349,6 +350,31 @@ void uiSetupEnter() {
 	applyLive();
 }
 
+/**
+ * @brief Step a pin, stepping past the one the other wire is on.
+ *
+ * The ESC and the telemetry wire cannot share a GPIO. On the 2.8" that is not
+ * an abstract rule: the board leaves exactly two pins free, so whichever one
+ * you are not on is the other wire's. The validator's answer to a collision is
+ * to switch KISS off, which is right for a stored block nobody chose and wrong
+ * for a stepper — you asked for the next pin, not for the telemetry to stop.
+ *
+ * @param from   Current pin.
+ * @param dir    +1 or -1.
+ * @param avoid  The other wire's pin.
+ * @param active Whether the other wire is actually in use.
+ * @return The next legal pin, or @p from when the board offers no other.
+ */
+static uint8_t stepPinAvoiding(uint8_t from, int dir, uint8_t avoid, bool active) {
+	uint8_t board = settings()->boardId;
+	uint8_t p = settingsNextPinOn(board, from, dir);
+	if (active && p == avoid) p = settingsNextPinOn(board, p, dir);
+	// Two free pins and both spoken for: there is no third answer, so stay put
+	// rather than landing on the pin this function exists to avoid.
+	if (active && p == avoid) return from;
+	return p;
+}
+
 /** @brief Which direction a stepper row is being held in: -1, +1 or 0. */
 static int stepDir(const TouchState *t, int rowY) {
 	return inputPressing(t, BTN_M_X, rowY, BTN_W, ROW_H) ? -1
@@ -401,7 +427,8 @@ bool uiSetupTick(const TouchState *t) {
 	// --- steppers: first step on touch-down, then repeat while held ---
 	int d = stepDir(t, R_PIN);
 	if (repeatFires(&s_pinRep, d, millis())) {
-		s->dshotPin = settingsNextPinOn(s->boardId, s->dshotPin, d, false);
+		s->dshotPin = stepPinAvoiding(s->dshotPin, d, s->kissPin,
+		                              s->kissEnable != 0);
 		changed = true;
 	}
 	d = stepDir(t, R_SPEED);
@@ -412,7 +439,7 @@ bool uiSetupTick(const TouchState *t) {
 	}
 	d = stepDir(t, R_KISSPIN);
 	if (repeatFires(&s_kissPinRep, d, millis())) {
-		s->kissPin = settingsNextPinOn(s->boardId, s->kissPin, d, true);
+		s->kissPin = stepPinAvoiding(s->kissPin, d, s->dshotPin, true);
 		changed = true;
 	}
 	d = stepDir(t, R_BACKLIGHT);
@@ -432,15 +459,18 @@ bool uiSetupTick(const TouchState *t) {
 		s_leaving = true;
 		return false;
 	} else if (inputTapped(t, BTN_M_X, R_KISS, TOGGLE_W, ROW_H)) {
-		// Turning KISS on picks the first pin that can actually receive,
-		// rather than enabling it against whatever was last stored and
-		// letting validation switch it straight back off.
+		// Turning KISS on moves it off the ESC's pin rather than enabling it
+		// against a collision and letting validation switch it straight back
+		// off. That refusal is what "KISS cannot be enabled on the 2.8\"" was:
+		// the board frees GP28 and GP29, the ESC starts on GP29, and the pin
+		// rules used to insist KISS take a hardware UART RX pin -- of which
+		// GP29 was the only free one. Any GPIO receives now. @see pio_uart_rx.h
 		if (s->kissEnable) {
 			s->kissEnable = 0;
 		} else {
 			s->kissEnable = 1;
-			if (settingsUartForPin(s->kissPin) < 0 || s->kissPin == s->dshotPin)
-				s->kissPin = settingsNextPinOn(s->boardId, s->kissPin, +1, true);
+			if (s->kissPin == s->dshotPin)
+				s->kissPin = settingsNextPinOn(s->boardId, s->kissPin, +1);
 		}
 		changed = true;
 	} else if (inputTapped(t, BTN_M_X, R_CONTRAST, TOGGLE_W, ROW_H)) {

@@ -179,35 +179,58 @@ bool escRequestBeep(uint8_t n);
 
 /** @brief What the automatic EDT enable should do this frame. */
 enum class EdtAutoAction : uint8_t {
-	None,   /**< Nothing to do. */
-	Send,   /**< An ESC is answering and has not been sent an enable yet. */
-	Rearm,  /**< The ESC went away; the next one gets its own enable. */
+	None,   /**< Nothing to do: no ESC, EDT already working, or too soon. */
+	Send,   /**< An ESC is answering and is not sending EDT. Ask it again. */
+	Rearm,  /**< The ESC went away; the next one starts from a clean slate. */
 };
 
 /**
  * @brief Decide whether to send the automatic EDT enable. Pure; host-testable.
  *
- * The enable used to go out once, on a timer, 1.5 s after boot. That is fine
- * for an ESC that is already plugged in and powered, and useless for every
- * other case: connect the ESC afterwards, power-cycle it, or swap it for a
- * different one, and it never receives the enable at all. eRPM keeps working —
- * that is plain bidirectional DShot — so the symptom is an ESC that reports
- * RPM and nothing else, which looks exactly like an ESC without EDT support.
+ * This rule has been wrong twice, in the same direction both times, so it is
+ * worth writing down what it is actually for.
  *
- * Waiting for eRPM instead is both later and more reliable: an ESC that has
- * answered a frame is demonstrably powered, booted and listening, which a
- * 1.5 s timer only assumed.
+ * First it went out once, on a timer, 1.5 s after boot — fine for an ESC
+ * already plugged in and powered, useless for one connected afterwards,
+ * power-cycled, or swapped. Then it went out once, on the first eRPM frame,
+ * which fixed the "connected afterwards" case and kept the deeper mistake: it
+ * was still a one-shot, and it fired at the earliest instant an ESC could
+ * possibly be heard from. An ESC answers eRPM within milliseconds of power-up
+ * and will not act on a DShot command until it has seen a run of valid
+ * zero-throttle frames, so the single attempt was made at close to the least
+ * likely moment for it to be accepted. Nothing tried again.
+ *
+ * Both versions failed the same way — an ESC reporting RPM and nothing else,
+ * which is exactly what an ESC without EDT support looks like — and both were
+ * masked by the same accident: changing any wiring setting rebuilds the pump,
+ * which cleared the flag and sent a second enable at a moment the ESC was ready
+ * for. "EDT only comes on if I toggle KISS" is that accident, reported.
+ *
+ * So the condition is no longer "have we asked" but "is it working". While an
+ * ESC is demonstrably alive and demonstrably not sending EDT, ask again. An
+ * arm or disarm counts as a reason to ask now rather than at the next interval,
+ * because commands only go out while disarmed and the moment of disarming is
+ * the first chance a deferred attempt has had. @see EDT_RETRY_MS
  *
  * Split out as a pure function so the rule is testable — esc_task.cpp pulls in
- * the PIO library and the SDK's UART, and cannot be linked into the host suite.
+ * the PIO library and cannot be linked into the host suite.
  *
- * @param linkUp True if an eRPM frame arrived within @ref ESC_LINK_STALE_MS.
- * @param sent   True if this ESC has already been sent an enable.
- * @return       What to do.
+ * @param linkUp   True if an eRPM frame arrived within @ref ESC_LINK_STALE_MS.
+ * @param edtFresh True if any EDT frame arrived within @ref EDT_STALE_MS.
+ * @param tried    True if an enable has gone out to the ESC now connected.
+ * @param sinceMs  Milliseconds since that enable. Ignored when @p tried is false.
+ * @param retryMs  How long an unanswered enable is left before repeating it.
+ * @return         What to do.
  */
-static inline EdtAutoAction edtAutoAction(bool linkUp, bool sent) {
-	if (!linkUp) return sent ? EdtAutoAction::Rearm : EdtAutoAction::None;
-	return sent ? EdtAutoAction::None : EdtAutoAction::Send;
+static inline EdtAutoAction edtAutoAction(bool linkUp, bool edtFresh, bool tried,
+                                          uint32_t sinceMs, uint32_t retryMs) {
+	// No ESC. Forget what was sent to the last one, once.
+	if (!linkUp) return tried ? EdtAutoAction::Rearm : EdtAutoAction::None;
+	// It is working. That is the whole success condition; nothing else to do
+	// until the link drops.
+	if (edtFresh) return EdtAutoAction::None;
+	if (tried && sinceMs < retryMs) return EdtAutoAction::None;
+	return EdtAutoAction::Send;
 }
 
 /** @brief What core1 should put on the wire in one frame slot. */

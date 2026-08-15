@@ -136,16 +136,15 @@
  *
  * Runtime-adjustable; this is the starting value. @see settings.h
  *
- * On the **2.0"** this is **GP5**: UART1 RX, P1 header pin 10, and a free
- * camera-bus pin. The other candidates there are GP9 (P1 pin 2), GP21 (P1
- * pin 5) and GP1 (P2 pin 8) — on RP2350 only a GPIO whose number is one more
- * than a multiple of four is a UART RX function at all.
+ * On the **2.0"** this is **GP5**: P1 header pin 10, and a free camera-bus pin.
  *
- * On the **2.8"** it is **GP29**, because that is the only free pin on the
- * board that can receive. Note that GP29 is also the default @ref DSHOT_PIN
- * there, which is why @ref DEFAULT_KISS_ENABLE is 0 on that board: the two
- * cannot share a pin, and moving the ESC to GP28 is a decision for whoever
- * soldered the pigtail, not for a default.
+ * On the **2.8"** it is **GP28** (J4 pin 11), the other of the two pins that
+ * board brings out — GP29 is where the ESC signal goes.
+ *
+ * Any free GPIO works on either board. It used to have to be one of the eight
+ * the RP2350's hardware UARTs can receive on, which is what made this pin a
+ * problem worth three paragraphs; the receiver is a PIO state machine now and
+ * samples whatever it is pointed at. @see pio_uart_rx.h
  *
  * @warning The KISS spec puts this line at 3.6 V, which is exactly the RP2350's
  *          absolute-maximum GPIO voltage — no margin at all. Most BLHeli_32 and
@@ -156,16 +155,17 @@
   #if BOARD == BOARD_RP2350_TOUCH_LCD_2
     #define DEFAULT_KISS_PIN   5
   #else
-    #define DEFAULT_KISS_PIN   29
+    #define DEFAULT_KISS_PIN   28
   #endif
 #endif
 
 /**
  * @brief Whether the KISS wire is expected by default.
  *
- * Off on the 2.8". That board's only free UART RX pin is GP29, which is also
- * where the ESC signal goes by default, so a default of "on" would have the
- * firmware claim a UART on the pin it is already driving DShot out of.
+ * Off on the 2.8". Not because it cannot be done there any more — GP28 is free
+ * and the PIO receiver will take it — but because that board brings out exactly
+ * two pins, and defaulting to "on" spends the spare one on a wire most people
+ * have not soldered. Turning it on is one tap. @see pio_uart_rx.h
  *
  * This used to be worse and silent: @ref DEFAULT_KISS_PIN was fixed at GP5 for
  * both boards, and on the 2.8" GP5 is `PIN_RTC_INT` — the PCF85063 alarm
@@ -225,13 +225,34 @@
  *
  * eRPM is plain bidirectional DShot — every ESC that works at all answers with
  * it, whether or not it supports EDT — so its presence is the definition of
- * "an ESC is connected". Losing it is what re-arms the automatic EDT enable, so
- * that a replacement ESC gets its own.
+ * "an ESC is connected". It is also half of the retry condition for the
+ * automatic EDT enable: an ESC that is answering but sending no EDT is an ESC
+ * that has not taken the enable yet. @see EDT_RETRY_MS
  *
  * Shorter than @ref EDT_STALE_MS deliberately. eRPM arrives every frame at
  * 1 kHz, where EDT frame types are interleaved and any one of them is rarer.
  */
 #define ESC_LINK_STALE_MS      500
+
+/**
+ * @brief How long before an unanswered EDT enable is sent again, in ms.
+ *
+ * The enable is not a one-shot, and used to be. It went out on the very first
+ * eRPM frame — the earliest possible moment, and the worst one: an ESC answers
+ * eRPM within milliseconds of power-up but will not act on a DShot command
+ * until it has seen a run of valid zero-throttle frames. Miss that window and
+ * nothing tried again, so the ESC reported RPM and nothing else, which is
+ * indistinguishable from an ESC with no EDT support. Changing any wiring
+ * setting rebuilt the pump, cleared the flag and made EDT "start working",
+ * which is how the bug was found rather than how it was meant to work.
+ *
+ * So the rule is now the obvious one: while an ESC is answering
+ * (@ref ESC_LINK_STALE_MS) and no EDT frame is arriving (@ref EDT_STALE_MS),
+ * ask again this often. Long enough that ten command frames are a rounding
+ * error in the stream; short enough that an ESC plugged in mid-session has EDT
+ * before anyone has finished looking at the screen.
+ */
+#define EDT_RETRY_MS          1000
 
 /**
  * @brief Abandon a reply that has not completed this long after the request.

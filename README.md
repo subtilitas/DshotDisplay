@@ -86,7 +86,7 @@ the same silicon behind a larger panel, with a CST328 controller.
 | Touch RESET | 20 | **same net as LCD_RST** — resetting one resets both |
 | Battery sense | 28 | ADC2, 200k/100k divider → `VBAT = Vadc × 3` |
 | microSD | 24–27 | SPI1 — blackbox logging, see below. (2.8": SDIO on 19–24) |
-| KISS telemetry RX | 5 | UART1 RX, P1 pin 10 — optional third wire |
+| KISS telemetry RX | 5 | P1 pin 10 — optional third wire. Any free GPIO will do |
 | Camera bus | 0–11, 21–23 | **free if no camera is fitted** |
 
 ### Wiring the ESC
@@ -361,8 +361,8 @@ settings screen.*
 | **BOARD** | Which board this firmware is driving. Read-only, on every image — it is detected at boot, not chosen. The row is here because "which board does this firmware think it is" is the first question to ask when a panel or a touch controller misbehaves |
 | **ESC PIN** | Which GPIO carries the DShot signal. Steps through the GPIOs this board leaves free and nothing else, so there is no wrong pin to pick — only pins you have not wired to yet |
 | **DSHOT KBAUD** | 150 / 300 / 600 / 1200. Applies immediately: the driver is torn down and rebuilt on the new pin and rate before the next frame |
-| **KISS TELEM** | Whether to claim a UART for the telemetry wire |
-| **KISS PIN** | Steps only through free GPIOs that can actually *receive*. On RP2350 that is GP1, GP5, GP9, GP13, GP17, GP21, GP25 and GP29, and no others |
+| **KISS TELEM** | Whether to listen for the telemetry wire |
+| **KISS PIN** | Steps through the same free GPIOs the ESC pin does, minus whichever one the ESC is on. The receiver is a PIO state machine, so there is no "but only these eight pins can receive" — that restriction is what used to make KISS impossible to enable on the 2.8" |
 | **CONTRAST** | `NORMAL` or `HIGH`. See below |
 | **BACKLIGHT** | 0–255. High contrast overrides it to full while it is on |
 | **LINK** | Live. Packets per second and the checksum error rate, on the same screen as the pin selector |
@@ -453,10 +453,18 @@ consumption figure EDT has no room for at all.
 
 | ESC | Board |
 |---|---|
-| Telemetry pad | **GP5** — P1 header, pin 10 |
+| Telemetry pad | **GP5** — P1 header, pin 10 (2.0"); **GP28** — J4 pin 11 (2.8") |
 
 That is the only extra connection; the line is transmit-only from the ESC.
 Requests go out at 50 Hz by default (`KISS_REQUEST_EVERY_N`).
+
+**Any free GPIO can receive it.** The receiver is a UART built out of one PIO
+state machine rather than one of the RP2350's two hardware UARTs, which can only
+receive on the eight GPIOs where `n % 4 == 1`. That mattered most where there was
+least room: the 2.8" frees exactly two pins, only GP29 of them a UART RX, and
+GP29 is where the ESC signal goes — so the pin rules refused every KISS pin on
+that board and switched the setting straight back off. Pick any free pin that is
+not the ESC's. See `src/pio_uart_rx.h`.
 
 The voltage and current tiles show which source they are using —
 **KISS** in cyan, **EDT** dimmed. That tag is not decoration: 12.25 V from EDT
@@ -524,8 +532,8 @@ at.
 | Setting | Default | What it does |
 |---|---|---|
 | `KISS_TELEM_ENABLE` | `1` | Compile the KISS path in at all |
-| `DEFAULT_KISS_ENABLE` | `1` / `0` | Whether the KISS wire is expected. **Off on the 2.8"**: its only free UART RX pin is GP29, which is also where the ESC signal goes by default |
-| `DEFAULT_KISS_PIN` | `5` / `29` | GPIO the telemetry wire lands on, receive only. Runtime-adjustable |
+| `DEFAULT_KISS_ENABLE` | `1` / `0` | Whether the KISS wire is expected. **Off on the 2.8"**: that board frees two pins and the ESC takes one, so defaulting to on would spend the spare on a wire most people have not soldered. One tap turns it on |
+| `DEFAULT_KISS_PIN` | `5` / `28` | GPIO the telemetry wire lands on, receive only. Any free one; runtime-adjustable |
 | `KISS_REQUEST_EVERY_N` | `20` | Request every Nth DShot frame; 20 at 1 kHz is 50 Hz. Must be ≥ 2 or replies overlap, and there is an `#error` that says so |
 | `KISS_STALE_MS` | `500` | How long a KISS frame stays authoritative before the display falls back to EDT |
 | `EDT_STALE_MS` | `1000` | How long an EDT field stays valid after its last frame. Past this the tile blanks to `--` rather than holding a reading from an ESC that may no longer be attached |
@@ -747,6 +755,8 @@ src/
   cst816.cpp            CST816D — the 2.0" board
   cst328.cpp            CST328 — the 2.8" board
   kiss_telem.{h,cpp}    KISS ESC telemetry decode (pure)
+  pio_uart_rx.{h,cpp}   receive-only UART on a PIO state machine, any GPIO
+  pio_uart_rx.pio       ...and its nine instructions
   esc_merge.{h,cpp}     per-field preference between KISS and EDT (pure)
   blackbox_encode.{h,cpp} Betaflight blackbox log writer (pure)
   log_ring.{h,cpp}      ring buffer between encoder and card (pure)

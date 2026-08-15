@@ -1,0 +1,39 @@
+;
+; pio_uart_rx.pio -- an 8N1 UART receiver in nine PIO instructions.
+;
+; The KISS telemetry pad is a plain 115200 8N1 line, and the RP2350's two
+; hardware UARTs can only receive on eight of its thirty GPIOs: the second pin
+; of each block of four. On the 2.8" board exactly one of those eight is free,
+; and it is also where the ESC signal wire goes by default -- so "KISS needs its
+; own UART RX pin" meant "you cannot have KISS on this board at all". A state
+; machine holds no such opinion: it samples whichever pin it is pointed at.
+;
+; The structure is the standard one -- find the start bit, sample each data bit
+; in its middle, check the stop bit, push -- and follows the Pico SDK's uart_rx
+; example (BSD-3-Clause, Raspberry Pi Ltd), which the SDK does not install and
+; which is therefore written out here.
+;
+; One bit is eight state machine cycles, so the SM runs at 8 * baud.
+
+.program pio_uart_rx
+
+.wrap_target
+start:
+	wait 0 pin 0			; stall on the line until it drops: a start bit
+	set  x, 7		[10]	; eight data bits to count, and ride out the rest
+					; of the start bit, so the first sample below
+					; lands in the middle of bit 0 rather than on
+					; either edge of it
+bitloop:
+	in   pins, 1			; sample this bit into the ISR
+	jmp  x-- bitloop	[6]	; eight cycles per bit, eight bits
+	jmp  pin good_stop		; a stop bit must have brought the line back up
+
+	irq  4 rel			; framing error, or a break. Nothing reads the
+	wait 1 pin 0			; flag -- what matters is resynchronising on an
+	jmp  start			; idle line and dropping the byte rather than
+					; pushing one the assembler would trust
+
+good_stop:
+	push				; hand it over, left-justified in the word
+.wrap
