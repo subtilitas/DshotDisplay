@@ -186,6 +186,79 @@ static void testValidateRepairs() {
 	checkTrue("backlight never left looking like a dead panel", s.backlight >= 16);
 }
 
+/**
+ * @brief The pin defaults are the macros', and the running board's.
+ *
+ * Both halves are load-bearing and only one of them is a compile-time fact.
+ *
+ * The descriptors used to carry literals while config.h still defined
+ * `DSHOT_PIN` and friends, so the macros were read by nothing: `-DDSHOT_PIN=28`
+ * configured, printed a status line claiming it had taken, and left the image
+ * on GP29. CI asserted the option was honoured and passed, because it was
+ * grepping CMake's own output rather than the firmware. The first block below
+ * is what would have caught that -- tautological at face value, which is the
+ * point, because CI runs this suite again with the macros overridden and a
+ * descriptor that stopped reading them fails there.
+ *
+ * The second block is the half a macro cannot do: on a unified image, which
+ * board's defaults apply is not a build-time choice at all. boardProbe() picks
+ * the descriptor at boot and settingsDefaults() reads whichever one that was.
+ */
+static void testPinDefaults() {
+	section("Settings: pin defaults come from each board's own macros");
+
+	checkInt("2.0\" ESC pin", BOARD_DESC_LCD_2.defaultDshotPin, DSHOT_PIN_LCD_2);
+	checkInt("2.0\" KISS pin", BOARD_DESC_LCD_2.defaultKissPin, KISS_PIN_LCD_2);
+	checkInt("2.0\" KISS default",
+	         BOARD_DESC_LCD_2.defaultKissEnable ? 1 : 0, KISS_ENABLE_LCD_2 ? 1 : 0);
+	checkInt("2.8\" ESC pin", BOARD_DESC_LCD_2_8.defaultDshotPin, DSHOT_PIN_LCD_2_8);
+	checkInt("2.8\" KISS pin", BOARD_DESC_LCD_2_8.defaultKissPin, KISS_PIN_LCD_2_8);
+	checkInt("2.8\" KISS default",
+	         BOARD_DESC_LCD_2_8.defaultKissEnable ? 1 : 0, KISS_ENABLE_LCD_2_8 ? 1 : 0);
+
+	// The 2.8" pair specifically, because it is the one with no slack: two free
+	// pins, one wire each, and a default that put both on GP29 would describe a
+	// wiring nobody can solder.
+	checkTrue("the 2.8\" wires are on different pins",
+	          BOARD_DESC_LCD_2_8.defaultDshotPin != BOARD_DESC_LCD_2_8.defaultKissPin);
+
+	// Every descriptor's defaults are free on its own board. The descriptors
+	// static_assert this too, so a bad override never links -- this is the
+	// version that says so in the output rather than in a compiler error.
+	for (int i = 0; i < boardCount(); i++) {
+		const BoardDesc *b = boardAt(i);
+		checkTrue("its ESC default is free on it",
+		          (b->freeGpioMask >> b->defaultDshotPin) & 1u);
+		checkTrue("its KISS default is free on it",
+		          (b->freeGpioMask >> b->defaultKissPin) & 1u);
+	}
+}
+
+/** @brief settingsDefaults() follows whichever board booted. @see testPinDefaults */
+static void testDefaultsFollowTheBoard() {
+	if (boardCount() < 2) return;
+	section("Settings: the defaults are the detected board's");
+
+	uint8_t was = boardId();
+	for (int i = 0; i < boardCount(); i++) {
+		// What boardSelect() stands in for here is boardProbe() on real
+		// hardware: a unified image does not know which set of defaults it
+		// wants until it has asked the board. @see setup() in main.cpp
+		boardSelect(boardIdAt(i));
+		Settings s;
+		settingsDefaults(&s);
+		checkInt("the ESC default is this board's",
+		         s.dshotPin, boardAt(i)->defaultDshotPin);
+		checkInt("the KISS default is this board's",
+		         s.kissPin, boardAt(i)->defaultKissPin);
+		checkTrue("and both are legal on it",
+		          settingsPinFreeOn(boardIdAt(i), s.dshotPin) &&
+		          settingsPinFreeOn(boardIdAt(i), s.kissPin));
+		checkTrue("and never the same pin", s.dshotPin != s.kissPin);
+	}
+	boardSelect(was);
+}
+
 static void testPinRules() {
 	section("Settings: only pins this board actually offers");
 
@@ -406,6 +479,8 @@ void runSettingsTests() {
 	testRoundTrip();
 	testRejectsCorruption();
 	testValidateRepairs();
+	testPinDefaults();
+	testDefaultsFollowTheBoard();
 	testPinRules();
 	testKissNeedsItsOwnPin();
 	testSaveIsVerified();

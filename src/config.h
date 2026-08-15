@@ -32,39 +32,72 @@
  */
 
 /**
- * @brief Default GPIO for the ESC signal wire. Board-dependent.
+ * @defgroup cfg_pin_defaults Per-board pin defaults
+ * @brief What each board starts its ESC and telemetry wires on.
+ *
+ * One set per board, defined unconditionally rather than selected by
+ * @ref BOARD — and that is the entire point of this group.
+ *
+ * They used to be single macros chosen with `#if BOARD == ...`, which cannot
+ * express two boards at once. A unified image had no way to say "GP4 on the
+ * 2.0-inch board, GP29 on the 2.8-inch one", so the descriptors ended up
+ * carrying literals and the macros quietly stopped being read by anything at
+ * all: `-DDSHOT_PIN=28` configured cleanly, printed a status line saying it had
+ * taken, and left the image driving GP29. CI even had a job asserting the
+ * option was honoured, and it passed — it was grepping CMake's own output.
+ *
+ * So each descriptor reads its own set: board_desc_lcd2.cpp takes the `_LCD_2`
+ * values, board_desc_lcd2_8.cpp the `_LCD_2_8` ones. **Which set a running
+ * board uses is decided at boot**, not at build time — boardProbe() identifies
+ * the hardware, boardSelect() points `g_board` at that descriptor, and
+ * settingsDefaults() reads the defaults out of it. A unified image carries both
+ * and picks between them; a single-board image never compiles the other.
+ *
+ * Override any of them from the build:
+ *
+ *     cmake -B build -DBOARD=BOARD_UNIFIED -DDSHOT_PIN_LCD_2_8=28 .
+ *
+ * @note An override outside its board's `BOARD_FREE_GPIO_MASK`, or one putting
+ *       both wires on the same pin, is a `static_assert` in the descriptor. It
+ *       fails the build rather than being repaired at run time by
+ *       @ref settingsValidate(), which is quiet by design.
+ * @{
+ */
+
+/**
+ * @brief ESC signal pin the 2.0" board starts on. **GP4**.
  *
  * Runtime-adjustable from **CFG -> SETUP**, which is the intended way to change
  * it; this is what a board with blank flash starts on. @see settings.h
  *
- * On the **RP2350-Touch-LCD-2** this is **GP4**: P2 header pin 11, two
- * positions from GND on P2 pin 13, so a 3-pin servo plug lands
- * SIGNAL / (skip) / GND. The skipped middle position is GP10 (P2 pin 12), an
- * unused camera pin — that is the whole reason GP4 was chosen over the other
+ * P2 header pin 11, two positions from GND on P2 pin 13, so a 3-pin servo plug
+ * lands SIGNAL / (skip) / GND. The skipped middle position is GP10 (P2 pin 12),
+ * an unused camera pin — that is the whole reason GP4 was chosen over the other
  * candidates. See the "Plugging an ESC in directly" section of README.md for
  * why GP20 and GP29 are not usable there.
- *
- * On the **RP2350-Touch-LCD-2.8** this is **GP29**, J4 pin 12 — the last pin on
- * the connector, which is the easy one to find and the easy one to solder to.
- * That board has an RTC, a codec and an SD slot where the other one has a
- * camera header, so GP28 (J4 pin 11) and GP29 are the only two GPIOs left
- * unclaimed. GP28 works identically; build with `-DDSHOT_PIN=28` for it.
- *
- * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
- * never hears a frame, because the firmware is driving a pin no wire is on.
- *
- * Override with `-DDSHOT_PIN=n` or by editing the value here.
  *
  * @warning The middle wire of an ESC lead is the BEC +5 V output, and RP2350
  *          GPIO is **not** 5 V tolerant. Depin or cut that wire before
  *          plugging anything in.
  */
-#ifndef DSHOT_PIN
-  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
-    #define DSHOT_PIN          4
-  #else
-    #define DSHOT_PIN          29
-  #endif
+#ifndef DSHOT_PIN_LCD_2
+  #define DSHOT_PIN_LCD_2      4
+#endif
+
+/**
+ * @brief ESC signal pin the 2.8" board starts on. **GP29**.
+ *
+ * J4 pin 12 — the last pin on the connector, which is the easy one to find and
+ * the easy one to solder to. That board has an RTC, a codec and an SD slot
+ * where the other one has a camera header, so GP28 (J4 pin 11) and GP29 are the
+ * only two GPIOs left unclaimed; the telemetry wire takes the other one.
+ * @see KISS_PIN_LCD_2_8
+ *
+ * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
+ * never hears a frame, because the firmware is driving a pin no wire is on.
+ */
+#ifndef DSHOT_PIN_LCD_2_8
+  #define DSHOT_PIN_LCD_2_8   29
 #endif
 
 /**
@@ -132,54 +165,59 @@
 #endif
 
 /**
- * @brief Default GPIO for the ESC's telemetry pad. Receive only.
+ * @brief Telemetry pin the 2.0" board starts on. **GP5**, P1 header pin 10.
  *
- * Runtime-adjustable; this is the starting value. @see settings.h
- *
- * On the **2.0"** this is **GP5**: P1 header pin 10, and a free camera-bus pin.
- *
- * On the **2.8"** it is **GP28** (J4 pin 11), the other of the two pins that
- * board brings out — GP29 is where the ESC signal goes.
- *
- * Any free GPIO works on either board. It used to have to be one of the eight
- * the RP2350's hardware UARTs can receive on, which is what made this pin a
- * problem worth three paragraphs; the receiver is a PIO state machine now and
- * samples whatever it is pointed at. @see pio_uart_rx.h
+ * A free camera-bus pin. Runtime-adjustable, and any free GPIO will do: the
+ * receiver is a PIO state machine rather than one of the two hardware UARTs,
+ * so there is no "but only these eight pins can receive". @see pio_uart_rx.h
  *
  * @warning The KISS spec puts this line at 3.6 V, which is exactly the RP2350's
  *          absolute-maximum GPIO voltage — no margin at all. Most BLHeli_32 and
  *          AM32 ESCs actually drive 3.3 V and are fine, but measure yours
  *          before connecting it, and consider a 1 k series resistor.
  */
-#ifndef DEFAULT_KISS_PIN
-  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
-    #define DEFAULT_KISS_PIN   5
-  #else
-    #define DEFAULT_KISS_PIN   28
-  #endif
+#ifndef KISS_PIN_LCD_2
+  #define KISS_PIN_LCD_2       5
 #endif
 
 /**
- * @brief Whether the KISS wire is expected by default.
+ * @brief Telemetry pin the 2.8" board starts on. **GP28**, J4 pin 11.
  *
- * Off on the 2.8". Not because it cannot be done there any more — GP28 is free
- * and the PIO receiver will take it — but because that board brings out exactly
- * two pins, and defaulting to "on" spends the spare one on a wire most people
- * have not soldered. Turning it on is one tap. @see pio_uart_rx.h
- *
- * This used to be worse and silent: @ref DEFAULT_KISS_PIN was fixed at GP5 for
- * both boards, and on the 2.8" GP5 is `PIN_RTC_INT` — the PCF85063 alarm
- * output. The firmware duly configured the RTC's interrupt line as a UART
- * receiver and fed whatever it did to the KISS decoder. Nothing errored,
- * because nothing could.
+ * The other of that board's two free pins; @ref DSHOT_PIN_LCD_2_8 has GP29.
+ * With only two to go round, one default settles the other, and the descriptor
+ * static_asserts that they did not end up the same pin.
  */
-#ifndef DEFAULT_KISS_ENABLE
-  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
-    #define DEFAULT_KISS_ENABLE 1
-  #else
-    #define DEFAULT_KISS_ENABLE 0
-  #endif
+#ifndef KISS_PIN_LCD_2_8
+  #define KISS_PIN_LCD_2_8    28
 #endif
+
+/**
+ * @brief Whether the 2.0" board expects a KISS wire. **On**.
+ *
+ * It has a camera header's worth of spare pins, so nothing is being spent to
+ * listen on one.
+ */
+#ifndef KISS_ENABLE_LCD_2
+  #define KISS_ENABLE_LCD_2    1
+#endif
+
+/**
+ * @brief Whether the 2.8" board expects a KISS wire. **Off**.
+ *
+ * Not because it cannot — GP28 is free and the PIO receiver will take it — but
+ * because that board brings out exactly two pins, and defaulting to on spends
+ * the spare one on a wire most people have not soldered. One tap turns it on.
+ *
+ * This used to be worse and silent: the KISS pin was fixed at GP5 for both
+ * boards, and on the 2.8" GP5 is `PIN_RTC_INT` — the PCF85063 alarm output. The
+ * firmware duly configured the RTC's interrupt line as a UART receiver and fed
+ * whatever it did to the KISS decoder. Nothing errored, because nothing could.
+ */
+#ifndef KISS_ENABLE_LCD_2_8
+  #define KISS_ENABLE_LCD_2_8  0
+#endif
+
+/** @} */
 
 /**
  * @brief Request telemetry on every Nth DShot frame.

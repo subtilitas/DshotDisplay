@@ -27,17 +27,14 @@ jobs:
       matrix:
         board:
           - { slug: "touch-lcd-2",   id: BOARD_RP2350_TOUCH_LCD_2,
-              touch: cst816, other_touch: cst328, label: "RP2350-TOUCH-LCD-2",
-              altpin: 10 }
+              touch: cst816, other_touch: cst328, label: "RP2350-TOUCH-LCD-2" }
           - { slug: "touch-lcd-2.8", id: BOARD_RP2350_TOUCH_LCD_2_8,
-              touch: cst328, other_touch: cst816, label: "RP2350-TOUCH-LCD-2.8",
-              altpin: 28 }
+              touch: cst328, other_touch: cst816, label: "RP2350-TOUCH-LCD-2.8" }
           # The image that drives either board. Both touch drivers and both
           # descriptors are compiled in, so the "other driver must be absent"
           # assertion below is skipped for it -- other_touch is empty.
           - { slug: "unified", id: BOARD_UNIFIED,
-              touch: cst816, other_touch: "", label: "RP2350-TOUCH-LCD-2",
-              altpin: 10 }
+              touch: cst816, other_touch: "", label: "RP2350-TOUCH-LCD-2" }
     steps:
       - uses: actions/checkout@v4
 
@@ -166,29 +163,56 @@ jobs:
           fi
           echo "compiled $want; splash says ${{ matrix.board.label }}"
 
-      # The ESC pin is a documented build option that CI had never once passed.
-      # -DDSHOT_PIN=0 in particular used to be discarded silently, because
-      # CMake's if() treats the string "0" as false.
-      - name: DSHOT_PIN override is honoured
+      # The pin options are documented build options that CI had never once
+      # passed. -DDSHOT_PIN=0 in particular used to be discarded silently,
+      # because CMake's if() treats the string "0" as false -- and once that was
+      # fixed the option still reached nothing, because config.h selected it
+      # with `#if BOARD == ...` and the descriptors carried literals. The job
+      # below passed throughout: it was grepping CMake's own output.
+      #
+      # It still is, and now says so. What this proves is the plumbing -- CMake
+      # accepts the option and reports what it did. That the value reaches the
+      # *firmware* is asserted in the host suite ("Pin overrides reach the
+      # descriptors"), which compiles the same descriptor sources this build
+      # does and is a great deal faster than a firmware build per permutation.
+      - name: Pin overrides are plumbed through
         run: |
-          # pipefail matters: cmake is piped through tee, and without it a
-          # failed configure still exits 0 and only the grep below would
-          # notice -- or not, if the cached output happened to match.
           set -eo pipefail
           export PICO_SDK_PATH="$HOME/pico-sdk"
-          for pin in 0 ${{ matrix.board.altpin }}; do
+          # GP0 leads, for the if() reason above. The 2.8" pair has to move
+          # together: that board frees two pins and both defaults are spoken
+          # for, so overriding one alone collides and the descriptor's
+          # static_assert stops the build -- which is the intended behaviour,
+          # not something to test around.
+          for args in "-DDSHOT_PIN_LCD_2=0" "-DDSHOT_PIN_LCD_2=10" \
+                      "-DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29"; do
             rm -rf build-pin
             # FETCHCONTENT_BASE_DIR points at the main build's _deps so the
             # dependencies fetched (and cached) there are reused instead of
-            # being downloaded again for every pin permutation.
+            # being downloaded again for every permutation.
             cmake -B build-pin -G Ninja -DPICO_BOARD=pico2 \
                   -DPICO_PLATFORM=rp2350-arm-s -DBOARD=${{ matrix.board.id }} \
                   -DCMAKE_BUILD_TYPE=Release \
                   -DFETCHCONTENT_BASE_DIR="$PWD/build/_deps" \
-                  -DDSHOT_PIN=$pin . 2>&1 | tee /tmp/cfg.txt
-            grep -q "DShot default GP$pin" /tmp/cfg.txt \
-              || { echo "::error::-DDSHOT_PIN=$pin was ignored"; exit 1; }
+                  $args . 2>&1 | tee /tmp/cfg.txt
+            for a in $args; do
+              nv=${a#-D}
+              grep -q "Pin override: ${nv%%=*}=GP${nv#*=}" /tmp/cfg.txt \
+                || { echo "::error::$a was ignored"; exit 1; }
+            done
           done
+
+          # And the option this replaced is refused rather than accepted and
+          # ignored, which is what it did for several releases.
+          rm -rf build-pin
+          if cmake -B build-pin -G Ninja -DPICO_BOARD=pico2 \
+                   -DPICO_PLATFORM=rp2350-arm-s -DBOARD=${{ matrix.board.id }} \
+                   -DCMAKE_BUILD_TYPE=Release \
+                   -DFETCHCONTENT_BASE_DIR="$PWD/build/_deps" \
+                   -DDSHOT_PIN=28 . >/dev/null 2>&1; then
+            echo "::error::-DDSHOT_PIN was accepted; it must be refused"
+            exit 1
+          fi
 
       # Run the same validator the release uses, on every push. Releases are
       # rare, so a check that only runs at release time is a check that rots
@@ -226,6 +250,17 @@ jobs:
       - name: Build and run
         working-directory: test
         run: make both
+      # The half of the pin-override check that looks at the firmware rather
+      # than at CMake's stdout. testPinDefaults() compares each descriptor's
+      # defaults against the macros, which is a tautology at the defaults and
+      # is not one here: a descriptor that went back to carrying literals fails
+      # this run and passes every other. @see cfg_pin_defaults
+      - name: Pin overrides reach the descriptors
+        working-directory: test
+        run: |
+          make BOARD=BOARD_UNIFIED run \
+               EXTRA_DEFINES="-DDSHOT_PIN_LCD_2=9 -DKISS_PIN_LCD_2=10 \
+                              -DDSHOT_PIN_LCD_2_8=28 -DKISS_PIN_LCD_2_8=29"
       - name: Upload rendered frames on failure
         if: failure()
         uses: actions/upload-artifact@v4

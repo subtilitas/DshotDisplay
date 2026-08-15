@@ -247,7 +247,15 @@ bool escTaskSuspended() { return g_suspended; }
 // Mirrors esc_task.cpp: a wiring change disarms and zeroes the throttle,
 // because the ESC on the old pin stops hearing frames the moment it is
 // released. Tests assert on that, so the fake has to do it too.
-static uint8_t  g_dshotPin = DSHOT_PIN;
+//
+// Seeded to a pin no board offers rather than to a default, and for the same
+// reason the real escTaskInit() seeds from the stored settings: the ESC pin is
+// per board now and lives in a descriptor, and reading a descriptor from a
+// static initialiser here would depend on the link order of two other
+// translation units. Every test enters through uiInit(), which configures this
+// before anything reads it; 255 is what a test that forgot would see, and it is
+// unmistakable. @see cfg_pin_defaults
+static uint8_t  g_dshotPin = 255;
 static uint16_t g_dshotKbaud = DSHOT_SPEED_KBAUD;
 static int      g_configures = 0;
 int fakeConfigureCount() { return g_configures; }
