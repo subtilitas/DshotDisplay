@@ -15,6 +15,15 @@ touch panel. No flight controller, no laptop, no Betaflight.
 stitched together by `tools/make_previews.py`, so they cannot drift away from what the
 board shows.*
 
+> ### 📖 [User manual — the Wiki](https://github.com/subtilitas/DshotDisplay/wiki)
+>
+> **[English](https://github.com/subtilitas/DshotDisplay/wiki/First-Run)** ·
+> **[Deutsch](https://github.com/subtilitas/DshotDisplay/wiki/Erste-Schritte)**
+>
+> Wiring, first run, every screen, telemetry, logging and AM32 configuration —
+> written for someone holding the board rather than reading the source. This
+> README is the technical document; the wiki is the manual.
+
 ---
 
 ## Why it's built this way
@@ -932,6 +941,23 @@ screen costs almost no SPI traffic at all.
 
 **Pixel format** — the SPI peripheral switches to 16-bit frames for pixel data, so RGB565
 words go out MSB-first with no software byte swapping. Commands go out in 8-bit frames.
+
+### The user manual
+
+The [wiki](https://github.com/subtilitas/DshotDisplay/wiki) is written in
+`wiki/` in this repository, in English and German, and mirrored to GitHub by the
+release workflow. Editing a page in the browser is pointless — the next release
+overwrites it, and every page says so in its footer.
+
+Its screenshots are not committed. They are rendered from the host suite, one
+PNG per captured screen, by the same tool that builds the previews above:
+
+```bash
+cd test && make wiki      # render wiki/img/, then check every link and image
+```
+
+CI runs that on every push, so a renamed page or a dropped `fakeDumpFrame()`
+call fails on the commit that caused it rather than at release time.
 
 ---
 
