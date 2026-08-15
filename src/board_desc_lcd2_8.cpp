@@ -47,7 +47,7 @@ const BoardDesc BOARD_DESC_LCD_2_8 = {
 
 	/* freeGpio   */ BOARD_FREE_GPIO_MASK,
 	/* dshotPin   */ 29,
-	/* kissPin    */ 29,
+	/* kissPin    */ 28,
 	/* kissEnable */ false,
 };
 

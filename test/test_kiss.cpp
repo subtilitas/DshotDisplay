@@ -428,48 +428,79 @@ static void testEdtStaleness() {
 }
 
 /**
- * @brief The automatic EDT enable follows the ESC, not the clock.
+ * @brief The automatic EDT enable follows the ESC, not the clock, and keeps
+ *        asking until it actually works.
  *
- * It used to fire once, 1.5 s after boot. That covers only the ESC that
- * happened to be plugged in and powered at the time; connect one afterwards,
- * power-cycle it, or swap it, and it never got the enable at all. eRPM kept
- * working, because that is plain bidirectional DShot, so the result looked
- * exactly like an ESC with no EDT support.
+ * Two earlier versions failed the same way. The first fired once, 1.5 s after
+ * boot, so only an ESC already plugged in and powered ever got it. The second
+ * fired once on the first eRPM frame -- which fixed "plugged in later" and kept
+ * the one-shot, at the earliest instant an ESC can be heard from and therefore
+ * close to the least likely instant it will act on a command. From the outside
+ * both look identical: an ESC reporting RPM and nothing else, exactly like one
+ * with no EDT support at all.
  */
 static void testEdtAutoEnable() {
 	section("Automatic EDT enable");
 
+	const uint32_t RETRY = 1000;
+
 	// Nothing connected: nothing to do, however long we wait.
 	checkTrue("no ESC, nothing sent",
-	          edtAutoAction(false, false) == EdtAutoAction::None);
+	          edtAutoAction(false, false, false, 0, RETRY) == EdtAutoAction::None);
 
-	// An ESC answers.
+	// An ESC answers eRPM but sends no EDT.
 	checkTrue("ESC appears, enable is sent",
-	          edtAutoAction(true, false) == EdtAutoAction::Send);
-	checkTrue("and not sent twice while it stays",
-	          edtAutoAction(true, true) == EdtAutoAction::None);
+	          edtAutoAction(true, false, false, 0, RETRY) == EdtAutoAction::Send);
+	checkTrue("not again on the next frame",
+	          edtAutoAction(true, false, true, 1, RETRY) == EdtAutoAction::None);
+	checkTrue("nor a moment before the interval is up",
+	          edtAutoAction(true, false, true, RETRY - 1, RETRY) == EdtAutoAction::None);
 
-	// It goes away. The one-shot must re-arm, or the replacement never gets
-	// one -- which is the whole bug.
-	checkTrue("ESC leaves, the one-shot re-arms",
-	          edtAutoAction(false, true) == EdtAutoAction::Rearm);
+	// This is the fix: an enable that was not acted on goes out again.
+	checkTrue("but again once the interval has passed",
+	          edtAutoAction(true, false, true, RETRY, RETRY) == EdtAutoAction::Send);
 
-	// Full swap cycle, driven through the flag the firmware keeps.
-	bool sent = false;
+	// And this is the success condition -- EDT frames arriving, not an enable
+	// having been sent. The two came apart exactly once and cost a bug report.
+	checkTrue("EDT arriving stops the asking",
+	          edtAutoAction(true, true, true, RETRY * 10, RETRY) == EdtAutoAction::None);
+	checkTrue("and nothing is sent to an ESC already sending EDT",
+	          edtAutoAction(true, true, false, 0, RETRY) == EdtAutoAction::None);
+
+	// It goes away. The state must re-arm, or the replacement never gets one.
+	checkTrue("ESC leaves, the attempt re-arms",
+	          edtAutoAction(false, false, true, 0, RETRY) == EdtAutoAction::Rearm);
+	checkTrue("and re-arms once, not every frame",
+	          edtAutoAction(false, false, false, 0, RETRY) == EdtAutoAction::None);
+
+	// Full cycle through the state the firmware actually keeps: an ESC that
+	// ignores the enable, then takes it, then is swapped for another.
+	bool tried = false, edt = false;
+	uint32_t now = 0, lastTry = 0;
 	int sends = 0;
 	auto step = [&](bool linkUp) {
-		switch (edtAutoAction(linkUp, sent)) {
-			case EdtAutoAction::Send:  sent = true;  sends++; break;
-			case EdtAutoAction::Rearm: sent = false;          break;
-			case EdtAutoAction::None:                         break;
+		now += 100;
+		switch (edtAutoAction(linkUp, edt, tried, now - lastTry, RETRY)) {
+			case EdtAutoAction::Send:  tried = true; lastTry = now; sends++; break;
+			case EdtAutoAction::Rearm: tried = false;                        break;
+			case EdtAutoAction::None:                                        break;
 		}
 	};
-	for (int i = 0; i < 50; i++) step(true);    // first ESC, running
-	checkInt("exactly one enable for the first ESC", sends, 1);
-	for (int i = 0; i < 50; i++) step(false);   // unplugged
-	checkInt("none while nothing is connected", sends, 1);
-	for (int i = 0; i < 50; i++) step(true);    // replacement fitted
-	checkInt("the replacement gets its own", sends, 2);
+
+	for (int i = 0; i < 50; i++) step(true);     // 5 s of an ESC ignoring it
+	checkTrue("an ESC that does not answer is asked more than once", sends > 1);
+	checkInt("about once per interval, not once per frame", sends, 5, 1);
+
+	edt = true;                                  // it finally took
+	int atSuccess = sends;
+	for (int i = 0; i < 50; i++) step(true);
+	checkInt("and the asking stops the moment EDT arrives", sends, atSuccess);
+
+	edt = false;
+	for (int i = 0; i < 50; i++) step(false);    // unplugged
+	checkInt("none while nothing is connected", sends, atSuccess);
+	for (int i = 0; i < 5; i++) step(true);      // replacement fitted
+	checkTrue("the replacement is asked straight away", sends > atSuccess);
 }
 
 /** @brief Source labels, which the UI prints verbatim. */

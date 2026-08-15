@@ -195,38 +195,25 @@ static void testPinRules() {
 	          settingsPinFree(g_board->defaultDshotPin));
 	checkTrue("GP30 is not a pin", !settingsPinFree(30));
 
-	// UART RX exists only on GPn where n % 4 == 1, and which instance it is
-	// alternates in pairs of groups.
-	checkInt("GP1 is uart0 RX", settingsUartForPin(1), 0);
-	checkInt("GP5 is uart1 RX", settingsUartForPin(5), 1);
-	checkInt("GP9 is uart1 RX", settingsUartForPin(9), 1);
-	checkInt("GP13 is uart0 RX", settingsUartForPin(13), 0);
-	checkInt("GP17 is uart0 RX", settingsUartForPin(17), 0);
-	checkInt("GP21 is uart1 RX", settingsUartForPin(21), 1);
-	checkInt("GP25 is uart1 RX", settingsUartForPin(25), 1);
-	checkInt("GP29 is uart0 RX", settingsUartForPin(29), 0);
-	checkInt("GP4 cannot receive", settingsUartForPin(4), -1);
-	checkInt("GP28 is TX, not RX", settingsUartForPin(28), -1);
-
 	// Stepping only ever lands somewhere legal, in both directions, for every
 	// GPIO -- which is what removes the invalid-selection state entirely.
-	bool allFree = true, allUart = true;
+	//
+	// There used to be a second flavour of this, stepping only through the
+	// eight GPIOs where n % 4 == 1, because those are the only ones the two
+	// hardware UARTs can receive on and the KISS pin had to be one of them.
+	// The receiver is a PIO state machine now and samples whatever pin it is
+	// given, so the telemetry wire steps through the same free set as the ESC
+	// wire and there is one rule here instead of two. @see pio_uart_rx.h
+	bool allFree = true;
 	for (int p = 0; p <= 29; p++) {
-		uint8_t up = settingsNextPin((uint8_t)p, +1, false);
-		uint8_t dn = settingsNextPin((uint8_t)p, -1, false);
+		uint8_t up = settingsNextPin((uint8_t)p, +1);
+		uint8_t dn = settingsNextPin((uint8_t)p, -1);
 		if (!settingsPinFree(up) || !settingsPinFree(dn)) allFree = false;
-		uint8_t uu = settingsNextPin((uint8_t)p, +1, true);
-		if (!settingsPinFree(uu) || settingsUartForPin(uu) < 0) {
-			// Legal only if this board has no UART-capable free pin at all.
-			bool any = false;
-			for (int q = 0; q <= 29; q++)
-				if (settingsPinFree((uint8_t)q) && settingsUartForPin((uint8_t)q) >= 0)
-					any = true;
-			if (any) allUart = false;
-		}
 	}
 	checkTrue("stepping always lands on a free pin", allFree);
-	checkTrue("UART stepping always lands on a receiver", allUart);
+	checkInt("and stepping nowhere stays put",
+	         settingsNextPin(g_board->defaultDshotPin, 0),
+	         g_board->defaultDshotPin);
 }
 
 static void testKissNeedsItsOwnPin() {
@@ -244,15 +231,26 @@ static void testKissNeedsItsOwnPin() {
 
 	settingsDefaults(&s);
 	s.kissEnable = 1;
-	s.kissPin = 4;               // free on the 2.0", but UART TX, not RX
-	settingsValidate(&s);
-	checkInt("a pin that cannot receive turns KISS off", s.kissEnable, 0);
-
-	settingsDefaults(&s);
-	s.kissEnable = 1;
 	s.kissPin = 18;              // the LCD's CTS/peripheral territory on both
 	settingsValidate(&s);
 	checkInt("a pin the board is using turns KISS off", s.kissEnable, 0);
+
+	// The rule that used to sit between those two is gone: a KISS pin no longer
+	// has to be one of the eight a hardware UART can receive on. That rule is
+	// what made KISS impossible to enable on the 2.8" -- two free pins, only
+	// GP29 of them a UART RX, and the ESC starts on GP29 -- so every free pin
+	// that is not the ESC's is now a legal telemetry pin on every board.
+	int legal = 0;
+	for (int p = 0; p <= 29 && legal < 4; p++) {
+		settingsDefaults(&s);
+		if (!settingsPinFree((uint8_t)p) || (uint8_t)p == s.dshotPin) continue;
+		s.kissEnable = 1;
+		s.kissPin = (uint8_t)p;
+		checkTrue("any free pin that is not the ESC's is a legal KISS pin",
+		          settingsValidate(&s) && s.kissEnable == 1);
+		legal++;
+	}
+	checkTrue("and this board offers at least one", legal > 0);
 }
 
 static void testSaveIsVerified() {

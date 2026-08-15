@@ -633,24 +633,38 @@ static void testSetupKiss() {
 	settings()->kissPin = settings()->dshotPin;
 	tap(SET_TOGGLE_X, SET_R_KISS);
 
-	if (settings()->kissEnable) {
-		checkTrue("if KISS came on, it is on a receiver",
-		          settingsUartForPin(settings()->kissPin) >= 0);
-		checkTrue("and not the ESC's pin",
+	// This used to have a second outcome -- "the 2.8" has nowhere to put it, so
+	// it stays off" -- because a KISS pin had to be one of the eight a hardware
+	// UART can receive on, and that board frees exactly one of them: the pin
+	// the ESC starts on. The receiver is a PIO state machine now, so every
+	// board with two free pins can do this. @see pio_uart_rx.h
+	checkInt("KISS comes on", settings()->kissEnable, 1);
+	checkTrue("on a pin this board offers", settingsPinFree(settings()->kissPin));
+	checkTrue("and not the ESC's", settings()->kissPin != settings()->dshotPin);
+
+	// Stepping must not land back on the ESC's pin, however few the board
+	// leaves free. On the 2.8" that is a two-pin board with both spoken for, so
+	// the step has nowhere legal to go and stays put rather than colliding --
+	// which is the one case where "only legal values can be selected" and "the
+	// button does something" cannot both hold.
+	for (int i = 0; i < 4; i++) {
+		tap(SET_PLUS_X, SET_R_KISSPIN);
+		checkTrue("stepping KISS never lands on the ESC pin",
 		          settings()->kissPin != settings()->dshotPin);
-		checkTrue("and a pin this board offers",
+		checkTrue("and never leaves the board's free set",
 		          settingsPinFree(settings()->kissPin));
-	} else {
-		// The 2.8": nowhere left to put it, so it stays off rather than
-		// pretending.
-		checkTrue("with no free receiver, KISS stays off", true);
+	}
+	for (int i = 0; i < 4; i++) {
+		tap(SET_MINUS_X, SET_R_PIN);
+		checkTrue("and stepping the ESC pin avoids the KISS pin too",
+		          settings()->dshotPin != settings()->kissPin);
+		checkTrue("staying inside the free set as well",
+		          settingsPinFree(settings()->dshotPin));
 	}
 
 	// Switching it off is always available.
-	if (settings()->kissEnable) {
-		tap(SET_TOGGLE_X, SET_R_KISS);
-		checkInt("toggling again switches it off", settings()->kissEnable, 0);
-	}
+	tap(SET_TOGGLE_X, SET_R_KISS);
+	checkInt("toggling again switches it off", settings()->kissEnable, 0);
 }
 
 /** @brief Contrast and backlight take effect immediately and persist. */
@@ -1131,14 +1145,17 @@ static void testFrameAction() {
 static void testEdtAutoRule() {
 	section("Safety: the automatic EDT enable");
 
+	const uint32_t RETRY = 1000;
 	checkTrue("an ESC that just appeared is sent one",
-	          edtAutoAction(true, false) == EdtAutoAction::Send);
-	checkTrue("and only once",
-	          edtAutoAction(true, true) == EdtAutoAction::None);
+	          edtAutoAction(true, false, false, 0, RETRY) == EdtAutoAction::Send);
+	checkTrue("and asked again if it did not take",
+	          edtAutoAction(true, false, true, RETRY, RETRY) == EdtAutoAction::Send);
+	checkTrue("but left alone once EDT is actually arriving",
+	          edtAutoAction(true, true, true, RETRY, RETRY) == EdtAutoAction::None);
 	checkTrue("losing the link re-arms it for the next ESC",
-	          edtAutoAction(false, true) == EdtAutoAction::Rearm);
+	          edtAutoAction(false, false, true, 0, RETRY) == EdtAutoAction::Rearm);
 	checkTrue("no link and nothing sent is nothing to do",
-	          edtAutoAction(false, false) == EdtAutoAction::None);
+	          edtAutoAction(false, false, false, 0, RETRY) == EdtAutoAction::None);
 }
 
 

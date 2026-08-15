@@ -49,6 +49,7 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
                ../src/touch.cpp ../src/board_probe.cpp \
                ../src/cst328.cpp ../src/am32_bl.cpp ../src/sd_log.cpp \
+               ../src/pio_uart_rx.cpp \
                ../src/settings_flash.cpp ../src/main.cpp
 
 BIN := dshot_tests

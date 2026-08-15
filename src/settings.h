@@ -66,7 +66,7 @@ struct Settings {
 	uint8_t  dshotPin;     /**< GPIO carrying the ESC signal wire. */
 	uint16_t dshotKbaud;   /**< DShot bitrate: 150, 300, 600 or 1200. */
 	uint8_t  kissEnable;   /**< Non-zero to claim a UART for KISS telemetry. */
-	uint8_t  kissPin;      /**< GPIO the ESC's telemetry pad connects to. */
+	uint8_t  kissPin;      /**< GPIO the ESC's telemetry pad connects to. Any free one. */
 	uint8_t  poles;        /**< Motor pole count, for eRPM to RPM. */
 	uint16_t maxThrottle;  /**< Throttle ceiling, out of 0..2000. */
 	uint8_t  backlight;    /**< Preferred backlight level, 0..255. */
@@ -110,31 +110,17 @@ struct SettingsBlock {
 bool settingsPinFree(uint8_t pin);
 
 /**
- * @brief Which hardware UART can receive on @p pin.
- *
- * On RP2350 only GPIOs where `n % 4 == 1` are a UART RX function at all, and
- * which of the two instances it is alternates in pairs of groups. The SDK will
- * not catch a mismatch: `uart_init()` on the wrong instance succeeds and then
- * simply never receives anything.
- *
- * @param pin GPIO number.
- * @return 0 for uart0, 1 for uart1, -1 if @p pin cannot receive.
- */
-int settingsUartForPin(uint8_t pin);
-
-/**
  * @brief The next free GPIO after @p from, wrapping.
  *
  * Drives the `-`/`+` buttons on the setup screen. Stepping through only legal
  * values is what removes the error state entirely: there is no invalid pin to
  * reject, because one cannot be selected.
  *
- * @param from      Current pin.
- * @param dir       +1 or -1.
- * @param uartOnly  Restrict to pins that can also receive on a UART.
+ * @param from Current pin.
+ * @param dir  +1 or -1.
  * @return The next candidate, or @p from if the board offers no other.
  */
-uint8_t settingsNextPin(uint8_t from, int dir, bool uartOnly);
+uint8_t settingsNextPin(uint8_t from, int dir);
 
 /**
  * @brief settingsPinFree(), judged against a specific board.
@@ -156,10 +142,9 @@ bool settingsPinFreeOn(uint8_t boardIdArg, uint8_t pin);
  * @param boardIdArg One of @ref board_desc_ids.
  * @param from       Current pin.
  * @param dir        +1 or -1.
- * @param uartOnly   Restrict to pins that can also receive on a UART.
  * @return The next candidate, or @p from if that board offers no other.
  */
-uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir, bool uartOnly);
+uint8_t settingsNextPinOn(uint8_t boardIdArg, uint8_t from, int dir);
 
 /** @} */
 
