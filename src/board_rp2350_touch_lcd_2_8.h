@@ -41,7 +41,7 @@
  * | 26   | BAT_EN       | battery power latch — see @ref PIN_BAT_EN        |
  * | 27   | BAT_ADC      | ADC1, 200k/100k divider                          |
  * | 28   | **free**     | J4 pin 11                                        |
- * | 29   | **free**     | J4 pin 12 — the ESC signal pin, @ref DSHOT_PIN    |
+ * | 29   | **free**     | J4 pin 12 — ESC signal, @ref DSHOT_PIN_LCD_2_8   |
  *
  * There are no 2.54 mm headers on this board. Everything is brought out on
  * JST-SH 1.0 mm connectors, so an ESC lead needs a pigtail either way:
@@ -66,6 +66,26 @@
  * every translation unit.
  */
 #define BOARD_LABEL "RP2350-TOUCH-LCD-2.8"
+
+/**
+ * @brief GPIOs a user may assign to the ESC or telemetry wire, as a bitmask.
+ *
+ * Two of them: GP28 (J4 pin 11) and GP29 (J4 pin 12). Between the panel, the
+ * touch bus, the IMU, the RTC, the codec and a six-line SD interface, this
+ * board has nothing else left.
+ *
+ * Two is enough for both wires, one each: the ESC starts on GP29
+ * (@ref DSHOT_PIN_LCD_2_8) and the telemetry pad on GP28
+ * (@ref KISS_PIN_LCD_2_8). They cannot share, and @ref settingsValidate
+ * switches KISS off rather than let them.
+ *
+ * That used to be worse. Only GP29 is a hardware UART RX function here (GP28 is
+ * UART0 *TX*), and while the KISS receiver was a PL011 that made GP29 the only
+ * candidate — the pin the ESC was already on. Enabling KISS on this board found
+ * no pin at all and validation switched it straight back off. The receiver is a
+ * PIO state machine now and samples either pin. @see pio_uart_rx.h
+ */
+#define BOARD_FREE_GPIO_MASK 0x30000000u
 
 /**
  * @defgroup lcd28_pins_lcd LCD — ST7789T3, 240x320, SPI1

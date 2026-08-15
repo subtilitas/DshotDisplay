@@ -14,6 +14,9 @@ Enforces what actually goes wrong, and nothing else:
      second main page
   6. backticks inside a doc comment are balanced, otherwise Doxygen hits the
      end of the block still waiting to close a code span
+  7. a @ref is not immediately followed by a colon -- Doxygen's reference
+     grammar includes ':' so that Class::member resolves, so "@ref foo.h: and
+     then some prose" is read as a reference to "foo.h:" and does not
 
 Deliberately narrower than Doxygen's WARN_IF_UNDOCUMENTED, which also fires on
 file-static internals. A comment on `s_scroll` saying "scroll position" is
@@ -73,6 +76,11 @@ def main():
                 continue
             actual = []
             for arg in sig.group(1).split(","):
+                # Strip a default argument first. Without this the name is read
+                # off the end of the whole clause, so `bool pressed = false`
+                # reports its parameter as "false" -- and then demands that a
+                # parameter called "false" be documented.
+                arg = arg.split("=")[0]
                 found = re.findall(r"(\w+)\s*$", arg.strip())
                 if found and found[0] != "void":
                     actual.append(found[0])
@@ -117,6 +125,18 @@ def main():
             if target.endswith((".h", ".md", ".ino", ".cpp")):
                 continue
             problems.append(f"{path}: @ref '{target}' does not resolve")
+
+        # --- 7. ...and must not run into a colon ---
+        #
+        # Rule 4 cannot see this. Its own pattern stops at the colon, so the
+        # target looks fine and resolves; Doxygen's does not stop there, because
+        # ':' is how Class::member is written. The result is a reference to
+        # "pio_uart_rx.h:", which resolves to nothing -- and the only thing that
+        # ever said so was Doxygen, in CI, after the commit.
+        for m in re.finditer(r"@(?:ref|see)\s+([\w./]+):(?!:)", text):
+            problems.append(
+                f"{path}: @ref '{m.group(1)}:' runs into a colon; Doxygen reads "
+                f"the colon as part of the name")
 
     # --- 1. public functions in headers need documentation ---
     for path in HEADERS:

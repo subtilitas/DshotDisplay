@@ -6,6 +6,19 @@
  * firmware. Anything that describes the board itself rather than a preference
  * lives in @ref board_pins.h instead, and which board you are building for is
  * @ref board.h.
+ *
+ * @section config_defaults Some of these are only defaults now
+ *
+ * The ESC pin, the DShot bitrate, the KISS wire, the pole count, the throttle
+ * ceiling and the backlight are all changeable on the board itself and stored
+ * in flash — see @ref settings.h and the **CFG -> SETUP** screen. What is
+ * written here is the value a board starts with when its flash is blank, or
+ * when a stored block fails to validate.
+ *
+ * The practical consequence: editing one of those values and reflashing will
+ * appear to do nothing on a board that has saved settings, because the stored
+ * value wins. The SETUP screen marks each row `SAVED` or `DEFAULT` so it is
+ * visible which one you are looking at.
  */
 
 #pragma once
@@ -19,44 +32,82 @@
  */
 
 /**
- * @brief GPIO the ESC signal wire goes to. Board-dependent default.
+ * @defgroup cfg_pin_defaults Per-board pin defaults
+ * @brief What each board starts its ESC and telemetry wires on.
  *
- * On the **RP2350-Touch-LCD-2** this is **GP4**: P2 header pin 11, two
- * positions from GND on P2 pin 13, so a 3-pin servo plug lands
- * SIGNAL / (skip) / GND. The skipped middle position is GP10 (P2 pin 12), an
- * unused camera pin — that is the whole reason GP4 was chosen over the other
+ * One set per board, defined unconditionally rather than selected by
+ * @ref BOARD — and that is the entire point of this group.
+ *
+ * They used to be single macros chosen with `#if BOARD == ...`, which cannot
+ * express two boards at once. A unified image had no way to say "GP4 on the
+ * 2.0-inch board, GP29 on the 2.8-inch one", so the descriptors ended up
+ * carrying literals and the macros quietly stopped being read by anything at
+ * all: `-DDSHOT_PIN=28` configured cleanly, printed a status line saying it had
+ * taken, and left the image driving GP29. CI even had a job asserting the
+ * option was honoured, and it passed — it was grepping CMake's own output.
+ *
+ * So each descriptor reads its own set: board_desc_lcd2.cpp takes the `_LCD_2`
+ * values, board_desc_lcd2_8.cpp the `_LCD_2_8` ones. **Which set a running
+ * board uses is decided at boot**, not at build time — boardProbe() identifies
+ * the hardware, boardSelect() points `g_board` at that descriptor, and
+ * settingsDefaults() reads the defaults out of it. A unified image carries both
+ * and picks between them; a single-board image never compiles the other.
+ *
+ * Override any of them from the build:
+ *
+ *     cmake -B build -DBOARD=BOARD_UNIFIED -DDSHOT_PIN_LCD_2_8=28 .
+ *
+ * @note An override outside its board's `BOARD_FREE_GPIO_MASK`, or one putting
+ *       both wires on the same pin, is a `static_assert` in the descriptor. It
+ *       fails the build rather than being repaired at run time by
+ *       @ref settingsValidate(), which is quiet by design.
+ * @{
+ */
+
+/**
+ * @brief ESC signal pin the 2.0" board starts on. **GP4**.
+ *
+ * Runtime-adjustable from **CFG -> SETUP**, which is the intended way to change
+ * it; this is what a board with blank flash starts on. @see settings.h
+ *
+ * P2 header pin 11, two positions from GND on P2 pin 13, so a 3-pin servo plug
+ * lands SIGNAL / (skip) / GND. The skipped middle position is GP10 (P2 pin 12),
+ * an unused camera pin — that is the whole reason GP4 was chosen over the other
  * candidates. See the "Plugging an ESC in directly" section of README.md for
  * why GP20 and GP29 are not usable there.
- *
- * On the **RP2350-Touch-LCD-2.8** this is **GP29**, J4 pin 12 — the last pin on
- * the connector, which is the easy one to find and the easy one to solder to.
- * That board has an RTC, a codec and an SD slot where the other one has a
- * camera header, so GP28 (J4 pin 11) and GP29 are the only two GPIOs left
- * unclaimed. GP28 works identically; build with `-DDSHOT_PIN=28` for it.
- *
- * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
- * never hears a frame, because the firmware is driving a pin no wire is on.
- *
- * Override with `-DDSHOT_PIN=n` or by editing the value here.
  *
  * @warning The middle wire of an ESC lead is the BEC +5 V output, and RP2350
  *          GPIO is **not** 5 V tolerant. Depin or cut that wire before
  *          plugging anything in.
  */
-#ifndef DSHOT_PIN
-  #if BOARD == BOARD_RP2350_TOUCH_LCD_2
-    #define DSHOT_PIN          4
-  #else
-    #define DSHOT_PIN          29
-  #endif
+#ifndef DSHOT_PIN_LCD_2
+  #define DSHOT_PIN_LCD_2      4
 #endif
 
 /**
- * @brief DShot bitrate in kBaud. 300 / 600 / 1200 are the common ones.
+ * @brief ESC signal pin the 2.8" board starts on. **GP29**.
  *
- * Bidirectional DShot is more timing-sensitive than normal DShot. If telemetry
- * is flaky on a long or unshielded signal wire, drop to 300 before suspecting
- * the firmware.
+ * J4 pin 12 — the last pin on the connector, which is the easy one to find and
+ * the easy one to solder to. That board has an RTC, a codec and an SD slot
+ * where the other one has a camera header, so GP28 (J4 pin 11) and GP29 are the
+ * only two GPIOs left unclaimed; the telemetry wire takes the other one.
+ * @see KISS_PIN_LCD_2_8
+ *
+ * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
+ * never hears a frame, because the firmware is driving a pin no wire is on.
+ */
+#ifndef DSHOT_PIN_LCD_2_8
+  #define DSHOT_PIN_LCD_2_8   29
+#endif
+
+/**
+ * @brief Default DShot bitrate in kBaud. 150 / 300 / 600 / 1200 are legal.
+ *
+ * Runtime-adjustable from **CFG -> SETUP**. That matters more than it sounds:
+ * bidirectional DShot is more timing-sensitive than normal DShot, and "drop to
+ * 300 before suspecting the firmware" is advice you want to be able to take on
+ * the bench with the flaky wire still connected, not after a toolchain
+ * round-trip.
  */
 #define DSHOT_SPEED_KBAUD      600
 
@@ -114,33 +165,59 @@
 #endif
 
 /**
- * @brief GPIO the ESC's telemetry pad connects to. Receive only.
+ * @brief Telemetry pin the 2.0" board starts on. **GP5**, P1 header pin 10.
  *
- * GP5 is UART1 RX and lands on P1 header pin 10. UART1 is chosen over UART0 so
- * the USB-serial debug path is left alone. @see KISS_UART
- *
- * Other candidates, all free and broken out: GP9 (UART1 RX, P1 pin 2), GP21
- * (UART1 RX, P1 pin 5), GP1 (UART0 RX, P2 pin 8).
+ * A free camera-bus pin. Runtime-adjustable, and any free GPIO will do: the
+ * receiver is a PIO state machine rather than one of the two hardware UARTs,
+ * so there is no "but only these eight pins can receive". @see pio_uart_rx.h
  *
  * @warning The KISS spec puts this line at 3.6 V, which is exactly the RP2350's
  *          absolute-maximum GPIO voltage — no margin at all. Most BLHeli_32 and
  *          AM32 ESCs actually drive 3.3 V and are fine, but measure yours
  *          before connecting it, and consider a 1 k series resistor.
  */
-#define KISS_TELEM_PIN         5
+#ifndef KISS_PIN_LCD_2
+  #define KISS_PIN_LCD_2       5
+#endif
 
 /**
- * @brief UART instance for @ref KISS_TELEM_PIN.
+ * @brief Telemetry pin the 2.8" board starts on. **GP28**, J4 pin 11.
  *
- * Must agree with the pin: on RP2350, GP1/5/9/21/25/29 are UART1 RX and
- * GP1/13/17/29 are UART0 RX. GP5 is UART1, so `uart1`. Moving
- * @ref KISS_TELEM_PIN to a UART0 pin means changing this too — the SDK will not
- * catch the mismatch, it will simply never receive anything.
- *
- * UART0 is deliberately left alone; stdio can have it if a build ever wants a
- * debug UART instead of USB CDC.
+ * The other of that board's two free pins; @ref DSHOT_PIN_LCD_2_8 has GP29.
+ * With only two to go round, one default settles the other, and the descriptor
+ * static_asserts that they did not end up the same pin.
  */
-#define KISS_UART              uart1
+#ifndef KISS_PIN_LCD_2_8
+  #define KISS_PIN_LCD_2_8    28
+#endif
+
+/**
+ * @brief Whether the 2.0" board expects a KISS wire. **On**.
+ *
+ * It has a camera header's worth of spare pins, so nothing is being spent to
+ * listen on one.
+ */
+#ifndef KISS_ENABLE_LCD_2
+  #define KISS_ENABLE_LCD_2    1
+#endif
+
+/**
+ * @brief Whether the 2.8" board expects a KISS wire. **Off**.
+ *
+ * Not because it cannot — GP28 is free and the PIO receiver will take it — but
+ * because that board brings out exactly two pins, and defaulting to on spends
+ * the spare one on a wire most people have not soldered. One tap turns it on.
+ *
+ * This used to be worse and silent: the KISS pin was fixed at GP5 for both
+ * boards, and on the 2.8" GP5 is `PIN_RTC_INT` — the PCF85063 alarm output. The
+ * firmware duly configured the RTC's interrupt line as a UART receiver and fed
+ * whatever it did to the KISS decoder. Nothing errored, because nothing could.
+ */
+#ifndef KISS_ENABLE_LCD_2_8
+  #define KISS_ENABLE_LCD_2_8  0
+#endif
+
+/** @} */
 
 /**
  * @brief Request telemetry on every Nth DShot frame.
@@ -186,13 +263,34 @@
  *
  * eRPM is plain bidirectional DShot — every ESC that works at all answers with
  * it, whether or not it supports EDT — so its presence is the definition of
- * "an ESC is connected". Losing it is what re-arms the automatic EDT enable, so
- * that a replacement ESC gets its own.
+ * "an ESC is connected". It is also half of the retry condition for the
+ * automatic EDT enable: an ESC that is answering but sending no EDT is an ESC
+ * that has not taken the enable yet. @see EDT_RETRY_MS
  *
  * Shorter than @ref EDT_STALE_MS deliberately. eRPM arrives every frame at
  * 1 kHz, where EDT frame types are interleaved and any one of them is rarer.
  */
 #define ESC_LINK_STALE_MS      500
+
+/**
+ * @brief How long before an unanswered EDT enable is sent again, in ms.
+ *
+ * The enable is not a one-shot, and used to be. It went out on the very first
+ * eRPM frame — the earliest possible moment, and the worst one: an ESC answers
+ * eRPM within milliseconds of power-up but will not act on a DShot command
+ * until it has seen a run of valid zero-throttle frames. Miss that window and
+ * nothing tried again, so the ESC reported RPM and nothing else, which is
+ * indistinguishable from an ESC with no EDT support. Changing any wiring
+ * setting rebuilt the pump, cleared the flag and made EDT "start working",
+ * which is how the bug was found rather than how it was meant to work.
+ *
+ * So the rule is now the obvious one: while an ESC is answering
+ * (@ref ESC_LINK_STALE_MS) and no EDT frame is arriving (@ref EDT_STALE_MS),
+ * ask again this often. Long enough that ten command frames are a rounding
+ * error in the stream; short enough that an ESC plugged in mid-session has EDT
+ * before anyone has finished looking at the screen.
+ */
+#define EDT_RETRY_MS          1000
 
 /**
  * @brief Abandon a reply that has not completed this long after the request.
@@ -283,6 +381,20 @@
  * the default rate. Unused space is released when the file is closed.
  */
 #define SD_LOG_PREALLOC_BYTES  (16u * 1024u * 1024u)
+
+/**
+ * @brief Commit the log file's directory entry at most this often, in ms.
+ *
+ * A log is only readable up to its last f_sync(). Without a periodic one the
+ * only sync is at sdLogStop(), so pulling the battery mid-run -- which the
+ * safety section of README.md recommends having a way to do -- loses the entire
+ * file rather than the last couple of seconds.
+ *
+ * Cheap because the file is pre-allocated contiguously: the FAT is not being
+ * extended, only the directory entry rewritten. Taken right after a chunk goes
+ * out, when the ring is at its emptiest.
+ */
+#define SD_LOG_SYNC_MS         2000
 
 /**
  * @brief Start logging automatically when the tester arms.
