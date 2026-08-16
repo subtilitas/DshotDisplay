@@ -36,7 +36,8 @@ BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8 BOARD_UNIFIED
 DEFINES := -DBOARD=$(BOARD) $(EXTRA_DEFINES)
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
-        test_blackbox.cpp test_log_ring.cpp test_settings.cpp fakes.cpp \
+        test_blackbox.cpp test_log_ring.cpp test_settings.cpp \
+        test_usb_msc.cpp fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
         ../src/ui_input.cpp ../src/ui_widgets.cpp ../src/board_desc.cpp \
         ../src/board_desc_lcd2.cpp ../src/board_desc_lcd2_8.cpp \
