@@ -75,6 +75,48 @@ from a card the firmware cannot read.
 
 ---
 
+## Getting the logs off without a card reader
+
+<img src="img/log-usb-serving.png" width="240" alt="The card served as a USB drive">
+
+`USB DRIVE` on the SD LOG screen hands the card to whatever the USB cable is
+plugged into. It appears as an ordinary removable drive; copy the `.BFL` files
+off, eject it on the computer, and the tester takes the card back.
+
+The board is always a USB device — that is how it gets power and how the serial
+port works — so this adds a card reader to the same cable rather than needing
+anything new.
+
+**It is read-only.** The computer can copy files off and nothing else. That is
+deliberate: it means a host filesystem driver cannot corrupt a card full of
+measurements, and the log numbering cannot change under the firmware's feet. If
+your computer says the disk is write protected, that is this, working.
+
+**The card is handed over, not shared.** A FAT filesystem has no way to arbitrate
+between two writers, and the firmware and your computer cannot see each other's
+caches. So the logger flushes, closes and unmounts before the drive appears, and
+touches nothing until you eject. While that is true, the SD LOG screen shows the
+handover instead of its counters — they would be frozen, and a frozen counter
+that looks live is the one thing this firmware tries never to show you.
+
+**The button refuses, and says why:**
+
+<img src="img/log-usb-refused.png" width="240" alt="USB DRIVE refused while recording">
+
+| Caption | What to do |
+|---|---|
+| `DISARM FIRST` | A motor is spinning. The handover pauses the logger for seconds |
+| `STOP RECORDING FIRST` | Ending your run is your decision, not the firmware's |
+| `NO CARD TO SHARE` | Nothing is mounted |
+
+**Arming is blocked while a computer holds the card.** You can leave the screen —
+`BACK` does not cancel a copy in progress — so the tester screen is reachable
+with the card gone, and it will not arm until you eject.
+
+Eject from the computer, or press `EJECT` on the screen. Both do the same thing.
+
+---
+
 ## Opening the logs
 
 <a href="https://subtilitas.github.io/logwiju/"><img src="https://img.shields.io/badge/open%20your%20logs%20in-logwiju-07b0c8?style=for-the-badge" alt="Open your logs in logwiju"></a>

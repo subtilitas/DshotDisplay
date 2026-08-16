@@ -518,6 +518,14 @@ so the question can be settled with data. The arithmetic is in
 ### Blackbox logging to microSD
 
 Logs are written in Betaflight's blackbox format, so they open directly in
+**Getting the files off:** `CFG -> SD LOG -> USB DRIVE` hands the card to
+whatever the USB cable is plugged into, as a read-only removable drive — the
+board is already a USB device, so this is a second interface on the same cable
+rather than anything new. The handover is exclusive: the logger unmounts before
+the drive appears and touches nothing until you eject, because two writers with
+independent caches is how a FAT volume gets corrupted. Refused while armed or
+recording, and it says which. @see `src/usb_msc.h`
+
 [**logwiju**](https://subtilitas.github.io/logwiju/) — the intended viewer for
 these logs — as well as Blackbox Explorer, `blackbox_decode` and PIDtoolbox.
 Files are named `LOGnnnnn.BFL` on a FAT-formatted card.
