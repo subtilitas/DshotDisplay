@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "usb_msc.h"
+
 #include <stdint.h>
 
 struct EscTelemetry;
@@ -102,3 +104,6 @@ uint16_t fakeDshotKbaud();
 
 /** @brief GPIO most recently pushed to the fake pump. @see escTaskDshotPin() */
 uint8_t escTaskDshotPin();
+
+/** @brief Put the fake USB card reader into a state. @see usb_msc.h */
+void fakeMscSet(MscState s, uint32_t blocksRead);

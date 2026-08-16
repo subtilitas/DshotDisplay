@@ -332,6 +332,16 @@
  */
 #define KISS_REPLY_TIMEOUT_MS  10
 
+/**
+ * @brief How long a refused USB DRIVE press keeps its explanation on screen.
+ *
+ * Longer than @ref CMD_FLASH_MS, because this one is a sentence rather than a
+ * colour: the reason has to be read, and the thing it tells you to do -- disarm,
+ * or stop the recording -- takes a moment to act on. Short enough that it is
+ * gone before you next look at the screen for something else.
+ */
+#define MSC_NOTE_MS          4000
+
 /** @} */
 
 /**
