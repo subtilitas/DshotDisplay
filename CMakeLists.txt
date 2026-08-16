@@ -145,6 +145,9 @@ add_executable(DshotDisplay
     src/ui_setup.cpp
     src/ui_input.cpp
     src/ui_widgets.cpp
+    src/usb_dev.cpp
+    src/usb_descriptors.c
+    src/usb_msc.cpp
     src/theme.cpp
     src/settings.cpp
     src/settings_flash.cpp
@@ -205,11 +208,24 @@ target_link_libraries(DshotDisplay
     hardware_watchdog
     Pico_Bidir_DShot
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+    tinyusb_device
+    pico_unique_id
 )
+
+# tusb_config.h is found by bare name from inside TinyUSB's own sources, so
+# src/ has to be on the include path for the library as well as for us.
+target_include_directories(DshotDisplay PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
 
 # Serial telemetry goes over USB CDC, not a UART: the board has no spare pins
 # for a debug UART, and the USB port is already there for flashing.
-pico_enable_stdio_usb(DshotDisplay 1)
+#
+# pico_enable_stdio_usb() is deliberately *not* used, and this is the one line
+# of this file worth reading twice. That helper owns the USB descriptors and
+# cannot share the device with another interface -- and the SD card reader is
+# another interface. So the descriptors, and the serial port that rides on them,
+# are ours: src/usb_descriptors.c and src/usb_dev.cpp. Turning this back on
+# would not conflict at build time; it would duplicate the descriptor callbacks
+# and fail at link, which is the good outcome. @see usb_dev.h
 pico_enable_stdio_uart(DshotDisplay 0)
 
 # The board goes in the filename. Both builds used to produce
