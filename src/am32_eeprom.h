@@ -50,6 +50,7 @@ enum {
 	AM32_OFF_MAIN_REVISION   = 0x03,
 	AM32_OFF_SUB_REVISION    = 0x04,
 	AM32_OFF_NAME            = 0x05, /**< 12 bytes, layout revision < 3 only. */
+	AM32_OFF_ADVANCE         = 0x17, /**< Timing advance; two encodings. */
 	AM32_NAME_LEN            = 12,
 	AM32_OFF_MELODY          = 0x30,
 	AM32_MELODY_LEN          = 128,
@@ -63,7 +64,72 @@ enum Am32Type : uint8_t {
 	A32_ENUM,   /**< Index into Am32Field::names. */
 	A32_RAW,    /**< Plain integer, shown with Am32Field::unit. */
 	A32_SCALED, /**< `(raw * mul) / div + add`, shown with one decimal if div > 1. */
+	A32_ADVANCE,/**< Timing advance. Two encodings by value. @see am32AdvanceDeciDeg() */
 };
+
+/**
+ * @brief Timing advance in tenths of a degree, from the raw EEPROM byte.
+ *
+ * This field has two encodings and the byte itself is what says which, exactly
+ * as AM32's own start-up code decides it:
+ *
+ * - **0..3** — the pre-1.90 format. Four steps of 7.5 degrees, 0 to 22.5.
+ * - **10..42** — 1.90 and later. `raw - 10` steps of 0.9375 degrees (60/64,
+ *   which is the resolution the commutation timer actually works in), 0 to 30.
+ * - anything else is not a value AM32 wrote. It substitutes its own default;
+ *   this returns -1 so the screen can say so rather than inventing an angle.
+ *
+ * Treating the field as the old encoding alone is what made a modern ESC read
+ * back nonsense until the first `-` or `+` press, which clamped the byte into
+ * 0..4 and made the number plausible again. A display that becomes correct
+ * *because you edited it* is worse than one that is obviously wrong, because
+ * the edit is what you then write back.
+ *
+ * @param raw Byte at offset 0x17, `AM32_OFF_ADVANCE`.
+ * @return Tenths of a degree, or -1 if the byte is in neither encoding.
+ */
+static inline int16_t am32AdvanceDeciDeg(uint8_t raw) {
+	if (raw <= 3)                 return (int16_t)(raw * 75);
+	if (raw >= 10 && raw <= 42)   return (int16_t)((raw - 10) * 75 / 8);
+	return -1;
+}
+
+/**
+ * @brief The raw byte for a given advance step, in the modern encoding.
+ *
+ * Editing always writes 1.90-format bytes, whatever was read. AM32 accepts them
+ * on any version — its start-up code converts in that direction anyway — and
+ * writing the format the ESC's own configurator writes is the one choice that
+ * cannot surprise somebody who opens it there afterwards.
+ *
+ * @param step 0..32, in 0.9375 degree increments.
+ * @return Byte to store.
+ */
+static inline uint8_t am32AdvanceRaw(uint8_t step) {
+	if (step > 32) step = 32;
+	return (uint8_t)(step + 10);
+}
+
+/**
+ * @brief The 0..32 advance step a raw byte represents, in either encoding.
+ *
+ * Derived from the byte directly rather than by converting the angle back,
+ * because tenths of a degree do not divide evenly by 0.9375: a round trip
+ * through am32AdvanceDeciDeg() loses a step, and an editor built on it stepped
+ * up by one and back down by two.
+ *
+ * The old-format conversion is `raw << 3`, which is exactly what AM32's own
+ * start-up code does with it.
+ *
+ * @param raw Byte at offset 0x17, `AM32_OFF_ADVANCE`.
+ * @return Step 0..32. A byte in neither encoding gives 16, AM32's own
+ *         substitute, so editing from it starts where the ESC actually is.
+ */
+static inline uint8_t am32AdvanceStep(uint8_t raw) {
+	if (raw <= 3)               return (uint8_t)(raw << 3);
+	if (raw >= 10 && raw <= 42) return (uint8_t)(raw - 10);
+	return 16;
+}
 
 /**
  * @brief One editable setting.
