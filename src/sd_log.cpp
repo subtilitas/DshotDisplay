@@ -27,6 +27,16 @@
 static FATFS s_fs;
 static FIL   s_file;
 static bool  s_mounted = false;
+/**
+ * @brief True while the card has been handed to a USB host.
+ *
+ * Distinct from `!s_mounted`, and the distinction is the point: unmounted is a
+ * state this file gets itself out of, by remounting, at any of half a dozen
+ * call sites. Released is a state only sdLogReacquire() may leave, because
+ * something outside this file is reading the card and a helpful remount would
+ * corrupt it. See usb_msc.h.
+ */
+static bool  s_released = false;
 static uint8_t  s_mountResult = 0;
 static uint8_t  s_cardType = 0;
 static uint32_t s_cardSectors = 0;
@@ -128,11 +138,45 @@ bool sdLogBegin() {
 }
 
 bool sdLogRemount() {
+	if (s_released) return false;
 	if (s_state == SdLogState::Logging) return true;
 	if (s_mounted) f_unmount(drivePrefix());
 	s_mounted = false;
 	return sdLogBegin();
 }
+
+bool sdLogRelease() {
+	// Refuse rather than tear down a recording. The caller is expected to have
+	// asked mscRefusal() first and to have been told no; this is the backstop
+	// for a caller that did not, and losing a run in progress to a mis-tap is
+	// exactly what it exists to prevent.
+	if (s_state == SdLogState::Logging) return false;
+
+	if (s_mounted) {
+		// FatFs caches. Unmounting is what makes the on-card filesystem match
+		// what the host is about to read -- without it the host sees a FAT that
+		// is missing whatever is still sitting in s_fs.
+		f_unmount(drivePrefix());
+		s_mounted = false;
+	}
+	// Not SdLogState::Error: nothing failed. From the logger's point of view
+	// there is no card, which is exactly true while somebody else has it, and
+	// it is the state every other entry point already refuses to work in.
+	s_state = SdLogState::NoCard;
+	s_released = true;
+	return true;
+}
+
+bool sdLogReacquire() {
+	if (!s_released) return s_mounted;
+	s_released = false;
+	// A full sdLogBegin(), not just an f_mount: the host may have been given a
+	// card that was then pulled out, and re-reading type and size is how the
+	// screen tells that apart from a card that is simply back.
+	return sdLogBegin();
+}
+
+bool sdLogReleased() { return s_released; }
 
 /**
  * @brief Find the lowest unused `LOGnnnnn.BFL`.
@@ -152,6 +196,7 @@ static uint16_t nextFileNumber() {
 }
 
 bool sdLogStart() {
+	if (s_released) return false;
 	if (s_state == SdLogState::NoCard) return false;
 	if (s_state == SdLogState::Logging) return true;
 
@@ -353,6 +398,9 @@ bool sdLogBegin() { return false; }
 bool sdLogStart() { return false; }
 void sdLogStop() {}
 bool sdLogRemount() { return false; }
+bool sdLogRelease() { return false; }
+bool sdLogReacquire() { return false; }
+bool sdLogReleased() { return false; }
 bool sdLogActive() { return false; }
 void sdLogTick(uint32_t, uint16_t) {}
 void sdLogFlush() {}

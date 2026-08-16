@@ -106,8 +106,12 @@ static void swipe(int x0, int x1, int y, int step) {
 // --- throttle gauge: THR_TRACK_Y 248, height 26 ---
 #define THR_Y         260
 // --- logging-screen coordinates, mirroring ui.cpp ---
-#define LOG_TOGGLE_Y 258   // BTN_LOG_TOGGLE y 236..279
-#define LOG_RETRY_Y  301   // BTN_LOG_RETRY  y 286..315
+#define LOG_TOGGLE_Y 262   // BTN_LOG_TOGGLE y 240..283, full width
+// The bottom row is two buttons now, so a tap at x=120 lands in the gap
+// between them and hits nothing at all.
+#define LOG_BOT_Y    303   // both spans y 288..317
+#define LOG_RETRY_X   66   // BTN_LOG_RETRY x  14..117
+#define LOG_USB_X    174   // BTN_LOG_USB   x 122..225
 
 /**
  * @brief The standard "ESC is talking" fixture, stamped as having just arrived.
@@ -213,7 +217,7 @@ static void testLogScreen() {
 	// A card inserted after boot. sdLogBegin() only runs once, so without this
 	// button the card would stay invisible until a power cycle -- which looks
 	// exactly like a card the firmware cannot read.
-	tap(120, LOG_RETRY_Y);
+	tap(LOG_RETRY_X, LOG_BOT_Y);
 	frames(2);
 	sdLogStatus(&st);
 	checkTrue("RETRY finds a card inserted later",
@@ -224,6 +228,75 @@ static void testLogScreen() {
 	fakeDumpFrame("shot_log_mounted.ppm");
 
 	tap(BACK_X, BACK_Y);
+	frames(2);
+}
+
+/**
+ * @brief The USB drive button: what it refuses, and what the screen becomes.
+ *
+ * The rules themselves are asserted in test_usb_msc.cpp against the real
+ * header. This is the other half -- that the screen actually asks, actually
+ * shows the reason, and actually stops offering the logger's controls once the
+ * card is gone.
+ */
+static void testUsbDriveScreen() {
+	section("USB drive: the button and the screen");
+
+	SdLogStatus st;
+	memset(&st, 0, sizeof(st));
+	st.state = SdLogState::Idle;
+	st.cardType = 3;
+	st.cardSizeMB = 30500;
+	fakeSdLogSet(&st);
+	fakeMscSet(MscState::Idle, 0);
+
+	enterLogScreen();
+	frames(2);
+
+	// Refused while recording, and the screen says why rather than doing
+	// nothing -- a button that silently declines is indistinguishable from one
+	// that is broken.
+	tap(120, LOG_TOGGLE_Y);                       // START
+	checkTrue("recording", sdLogActive());
+	uint32_t quiet = fakeRegionHash(0, 224, GFX_W, 14);
+	tap(LOG_USB_X, LOG_BOT_Y);
+	frames(2);
+	checkTrue("USB DRIVE is refused while recording",
+	          mscGetState() == MscState::Idle);
+	checkTrue("and the note line says so",
+	          fakeRegionHash(0, 224, GFX_W, 14) != quiet);
+	fakeDumpFrame("shot_log_usb_refused.ppm");
+
+	// Stop the log and it goes through.
+	tap(120, LOG_TOGGLE_Y);                       // STOP
+	checkTrue("stopped", !sdLogActive());
+	tap(LOG_USB_X, LOG_BOT_Y);
+	frames(2);
+	checkTrue("with the log stopped, the card is handed over",
+	          mscGetState() == MscState::Serving);
+
+	// The screen is now about the handover and nothing else.
+	fakeMscSet(MscState::Serving, 3 * 1024 * 2);  // 3 MB read
+	frames(2);
+	fakeDumpFrame("shot_log_usb_serving.ppm");
+
+	// START must not work while a host owns the card: the logger has let go.
+	tap(120, LOG_TOGGLE_Y);                       // now EJECT, not START
+	frames(2);
+	checkTrue("the big button is EJECT while serving, not START",
+	          !sdLogActive());
+	checkTrue("and it gives the card back", mscGetState() == MscState::Idle);
+
+	// Arming is refused while a host holds the card, from the tester screen --
+	// which is reachable, because BACK does not cancel a copy in progress.
+	fakeMscSet(MscState::Serving, 0);
+	tap(BACK_X, BACK_Y);                          // to settings
+	tap(BACK_X, BACK_Y);                          // to the tester
+	frames(2);
+	holdToArm();
+	checkTrue("a host holding the card blocks arming", !uiArmed());
+
+	fakeMscSet(MscState::Idle, 0);
 	frames(2);
 }
 
@@ -1864,6 +1937,7 @@ void runUiTests() {
 	}
 
 	testLogScreen();
+	testUsbDriveScreen();
 	testManualLogSurvivesArming();
 	testKissDisplay();
 	testTelemetryExpires();

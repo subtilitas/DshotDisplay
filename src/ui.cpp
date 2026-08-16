@@ -19,7 +19,9 @@
 #include "st7789.h"
 #include "esc_task.h"
 #include "esc_merge.h"
+#include "rpm_filter.h"
 #include "sd_log.h"
+#include "usb_msc.h"
 #include "board_desc.h"
 #include "config.h"
 
@@ -145,24 +147,40 @@ static_assert(14 + 3 * CFG_NAV_W + 2 * CFG_NAV_GAP <= 226,
 #define LOG_ROW0_Y     (UI_HDR_H + 8)   /**< First status row. */
 #define LOG_ROW_H      21
 #define LOG_ROWS        9   /**< Through MOUNT; CARD and MOUNT are diagnostics. */
-#define LOG_TOGGLE_Y  236   /**< START / STOP button. */
+#define LOG_NOTE_Y    228   /**< One line: why a button just refused. */
+#define LOG_TOGGLE_Y  240   /**< START / STOP, or EJECT while a host has the card. */
 #define LOG_TOGGLE_H   44
-#define LOG_RETRY_Y   286   /**< RETRY MOUNT. */
-#define LOG_RETRY_H    30
+#define LOG_BOT_Y     288   /**< RETRY MOUNT and USB DRIVE, side by side. */
+#define LOG_BOT_H      30
 /** @} */
 
 static const UiRect BTN_LOG_TOGGLE = { 14, LOG_TOGGLE_Y, 212, LOG_TOGGLE_H };
-static const UiRect BTN_LOG_RETRY  = { 14, LOG_RETRY_Y, 212, LOG_RETRY_H };
+// The bottom row splits rather than the screen growing: 2 x 104 with a 4 px gap
+// is the 212 px between the margins, the same arithmetic the settings nav row
+// uses. Both halves clear UI_TAP_MIN, which is the point of splitting rather
+// than stacking.
+#define LOG_BTN_W    104
+#define LOG_BTN_GAP    4
+static const UiRect BTN_LOG_RETRY  = { 14, LOG_BOT_Y, LOG_BTN_W, LOG_BOT_H };
+static const UiRect BTN_LOG_USB    = { 14 + LOG_BTN_W + LOG_BTN_GAP, LOG_BOT_Y,
+                                       LOG_BTN_W, LOG_BOT_H };
 
 static_assert(LOG_ROW0_Y >= UI_HDR_H, "logging rows overlap the header");
-static_assert(LOG_ROW0_Y + LOG_ROWS * LOG_ROW_H <= LOG_TOGGLE_Y,
-              "logging rows overlap the START/STOP button");
-static_assert(LOG_TOGGLE_Y + LOG_TOGGLE_H <= LOG_RETRY_Y,
-              "START/STOP button overlaps RETRY");
-static_assert(LOG_RETRY_Y + LOG_RETRY_H <= GFX_H,
-              "RETRY MOUNT runs off the panel");
-static_assert(LOG_TOGGLE_H >= UI_TAP_MIN && LOG_RETRY_H >= UI_TAP_MIN,
+static_assert(LOG_ROW0_Y + LOG_ROWS * LOG_ROW_H <= LOG_NOTE_Y,
+              "logging rows overlap the note line");
+static_assert(LOG_NOTE_Y + 7 <= LOG_TOGGLE_Y,
+              "the note line overlaps the START/STOP button");
+static_assert(LOG_TOGGLE_Y + LOG_TOGGLE_H <= LOG_BOT_Y,
+              "START/STOP button overlaps the bottom row");
+static_assert(LOG_BOT_Y + LOG_BOT_H <= GFX_H,
+              "the bottom row runs off the panel");
+static_assert(LOG_TOGGLE_H >= UI_TAP_MIN && LOG_BOT_H >= UI_TAP_MIN,
               "a logging button is smaller than a fingertip");
+// Against the constants rather than the structs: a UiRect is const, not
+// constexpr, so its members are not usable in a constant expression. The nav
+// row on the settings screen is asserted the same way, for the same reason.
+static_assert(14 + 2 * LOG_BTN_W + LOG_BTN_GAP <= 226,
+              "RETRY and USB DRIVE do not fit between the margins");
 
 // Caught by a screenshot rather than by reading the code: the caption used to
 // sit at y=240, inside the band the command row occupies, and was drawn
@@ -288,6 +306,18 @@ static void backlightDip() { s_blDipUntil = millis() + BL_DIP_MS; }
 
 static TouchState s_touch;
 static EscTelemetry s_tel;
+
+/**
+ * @brief Smoothing for the two speed readouts. @see rpm_filter.h
+ *
+ * One filter, on eRPM, with RPM derived from its output rather than filtered
+ * separately. Two filters would drift apart under acceleration and put a pole
+ * count's worth of disagreement between two numbers sitting one above the
+ * other, which is a thing people notice and reasonably report as a bug.
+ */
+static RpmFilter s_erpmFilter;
+/** @brief Filtered eRPM, stepped once per uiTick() and read by drawRpm(). */
+static uint32_t  s_erpmShown = 0;
 static float s_batteryV = 0.0f;
 
 /**
@@ -309,6 +339,8 @@ static struct {
 	int  cmdFlash, edtActive, dirty, btnPress, idleLeft, padLive;
 	int  logState, logFile, logDrops;
 	uint32_t logBytes, logFrames, logPeak, logWorstMs;
+	int  mscState, mscNote;
+	uint32_t mscBlocks;
 } s_shown;
 
 /** @brief Force every region to repaint on the next uiTick(). */
@@ -483,8 +515,11 @@ static void drawStatusBar() {
 /** @brief Big seven-segment RPM readout, eRPM line and the pad affordance. */
 static void drawRpm() {
 	bool alive = telemetryAlive();
-	uint32_t rpm = alive ? s_tel.rpm : 0;
-	uint32_t erpm = alive ? s_tel.erpm : 0;
+	// Both from the one filtered figure, so the big number and the eRPM line
+	// under it can never disagree. The pole conversion is the same one core1
+	// does; doing it here rather than reading s_tel.rpm is what keeps them tied.
+	uint32_t erpm = alive ? s_erpmShown : 0;
+	uint32_t rpm  = (alive && s_poles >= 2) ? erpm / (s_poles / 2) : 0;
 	if (rpm > 99999) rpm = 99999;
 
 	if (s_shown.rpm == rpm && s_shown.erpm == erpm &&
@@ -787,6 +822,60 @@ static void drawLogRow(int row, const char *label, const char *value,
 }
 
 /**
+ * @brief What the last USB DRIVE press was refused for, if it was.
+ *
+ * Latched rather than recomputed, because the reason stops being true the
+ * moment it is acted on -- disarm and the "DISARM FIRST" that told you to would
+ * vanish before you had read it.
+ */
+static MscRefusal s_mscNote = MscRefusal::None;
+static uint32_t   s_mscNoteUntilMs = 0;
+
+/** @brief True while a refusal is still worth showing. */
+static bool mscNoteActive() {
+	return s_mscNote != MscRefusal::None &&
+	       (int32_t)(millis() - s_mscNoteUntilMs) < 0;
+}
+
+/**
+ * @brief The body of the logging screen while a host owns the card.
+ *
+ * Replaces the counters rather than sitting beside them, because none of them
+ * mean anything now: the logger has let go of the card and its numbers are
+ * frozen at whatever they were. A screen showing live-looking counters that
+ * cannot move is the same lie the telemetry tiles refuse to tell.
+ */
+static void drawUsbPanel(MscState st) {
+	gfxRect(0, LOG_ROW0_Y, GFX_W, LOG_NOTE_Y - LOG_ROW0_Y, C_BG);
+
+	bool serving = (st == MscState::Serving);
+	gfxTextCenter(LOG_ROW0_Y + 24, mscStateText(st), serving ? C_LIME : C_AMBER, 3);
+
+	if (serving) {
+		gfxTextCenter(LOG_ROW0_Y + 62, "THE CARD IS ON YOUR COMPUTER", C_TEXT, 1);
+		gfxTextCenter(LOG_ROW0_Y + 78, "READ-ONLY - NOTHING CAN BE WRITTEN", C_DIM, 1);
+
+		// Progress, because full speed USB moves about a megabyte a second and
+		// a big card takes minutes. Without a number that moves, a long copy
+		// and a hung one look identical.
+		char buf[32];
+		uint32_t kb = mscBlocksRead() / 2u;
+		if (kb >= 1024) snprintf(buf, sizeof(buf), "%lu.%lu MB READ",
+		                         (unsigned long)(kb / 1024), (unsigned long)((kb % 1024) * 10 / 1024));
+		else            snprintf(buf, sizeof(buf), "%lu kB READ", (unsigned long)kb);
+		gfxTextCenter(LOG_ROW0_Y + 104, buf, C_CYAN, 2);
+
+		gfxTextCenter(LOG_ROW0_Y + 138, "EJECT ON THE COMPUTER FIRST,", C_GRID, 1);
+		gfxTextCenter(LOG_ROW0_Y + 152, "OR PRESS EJECT BELOW", C_GRID, 1);
+	} else {
+		// Handover and Reclaim are both brief. Saying which one it is beats a
+		// spinner: they fail differently, and a screen stuck on one of them is
+		// worth being able to name in a bug report.
+		gfxTextCenter(LOG_ROW0_Y + 70, "ONE MOMENT", C_DIM, 1);
+	}
+}
+
+/**
  * @brief Logging status screen: card state, counters and manual start/stop.
  *
  * The counters are not decoration. `SD_LOG_BUFFER_BYTES` is a guess until it has
@@ -799,13 +888,25 @@ static void drawLogScreen() {
 	SdLogStatus st;
 	sdLogStatus(&st);
 
+	MscState msc = mscGetState();
+	int note = mscNoteActive() ? (int)s_mscNote + 1 : 0;
+	// Blocks read is in the key so the progress figure actually advances, and
+	// only while serving -- otherwise a stale counter would repaint the whole
+	// screen forever at whatever the last read left it on.
+	uint32_t blocks = (msc == MscState::Serving) ? mscBlocksRead() : 0;
+
 	if (s_shown.config == 2 &&
 	    s_shown.logState == (int)st.state && s_shown.logFile == st.fileNumber &&
 	    s_shown.logBytes == st.bytesWritten && s_shown.logFrames == st.framesLogged &&
 	    s_shown.logDrops == (int)st.dropEvents && s_shown.logPeak == st.peakBuffer &&
-	    s_shown.logWorstMs == st.worstFlushMs)
+	    s_shown.logWorstMs == st.worstFlushMs &&
+	    s_shown.mscState == (int)msc && s_shown.mscNote == note &&
+	    s_shown.mscBlocks == blocks)
 		return;
 
+	s_shown.mscState   = (int)msc;
+	s_shown.mscNote    = note;
+	s_shown.mscBlocks  = blocks;
 	s_shown.config     = 2;
 	s_shown.logState   = (int)st.state;
 	s_shown.logFile    = st.fileNumber;
@@ -817,6 +918,18 @@ static void drawLogScreen() {
 
 	gfxFill(C_BG);
 	uiHeader("SD LOG", &s_touch);
+
+	if (msc != MscState::Idle) {
+		drawUsbPanel(msc);
+		// One button, and it is the way out. START, STOP and RETRY MOUNT all
+		// need the card, and the card is not ours; drawing them disabled would
+		// be four controls saying no where one control saying "give it back"
+		// is the only thing anybody wants.
+		uiButton(BTN_LOG_TOGGLE, "EJECT", C_AMBER, C_PAPER, 2,
+		         pressing(BTN_LOG_TOGGLE, s_touch));
+		gfxRect(0, LOG_BOT_Y, GFX_W, LOG_BOT_H, C_BG);
+		return;
+	}
 
 	char buf[32];
 	const char *stateTxt;
@@ -900,13 +1013,40 @@ static void drawLogScreen() {
 	// The card is only mounted once, at boot, so one inserted afterwards needs
 	// this. Without it, "insert card, nothing happens" is indistinguishable
 	// from a card the firmware cannot read.
-	uiButton(BTN_LOG_RETRY, "RETRY MOUNT", C_PANEL, C_CYAN, 1,
+	uiButton(BTN_LOG_RETRY, "RETRY", C_PANEL, C_CYAN, 1,
 	        pressing(BTN_LOG_RETRY, s_touch));
+
+	// Hands the card to a computer over the same USB cable that powers the
+	// board. Cyan like the other navigation-ish controls; it is not
+	// destructive, and it is refused rather than guarded by a hold.
+	uiButton(BTN_LOG_USB, "USB DRIVE", C_PANEL, usable ? C_CYAN : C_GRID, 1,
+	        pressing(BTN_LOG_USB, s_touch));
+
+	// The note line says why the last press was refused. Blank the row even
+	// when there is nothing to say, or a stale reason outlives its cause.
+	gfxRect(0, LOG_NOTE_Y, GFX_W, 8, C_BG);
+	if (mscNoteActive())
+		gfxTextCenter(LOG_NOTE_Y, mscRefusalText(s_mscNote), C_AMBER, 1);
 }
 
 /** @brief Touch handling for the logging screen. All three fire on release. */
 static void handleLogTouch() {
 	if (s_touch.down) s_shown.config = -1;   // keep the pressed look live
+
+	// While a host owns the card, the only control that does anything is the
+	// one that takes it back. BACK still works -- leaving the screen does not
+	// end the handover, and should not: the copy is still running.
+	if (mscGetState() != MscState::Idle) {
+		if (tapped(BTN_LOG_TOGGLE, s_touch)) {
+			mscRelease();
+			s_shown.config = -1;
+		} else if (uiBackTapped(&s_touch)) {
+			s_logScreen = false;
+			invalidateAll();
+			gfxFill(C_BG);
+		}
+		return;
+	}
 
 	if (tapped(BTN_LOG_TOGGLE, s_touch)) {
 		if (sdLogActive()) sdLogStop();
@@ -914,6 +1054,13 @@ static void handleLogTouch() {
 		s_shown.config = -1;
 	} else if (tapped(BTN_LOG_RETRY, s_touch)) {
 		sdLogRemount();
+		s_shown.config = -1;
+	} else if (tapped(BTN_LOG_USB, s_touch)) {
+		MscRefusal r = mscRequest();
+		if (r != MscRefusal::None) {
+			s_mscNote = r;
+			s_mscNoteUntilMs = millis() + MSC_NOTE_MS;
+		}
 		s_shown.config = -1;
 	} else if (uiBackTapped(&s_touch)) {
 		s_logScreen = false;
@@ -1063,7 +1210,16 @@ static void handleMainTouch() {
 	if (!s_armed) s_throttle = 0;
 
 	// --- arm button: press and hold ---
-	if (pressing(BTN_ARM, s_touch)) {
+	//
+	// Refused outright while a host owns the card. BACK from the logging screen
+	// leaves the handover running -- deliberately, because a copy in progress
+	// should not be cancelled by navigating -- so the tester screen is reachable
+	// with the card gone, and arming there would spin a motor whose telemetry
+	// cannot be recorded and whose interlocks assume a logger that is not
+	// listening. @see usb_msc.h
+	if (mscHoldsCard(mscGetState())) {
+		s_armPressing = false;
+	} else if (pressing(BTN_ARM, s_touch)) {
 		if (s_armed) {
 			// Disarm is instant, on press. The one control that deliberately
 			// does not wait for release: everything else here can afford the
@@ -1157,6 +1313,8 @@ void uiInit() {
 	s_padEngaged = false;
 	s_cmdFlash = CmdFlash::None;
 	s_blDipUntil = 0;
+	rpmFilterReset(&s_erpmFilter);
+	s_erpmShown = 0;
 	s_polesRepeat = Repeat{};
 	s_maxtRepeat = Repeat{};
 
@@ -1192,6 +1350,12 @@ void uiTick() {
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 
 	if (s_touch.down) s_lastTouchMs = millis();
+
+	// Once per frame, before anything draws. Inside drawRpm() it would only run
+	// when that region repaints -- and that region repaints *because* the value
+	// changed, so the filter would only ever be stepped by its own output.
+	s_erpmShown = rpmFilterStep(&s_erpmFilter, s_tel.erpm, telemetryAlive(),
+	                            RPM_FILTER_SHIFT);
 
 	// Backlight, every frame: the level is a function of the theme, the stored
 	// preference and whether a dip is running, so recomputing it is simpler than

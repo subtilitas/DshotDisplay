@@ -36,7 +36,8 @@ BOARDS := BOARD_RP2350_TOUCH_LCD_2 BOARD_RP2350_TOUCH_LCD_2_8 BOARD_UNIFIED
 DEFINES := -DBOARD=$(BOARD) $(EXTRA_DEFINES)
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
-        test_blackbox.cpp test_log_ring.cpp test_settings.cpp fakes.cpp \
+        test_blackbox.cpp test_log_ring.cpp test_settings.cpp \
+        test_usb_msc.cpp fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
         ../src/ui_input.cpp ../src/ui_widgets.cpp ../src/board_desc.cpp \
         ../src/board_desc_lcd2.cpp ../src/board_desc_lcd2_8.cpp \
@@ -54,6 +55,7 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
 # touch.cpp is here rather than in SRCS: it dispatches to a real driver, and the
 # host suite fakes touchInit/touchPoll outright so that tests can drive presses.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
+               ../src/usb_dev.cpp ../src/usb_msc.cpp ../src/usb_descriptors.c \
                ../src/touch.cpp ../src/board_probe.cpp \
                ../src/cst328.cpp ../src/am32_bl.cpp ../src/sd_log.cpp \
                ../src/pio_uart_rx.cpp \
@@ -85,10 +87,16 @@ both:
 
 # Every device source, on every board, plus both settings of the two feature
 # switches so the disabled paths cannot rot unnoticed.
+# -Werror, matching the firmware build. Without it this target was strictly
+# weaker than CI: usb_dev.cpp typechecked here and failed the real build twice
+# over -- once on a struct the stub defined too loosely, and once on a partial
+# designated initialiser that only -Wextra -Werror objects to. A local check
+# that is easier to pass than the one that matters is a check that sends you to
+# CI to find out.
 syntax:
 	@for b in $(BOARDS); do \
 		for f in $(DEVICE_SRCS); do \
-			$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DBOARD=$$b \
+			$(CXX) $(CXXFLAGS) $(WARN) -Werror $(INCLUDES) -DBOARD=$$b \
 				-fsyntax-only $$f || exit 1; \
 		done; \
 	done

@@ -53,7 +53,94 @@ static void expect(const uint8_t *ee, const char *name, const char *want) {
 	checkStr(name, got, want);
 }
 
+/**
+ * @brief Timing advance, which AM32 writes in two different encodings.
+ *
+ * Reported from the bench as "the initial value of timing is read without
+ * conversion into the display; when you change it it gets corrected". Both
+ * halves of that sentence were symptoms of the same thing: the field table
+ * described the pre-1.90 encoding only, so a modern ESC's byte was scaled as
+ * though it were an old one, and the first `-` or `+` press clamped it into the
+ * old range -- which made the number plausible again by destroying it.
+ *
+ * The encodings, from AM32's own start-up code:
+ *   0..3   pre-1.90, 7.5 degree steps
+ *   10..42 1.90 and later, (raw - 10) steps of 0.9375 degrees
+ */
+static void testAdvanceEncodings() {
+	section("AM32: timing advance, both encodings");
+
+	uint8_t ee[AM32_SETTINGS_SIZE];
+	memcpy(ee, REF_PY, sizeof(ee));
+
+	// --- modern encoding, which is what the bug report was about ---
+	ee[AM32_OFF_ADVANCE] = 26;              // AM32's own default
+	expect(ee, "ADVANCE", "15.0DEG");
+	ee[AM32_OFF_ADVANCE] = 10;
+	expect(ee, "ADVANCE", "0.0DEG");
+	ee[AM32_OFF_ADVANCE] = 42;
+	expect(ee, "ADVANCE", "30.0DEG");
+
+	// The number this used to show for a modern default: 26 scaled as if it
+	// were an old-format byte. Nothing on the ESC was ever set to 195 degrees.
+	checkTrue("a modern byte is no longer read as the old encoding",
+	          am32AdvanceDeciDeg(26) != 26 * 75);
+
+	// --- old encoding, which must keep working ---
+	ee[AM32_OFF_ADVANCE] = 0;  expect(ee, "ADVANCE", "0.0DEG");
+	ee[AM32_OFF_ADVANCE] = 2;  expect(ee, "ADVANCE", "15.0DEG");
+	ee[AM32_OFF_ADVANCE] = 3;  expect(ee, "ADVANCE", "22.5DEG");
+
+	// --- neither: say so rather than invent an angle ---
+	// AM32 substitutes its own default for these, so the ESC is not running at
+	// whatever we would otherwise have printed.
+	checkInt("a byte in neither encoding has no angle",
+	         am32AdvanceDeciDeg(7), -1);
+	checkInt("nor does one above the modern maximum",
+	         am32AdvanceDeciDeg(200), -1);
+	ee[AM32_OFF_ADVANCE] = 7;
+	expect(ee, "ADVANCE", "? (7)");
+
+	// --- editing ---
+	const Am32Field *f = field("ADVANCE");
+	checkTrue("the field exists", f != nullptr);
+
+	// Editing writes the modern encoding, whatever was read.
+	ee[AM32_OFF_ADVANCE] = 26;
+	am32Adjust(f, ee, +1);
+	checkInt("one step up is one 0.9375 degree increment", ee[AM32_OFF_ADVANCE], 27);
+	am32Adjust(f, ee, -1);
+	checkInt("and one step back returns", ee[AM32_OFF_ADVANCE], 26);
+
+	// This is the half that silently threw the setting away. An ESC holding the
+	// old value 2 -- 15 degrees -- used to jump to the modern minimum on the
+	// first press, because 2 is below it. It must convert, keeping the angle.
+	ee[AM32_OFF_ADVANCE] = 2;
+	am32Adjust(f, ee, +1);
+	checkInt("an old-format value converts rather than clamping to zero",
+	         am32AdvanceDeciDeg(ee[AM32_OFF_ADVANCE]), 150 + 9);
+	ee[AM32_OFF_ADVANCE] = 2;
+	am32Adjust(f, ee, -1);
+	checkTrue("and a step down from it stays near 15 degrees",
+	          am32AdvanceDeciDeg(ee[AM32_OFF_ADVANCE]) > 130);
+
+	// The rails hold.
+	ee[AM32_OFF_ADVANCE] = 10;
+	am32Adjust(f, ee, -1);
+	checkInt("it does not step below zero degrees", ee[AM32_OFF_ADVANCE], 10);
+	ee[AM32_OFF_ADVANCE] = 42;
+	am32Adjust(f, ee, +1);
+	checkInt("nor above thirty", ee[AM32_OFF_ADVANCE], 42);
+
+	// A byte in neither encoding becomes AM32's own default rather than 0.
+	ee[AM32_OFF_ADVANCE] = 200;
+	am32Adjust(f, ee, +1);
+	checkTrue("an unreadable byte edits from AM32's default, not from zero",
+	          ee[AM32_OFF_ADVANCE] >= 25 && ee[AM32_OFF_ADVANCE] <= 28);
+}
+
 void runAm32Tests() {
+	testAdvanceEncodings();
 	section("AM32 init string (must be byte-exact)");
 	{
 		// Twelve zeros, 0x0D, "BLHeli", then the fixed signature F4 7D.

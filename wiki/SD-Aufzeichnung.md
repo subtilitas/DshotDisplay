@@ -80,6 +80,52 @@ Karte nicht von einer zu unterscheiden, die die Firmware nicht lesen kann.
 
 ---
 
+## Aufzeichnungen ohne Kartenleser holen
+
+<img src="img/log-usb-serving.png" width="240" alt="Die Karte als USB-Laufwerk">
+
+`USB DRIVE` auf dem SD-LOG-Bildschirm übergibt die Karte an das, woran das
+USB-Kabel steckt. Sie erscheint als ganz normales Wechsellaufwerk: `.BFL`-Dateien
+herüberkopieren, am Computer auswerfen, und der Tester nimmt die Karte zurück.
+
+Die Platine ist ohnehin immer ein USB-Gerät — daher kommt der Strom, und daher
+kommt der serielle Anschluss — es kommt also ein Kartenleser auf dasselbe Kabel,
+statt dass etwas Neues nötig wäre.
+
+**Es wird nur gelesen.** Der Computer kann Dateien herunterkopieren und sonst
+nichts. Das ist Absicht: so kann kein Dateisystemtreiber eine Karte voller
+Messungen beschädigen, und die Nummerierung der Aufzeichnungen kann sich nicht
+unter der Firmware verändern. Meldet dein Computer, der Datenträger sei
+schreibgeschützt, dann funktioniert genau das.
+
+**Die Karte wird übergeben, nicht geteilt.** Ein FAT-Dateisystem kann zwischen
+zwei Schreibern nicht vermitteln, und Firmware und Computer sehen die Puffer des
+jeweils anderen nicht. Deshalb leert, schließt und hängt der Logger aus, bevor
+das Laufwerk erscheint, und rührt die Karte bis zum Auswerfen nicht an. Solange
+das gilt, zeigt der SD-LOG-Bildschirm die Übergabe statt seiner Zähler — die
+stünden still, und ein stillstehender Zähler, der lebendig aussieht, ist genau
+das, was diese Firmware nie zeigen will.
+
+**Die Schaltfläche lehnt ab und nennt den Grund:**
+
+<img src="img/log-usb-refused.png" width="240" alt="USB DRIVE während der Aufzeichnung abgelehnt">
+
+| Meldung | Was zu tun ist |
+|---|---|
+| `DISARM FIRST` | Ein Motor dreht. Die Übergabe hält den Logger sekundenlang an |
+| `STOP RECORDING FIRST` | Deinen Lauf zu beenden ist deine Entscheidung, nicht die der Firmware |
+| `NO CARD TO SHARE` | Es ist nichts eingebunden |
+
+**Scharfschalten ist gesperrt, solange ein Computer die Karte hat.** Du kannst
+den Bildschirm verlassen — `BACK` bricht einen laufenden Kopiervorgang nicht ab
+— der Tester-Bildschirm ist also ohne Karte erreichbar, und er schaltet erst
+wieder scharf, wenn du ausgeworfen hast.
+
+Am Computer auswerfen oder `EJECT` auf dem Bildschirm drücken. Beides tut
+dasselbe.
+
+---
+
 ## Die Aufzeichnungen öffnen
 
 <a href="https://subtilitas.github.io/logwiju/"><img src="https://img.shields.io/badge/open%20your%20logs%20in-logwiju-07b0c8?style=for-the-badge" alt="Aufzeichnungen in logwiju öffnen"></a>
