@@ -342,6 +342,22 @@
  */
 #define MSC_NOTE_MS          4000
 
+/**
+ * @brief How hard the RPM readout is smoothed, as a power of two.
+ *
+ * Each UI frame moves the displayed value `1/2^n` of the way to the reading.
+ * At @ref UI_PERIOD_MS that makes 3 settle in roughly a fifth of a second:
+ * slower than the quantisation flicker it exists to remove, faster than any
+ * throttle change you would make by hand.
+ *
+ * Raise it if the number still dances, lower it if the display feels like it is
+ * lagging the motor. 0 disables the filter entirely — every sample is shown as
+ * it arrives, which is what every version before this one did.
+ *
+ * The **display only**. Nothing in the blackbox log is filtered. @see rpm_filter.h
+ */
+#define RPM_FILTER_SHIFT        3
+
 /** @} */
 
 /**

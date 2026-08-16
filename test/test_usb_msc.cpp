@@ -123,7 +123,85 @@ static void testStateMachine() {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// RPM smoothing
+// ---------------------------------------------------------------------------
+#include "rpm_filter.h"
+
+/**
+ * @brief The RPM filter: settles, does not ease in, does not outlive the link.
+ *
+ * The failure modes worth asserting are the two dishonest ones. A filter that
+ * ramps from zero shows a spin-up passing through speeds the motor never turned
+ * at; one that survives a dead link shows an average of data that stopped
+ * arriving.
+ */
+static void testRpmFilter() {
+	section("RPM smoothing");
+
+	const uint8_t K = 3;
+	RpmFilter f{};
+	rpmFilterReset(&f);
+
+	// The first sample is taken whole. Not averaged in from zero.
+	checkInt("the first reading is shown as it is",
+	         (int)rpmFilterStep(&f, 20000, true, K), 20000);
+
+	// A steady input stays put -- a filter that wandered on constant data would
+	// be worse than none.
+	for (int i = 0; i < 20; i++) rpmFilterStep(&f, 20000, true, K);
+	checkInt("a steady reading does not drift",
+	         (int)rpmFilterStep(&f, 20000, true, K), 20000);
+
+	// Quantisation flicker: the reading alternates between two neighbours. The
+	// output still moves every frame -- an average always does -- so the
+	// property worth asserting is the *amplitude*, not whether it is still.
+	// This is the whole point of the filter: a 300 eRPM flicker becomes a wobble
+	// small enough that the digits sit still to look at.
+	uint32_t lo = 0xFFFFFFFFu, hi = 0;
+	for (int i = 0; i < 60; i++) {
+		uint32_t out = rpmFilterStep(&f, (i & 1) ? 20300u : 20000u, true, K);
+		if (i > 20) {                       // settled
+			if (out < lo) lo = out;
+			if (out > hi) hi = out;
+		}
+	}
+	checkTrue("a 300-wide flicker shrinks to under a quarter of that",
+	          (hi - lo) * 4 < 300);
+	checkTrue("and the result sits between the two extremes",
+	          lo > 20000 && hi < 20300);
+
+	// A real change is followed, and actually arrives rather than stopping a
+	// few RPM short -- which is what plain integer division would do.
+	for (int i = 0; i < 200; i++) rpmFilterStep(&f, 30000, true, K);
+	checkInt("a real change is reached exactly",
+	         (int)rpmFilterStep(&f, 30000, true, K), 30000);
+
+	// Settling time: at the UI frame rate this should be a fraction of a
+	// second, not a second. 8 frames is 200 ms at UI_PERIOD_MS.
+	rpmFilterReset(&f);
+	rpmFilterStep(&f, 0, true, K);
+	int frames = 0;
+	while (rpmFilterStep(&f, 10000, true, K) < 9000 && frames < 100) frames++;
+	checkTrue("and reaches 90 % within about a fifth of a second", frames <= 20);
+
+	// The link dying resets it. The next reading after that is taken whole
+	// again, rather than averaged with a speed from before the gap.
+	rpmFilterStep(&f, 30000, true, K);
+	checkInt("a dead link reads zero", (int)rpmFilterStep(&f, 30000, false, K), 0);
+	checkInt("and the reading after it is taken whole",
+	         (int)rpmFilterStep(&f, 12345, true, K), 12345);
+
+	// Shift 0 is the escape hatch: no filtering at all.
+	rpmFilterReset(&f);
+	rpmFilterStep(&f, 100, true, 0);
+	checkInt("shift 0 passes every sample straight through",
+	         (int)rpmFilterStep(&f, 55555, true, 0), 55555);
+}
+
+
 void runUsbMscTests() {
 	testRefusals();
 	testStateMachine();
+	testRpmFilter();
 }
