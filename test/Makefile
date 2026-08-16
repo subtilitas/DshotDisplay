@@ -87,10 +87,16 @@ both:
 
 # Every device source, on every board, plus both settings of the two feature
 # switches so the disabled paths cannot rot unnoticed.
+# -Werror, matching the firmware build. Without it this target was strictly
+# weaker than CI: usb_dev.cpp typechecked here and failed the real build twice
+# over -- once on a struct the stub defined too loosely, and once on a partial
+# designated initialiser that only -Wextra -Werror objects to. A local check
+# that is easier to pass than the one that matters is a check that sends you to
+# CI to find out.
 syntax:
 	@for b in $(BOARDS); do \
 		for f in $(DEVICE_SRCS); do \
-			$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) -DBOARD=$$b \
+			$(CXX) $(CXXFLAGS) $(WARN) -Werror $(INCLUDES) -DBOARD=$$b \
 				-fsyntax-only $$f || exit 1; \
 		done; \
 	done

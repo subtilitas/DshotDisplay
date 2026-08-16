@@ -11,6 +11,11 @@
 #include "tusb.h"
 
 #include <pico/stdio.h>
+// The struct itself, not just the typedef. pico/stdio.h forward-declares
+// stdio_driver_t and declares stdio_set_driver_enabled(); the definition needed
+// to *make* one lives here. Omitting it compiles against a stub that was less
+// strict than the SDK and fails on the real thing with "incomplete type".
+#include <pico/stdio/driver.h>
 #include <pico/unique_id.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,11 +72,19 @@ static int cdcInChars(char *buf, int len) {
  * `crlf_enabled` matches what pico_stdio_usb defaulted to, so terminals behave
  * exactly as they did before this file existed.
  */
+// Every member named, including the ones this does not use. -Wextra -Werror
+// rejects a partial designated initialiser, and the members that get skipped
+// are exactly the ones a reader would not think to look for.
 static stdio_driver_t s_cdcDriver = {
 	.out_chars = cdcOutChars,
 	.out_flush = nullptr,
 	.in_chars  = cdcInChars,
+	// Only used by stdin-driven code, which this has none of.
+	.set_chars_available_callback = nullptr,
+	// The SDK links drivers into a list through this; it fills it in itself.
+	.next = nullptr,
 #if PICO_STDIO_ENABLE_CRLF_SUPPORT
+	.last_ended_with_cr = false,
 	.crlf_enabled = PICO_STDIO_DEFAULT_CRLF,
 #endif
 };
