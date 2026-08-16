@@ -19,6 +19,7 @@
 #include "st7789.h"
 #include "esc_task.h"
 #include "esc_merge.h"
+#include "rpm_filter.h"
 #include "sd_log.h"
 #include "usb_msc.h"
 #include "board_desc.h"
@@ -305,6 +306,18 @@ static void backlightDip() { s_blDipUntil = millis() + BL_DIP_MS; }
 
 static TouchState s_touch;
 static EscTelemetry s_tel;
+
+/**
+ * @brief Smoothing for the two speed readouts. @see rpm_filter.h
+ *
+ * One filter, on eRPM, with RPM derived from its output rather than filtered
+ * separately. Two filters would drift apart under acceleration and put a pole
+ * count's worth of disagreement between two numbers sitting one above the
+ * other, which is a thing people notice and reasonably report as a bug.
+ */
+static RpmFilter s_erpmFilter;
+/** @brief Filtered eRPM, stepped once per uiTick() and read by drawRpm(). */
+static uint32_t  s_erpmShown = 0;
 static float s_batteryV = 0.0f;
 
 /**
@@ -502,8 +515,11 @@ static void drawStatusBar() {
 /** @brief Big seven-segment RPM readout, eRPM line and the pad affordance. */
 static void drawRpm() {
 	bool alive = telemetryAlive();
-	uint32_t rpm = alive ? s_tel.rpm : 0;
-	uint32_t erpm = alive ? s_tel.erpm : 0;
+	// Both from the one filtered figure, so the big number and the eRPM line
+	// under it can never disagree. The pole conversion is the same one core1
+	// does; doing it here rather than reading s_tel.rpm is what keeps them tied.
+	uint32_t erpm = alive ? s_erpmShown : 0;
+	uint32_t rpm  = (alive && s_poles >= 2) ? erpm / (s_poles / 2) : 0;
 	if (rpm > 99999) rpm = 99999;
 
 	if (s_shown.rpm == rpm && s_shown.erpm == erpm &&
@@ -1297,6 +1313,8 @@ void uiInit() {
 	s_padEngaged = false;
 	s_cmdFlash = CmdFlash::None;
 	s_blDipUntil = 0;
+	rpmFilterReset(&s_erpmFilter);
+	s_erpmShown = 0;
 	s_polesRepeat = Repeat{};
 	s_maxtRepeat = Repeat{};
 
@@ -1332,6 +1350,12 @@ void uiTick() {
 	s_batteryV = s_batteryV == 0.0f ? v : (s_batteryV * 0.9f + v * 0.1f);
 
 	if (s_touch.down) s_lastTouchMs = millis();
+
+	// Once per frame, before anything draws. Inside drawRpm() it would only run
+	// when that region repaints -- and that region repaints *because* the value
+	// changed, so the filter would only ever be stepped by its own output.
+	s_erpmShown = rpmFilterStep(&s_erpmFilter, s_tel.erpm, telemetryAlive(),
+	                            RPM_FILTER_SHIFT);
 
 	// Backlight, every frame: the level is a function of the theme, the stored
 	// preference and whether a dip is running, so recomputing it is simpler than
