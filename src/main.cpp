@@ -76,6 +76,8 @@
 #include "esc_task.h"
 #include "ui.h"
 #include "sd_log.h"
+#include "usb_dev.h"
+#include "usb_msc.h"
 #include "settings.h"
 
 /** @brief UI frame interval in milliseconds (~40 fps). */
@@ -123,9 +125,12 @@ void setup() {
 	gpio_set_dir(BAT_EN_EARLY_PIN, GPIO_OUT);
 	gpio_put(BAT_EN_EARLY_PIN, 1);
 
-#if SERIAL_TELEMETRY
-	stdio_init_all();
-#endif
+	// USB, ours rather than the SDK's. stdio_init_all() would have brought up
+	// pico_stdio_usb, which owns the USB descriptors and cannot share the device
+	// with a second interface -- and the card reader is a second interface.
+	// usbDevInit() puts the serial port back on our own descriptors.
+	// @see usb_dev.h
+	usbDevInit();
 
 	// Which board this is, before anything reads a value that depends on it.
 	//
@@ -193,6 +198,9 @@ void setup() {
 	// A missing card is the normal bench case, not a fault: logging is
 	// simply unavailable and the UI says so.
 	sdLogBegin();
+	// After the mount, so the reader starts from a known card. It reports no
+	// medium until asked, so nothing about this makes a drive appear yet.
+	mscInit();
 #endif
 
 	s_nextUiMs = millis();
@@ -202,6 +210,11 @@ void setup() {
  * @brief Core0 loop: UI, SD logging, and the optional serial dump.
  */
 void loop() {
+	// First, and every pass. This is what moves USB data, so a host reading the
+	// card depends on it being called often; TinyUSB does bounded work and
+	// returns, so calling it from the top of the loop costs nothing when idle.
+	usbDevTask();
+
 	uint32_t now = millis();
 	if ((int32_t)(now - s_nextUiMs) >= 0) {
 		s_nextUiMs = now + UI_PERIOD_MS;
@@ -209,8 +222,14 @@ void loop() {
 	}
 
 #if SD_LOG_ENABLE
+	// Drive the handover, which does the unmounting and remounting one step per
+	// call rather than inside the touch handler that asked for it.
+	mscTick();
+
 	// Encoding is cheap and only fills a RAM ring, so it runs every pass to
 	// keep the log cadence even. uiTick() reports arm changes itself.
+	// Both of these are inert while a host owns the card: sd_log refuses every
+	// entry point once released. @see sdLogRelease()
 	sdLogTick(micros(), uiThrottle());
 
 	// Writing is the expensive half -- a card can pause tens of milliseconds

@@ -91,6 +91,36 @@ void sdLogStop();
  */
 bool sdLogRemount();
 
+/**
+ * @brief Give the card up so something else can own it exclusively.
+ *
+ * Flushes, closes and unmounts. Every other entry point here is inert
+ * afterwards, and only sdLogReacquire() undoes it — including sdLogRemount(),
+ * whose whole job is the helpful remount that would corrupt a card a USB host
+ * is reading.
+ *
+ * The unmount is the part that matters. FatFs caches, so without it the host
+ * reads a filesystem missing whatever is still in this side's buffers.
+ *
+ * @return False if a log is open. Stopping a recording is the user's decision,
+ *         not this function's; @see mscRefusal().
+ */
+bool sdLogRelease();
+
+/**
+ * @brief Take the card back after sdLogRelease().
+ *
+ * A full re-mount rather than a re-attach: the card may have been pulled out
+ * while the host had it, and re-reading its type and size is how the screen
+ * tells "it is back" apart from "it is gone".
+ *
+ * @return True if a card mounted. Safe to call when not released.
+ */
+bool sdLogReacquire();
+
+/** @brief True while something else owns the card. @return Release state. */
+bool sdLogReleased();
+
 /** @brief True while a file is open. @return Logging state. */
 bool sdLogActive();
 

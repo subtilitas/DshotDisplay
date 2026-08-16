@@ -27,6 +27,8 @@
 #include "am32_bl.h"
 #include "am32_eeprom.h"
 #include "sd_log.h"
+#include "usb_msc.h"
+#include "ui.h"
 #include "fakes.h"
 
 #include <stdio.h>
@@ -430,3 +432,38 @@ void sdLogSetArmed(bool armed) {
 	}
 }
 void sdLogStatus(SdLogStatus *out) { *out = g_log; }
+
+// ---------------------------------------------------------------------------
+// USB mass storage
+// ---------------------------------------------------------------------------
+// The pure rules are tested directly in test_usb_msc.cpp against the real
+// header. This fake exists so ui.cpp -- which is the real file, linked into the
+// suite -- can be driven through the screen states without a USB stack.
+
+static MscState g_msc = MscState::Idle;
+static uint32_t g_mscBlocks = 0;
+
+void mscInit() { g_msc = MscState::Idle; g_mscBlocks = 0; }
+MscState mscGetState() { return g_msc; }
+uint32_t mscBlocksRead() { return g_mscBlocks; }
+
+MscRefusal mscRequest() {
+	SdLogStatus st;
+	sdLogStatus(&st);
+	MscRefusal r = mscRefusal(st.state != SdLogState::NoCard, uiArmed(),
+	                          st.state == SdLogState::Logging);
+	if (r != MscRefusal::None) return r;
+	// Straight to Serving. The real one goes through Handover and needs an
+	// mscTick() to get here; the tests that care about that ordering assert it
+	// on mscNext() itself, where there is no card to unmount.
+	g_msc = MscState::Serving;
+	return MscRefusal::None;
+}
+
+void mscRelease() { g_msc = MscState::Idle; }
+void mscTick() {}
+
+void fakeMscSet(MscState s, uint32_t blocksRead) {
+	g_msc = s;
+	g_mscBlocks = blocksRead;
+}

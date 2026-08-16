@@ -18,6 +18,7 @@ void runGfxTests();
 void runBlackboxTests();
 void runLogRingTests();
 void runSettingsTests();
+void runUsbMscTests();
 
 int main() {
 	printf("DshotDisplay host tests\n");
@@ -30,6 +31,7 @@ int main() {
 	runBlackboxTests();
 	runLogRingTests();
 	runSettingsTests();
+	runUsbMscTests();
 
 	printf("\n=======================\n");
 	if (g_failures) printf("%d CHECK(S) FAILED\n", g_failures);

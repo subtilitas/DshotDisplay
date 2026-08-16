@@ -25,6 +25,13 @@ typedef struct sd_spi_if_t {
 
 typedef enum { SD_IF_NONE, SD_IF_SPI, SD_IF_SDIO } sd_if_t;
 
+// Only the success value is needed here; the driver's other codes are bit
+// flags and nothing in this project distinguishes them. Named and valued as
+// upstream does, so a rename upstream fails here rather than on a board.
+typedef enum {
+	SD_BLOCK_DEVICE_ERROR_NONE = 0,
+} block_dev_err_t;
+
 typedef struct sd_card_t sd_card_t;
 
 /** Dynamically-assigned state the driver fills in during a mount attempt. */
@@ -40,6 +47,15 @@ struct sd_card_t {
 	unsigned     card_detect_gpio;
 	unsigned     card_detected_true;
 	sd_card_state_t state;
+	// The block API the USB card reader sits on. Signatures copied from the
+	// pinned library, sector numbers included: they are uint32_t there, not the
+	// uint64_t an LBA is elsewhere, and passing the wrong one is the kind of
+	// mistake that builds on a host and truncates on a big card.
+	// @see usb_msc.cpp
+	block_dev_err_t (*write_blocks)(sd_card_t *sd_card_p, const uint8_t *buffer,
+	                                uint32_t ulSectorNumber, uint32_t blockCnt);
+	block_dev_err_t (*read_blocks)(sd_card_t *sd_card_p, uint8_t *buffer,
+	                               uint32_t ulSectorNumber, uint32_t ulSectorCount);
 	uint32_t (*get_num_sectors)(sd_card_t *sd_card_p);
 };
 
