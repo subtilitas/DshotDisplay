@@ -58,8 +58,11 @@ const Am32Field AM32_FIELDS[] = {
 	F_BOOL  ("MOTOR", "HALL SENSORS",     0x27, 0),
 
 	// ---- Timing and PWM --------------------------------------------------
-	// AM32 stores timing in 7.5 degree steps, 0..4 => 0..30 degrees.
-	F_SCALED("TIMING", "ADVANCE",         0x17, 0, 4, 1, 75, 10, 0, "DEG", 0),
+	// Two encodings, decided by the byte's own value; the table cannot express
+	// that with a single mul/div, so the type carries the rule.
+	// @see am32AdvanceDeciDeg()
+	{"TIMING", "ADVANCE", AM32_OFF_ADVANCE, A32_ADVANCE, 10, 42, 1, 0, 0,
+	 0, 0, 0, "DEG", nullptr, 0},
 	F_BOOL  ("TIMING", "AUTO ADVANCE",    0x2F, 0),
 	// AM32 accepts up to 144 kHz, not the 48 the older configurator UI capped
 	// its slider at. Worth a coarse swipe rather than 136 taps.
@@ -141,6 +144,19 @@ void am32FormatValue(const Am32Field *f, const uint8_t *eeprom, char *out, int o
 			else                       snprintf(out, outLen, "%u", raw);
 			return;
 
+		case A32_ADVANCE: {
+			int16_t d10 = am32AdvanceDeciDeg(raw);
+			if (d10 < 0) {
+				// Neither encoding. Say the byte rather than an angle: AM32
+				// substitutes its own default for this, so the ESC is not
+				// running at whatever we would have printed.
+				snprintf(out, outLen, "? (%u)", raw);
+				return;
+			}
+			snprintf(out, outLen, "%d.%d%s", d10 / 10, d10 % 10, f->unit);
+			return;
+		}
+
 		case A32_SCALED: {
 			// (raw * mul + add) / div. The offset is applied *before* the
 			// divide: the cell cutoff is (raw + 250) / 100 volts, not
@@ -181,6 +197,21 @@ void am32DeviceName(const uint8_t *eeprom, char *out) {
 void am32Adjust(const Am32Field *f, uint8_t *eeprom, int dir) {
 	int32_t v = (int32_t)eeprom[f->offset];
 	int32_t step = f->step ? f->step : 1;
+
+	if (f->type == A32_ADVANCE) {
+		// Convert to the modern encoding before stepping, rather than clamping
+		// into it. Clamping is what the generic path below does, and on this
+		// field it threw the setting away: an ESC holding the old value 2
+		// (15 degrees) jumped to 10 (0 degrees) on the first press, because 2
+		// is below the modern minimum. Converting keeps the angle and changes
+		// only how it is written down.
+		int32_t stepIdx = (int32_t)am32AdvanceStep((uint8_t)v);
+		stepIdx += (dir > 0 ? 1 : -1);
+		if (stepIdx < 0)  stepIdx = 0;
+		if (stepIdx > 32) stepIdx = 32;
+		eeprom[f->offset] = am32AdvanceRaw((uint8_t)stepIdx);
+		return;
+	}
 
 	// A value already outside the field's range would otherwise need several
 	// presses before it re-entered it; snap to the nearest end instead.
