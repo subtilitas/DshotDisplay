@@ -55,6 +55,7 @@ SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
 # touch.cpp is here rather than in SRCS: it dispatches to a real driver, and the
 # host suite fakes touchInit/touchPoll outright so that tests can drive presses.
 DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
+               ../src/usb_dev.cpp ../src/usb_msc.cpp ../src/usb_descriptors.c \
                ../src/touch.cpp ../src/board_probe.cpp \
                ../src/cst328.cpp ../src/am32_bl.cpp ../src/sd_log.cpp \
                ../src/pio_uart_rx.cpp \
