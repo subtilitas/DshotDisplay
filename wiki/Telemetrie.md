@@ -116,10 +116,17 @@ den Verbrauch in mAh.
 |---|---|---|
 | **Telemetrie-RX** | GP5 — Stiftleiste P1, Pin 10 | GP28 — J4 Pin 11 |
 
-Es wird nur empfangen — die Platine treibt diese Leitung nie — und jeder freie
-GPIO genügt. Einschalten unter **CFG → SETUP → KISS TELEM**, den Pin in der
-Zeile darunter setzen. Der Pin-Schrittschalter überspringt den Pin des
-ESC-Signals, sodass beide nicht kollidieren können.
+Es wird nur empfangen — die Platine treibt diese Leitung nie — und **jeder freie
+GPIO genügt**, auf beiden Platinen. Einschalten unter
+**CFG → SETUP → KISS TELEM**, den Pin in der Zeile darunter setzen. Der
+Pin-Schrittschalter überspringt den Pin des ESC-Signals, sodass beide nicht
+kollidieren können.
+
+**Auf der 2,0" ist es standardmäßig an, auf der 2,8" aus.** Das ist eine
+Voreinstellung, keine Einschränkung: die 2,8" führt genau zwei freie Pins
+heraus, und mit eingeschaltetem KISS zu starten würde den übrigen für ein Kabel
+verbrauchen, das die meisten nicht angelötet haben. Ein Tippen schaltet es ein,
+und es sucht sich den freien Pin selbst.
 
 Wird das Kabel während des Betriebs abgezogen, fallen die Marken auf `EDT`
 zurück und die Anzeigen werden gröber. Sie frieren nicht auf dem letzten feinen
