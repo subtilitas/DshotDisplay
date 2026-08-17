@@ -111,10 +111,15 @@ Most ESCs have a telemetry pad that streams a 10-byte frame on request at
 |---|---|---|
 | **Telemetry RX** | GP5 — P1 header, pin 10 | GP28 — J4 pin 11 |
 
-It is receive-only — the board never drives that line — and any free GPIO will
-do. Enable it under **CFG → SETUP → KISS TELEM** and set the pin below it. The
-pin stepper skips past whichever pin the ESC signal is on, so the two cannot
-collide.
+It is receive-only — the board never drives that line — and **any free GPIO will
+do**, on either board. Enable it under **CFG → SETUP → KISS TELEM** and set the
+pin below it. The pin stepper skips past whichever pin the ESC signal is on, so
+the two cannot collide.
+
+**It is on by default on the 2.0" and off on the 2.8".** That is a default, not
+a limitation: the 2.8" brings out exactly two free pins, and starting with KISS
+on would spend the spare one on a wire most people have not soldered. One tap
+turns it on, and it picks the free pin itself.
 
 If the wire is unplugged mid-session, the tags drop back to `EDT` and the
 readouts get coarser. They do not freeze on the last fine value, for the same
