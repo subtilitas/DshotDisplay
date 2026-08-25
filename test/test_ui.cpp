@@ -103,7 +103,7 @@ static void swipe(int x0, int x1, int y, int step) {
 #define CFG_MAXT_Y    156   // BTN_MAXT_*  y 134..177
 // --- the AM32/LOG/SETUP row: three 68 px buttons with 4 px gaps, from x=14 ---
 #define BTN_AM32_Y   282   // all three span y 258..305
-// --- throttle gauge: THR_TRACK_Y 248, height 26 ---
+// --- throttle gauge: THR_TRACK_Y 248, height 34, band ends at 281 ---
 #define THR_Y         260
 // ...and the horizontal extent, which the rail tests need to be explicit about.
 #define THR_TRACK_X_T   8
@@ -1177,6 +1177,40 @@ static void testThrottleRailsAreReachable() {
 }
 
 /**
+ * @brief The taller bar stops exactly where the button row starts.
+ *
+ * The gauge grew from 26 px to 34 by taking the padding above the buttons, and
+ * the grab slop below it had to shrink to 1 px to pay for that. Slop reaching
+ * into the button row would make the top of DISARM a throttle surface, which is
+ * the accident #24 asks for protection from arriving by the other road.
+ *
+ * Both halves matter: that the last row of the band still drives the bar, and
+ * that the first row below it does not.
+ */
+static void testThrottleBarStopsAtTheButtons() {
+	section("Throttle: the taller bar stops where the buttons start");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+
+	// 282 is the last row of the throttle band.
+	fakePress(143, 282); frames(1);
+	fakeHold(143, 282);  frames(1);
+	checkTrue("the last row of the band still drives the bar", fakeThrottle() > 0);
+	fakeRelease(); frames(2);
+	checkInt("and it springs back", fakeThrottle(), 0);
+
+	// 283 is the first row of the button row, and belongs to it whole.
+	checkTrue("still armed", fakeArmed());
+	fakePress(BTN_ARM_X, 283); frames(2);
+	checkTrue("the row below it disarms instead of driving", !fakeArmed());
+	fakeRelease(); frames(2);
+}
+
+/**
  * @brief The throttle ceiling binds in relative mode, not just absolute.
  *
  * Deleting the upper clamp in relativeThrottle() outright used to pass: only
@@ -2010,6 +2044,7 @@ void runUiTests() {
 	testRailReAnchor();
 	testDisarmButton();
 	testThrottleRailsAreReachable();
+	testThrottleBarStopsAtTheButtons();
 	testCeilingBindsInRelativeMode();
 	testDisarmedThrottleBackstop();
 	testFrameAction();
