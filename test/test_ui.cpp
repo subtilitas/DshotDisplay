@@ -105,6 +105,10 @@ static void swipe(int x0, int x1, int y, int step) {
 #define BTN_AM32_Y   282   // all three span y 258..305
 // --- throttle gauge: THR_TRACK_Y 248, height 26 ---
 #define THR_Y         260
+// ...and the horizontal extent, which the rail tests need to be explicit about.
+#define THR_TRACK_X_T   8
+#define THR_EDGE_SAT_T 16   // must match THR_EDGE_SAT in ui.cpp
+#define THR_USABLE_W_T (224 - 2 * THR_EDGE_SAT_T)
 // --- logging-screen coordinates, mirroring ui.cpp ---
 #define LOG_TOGGLE_Y 262   // BTN_LOG_TOGGLE y 240..283, full width
 // The bottom row is two buttons now, so a tap at x=120 lands in the gap
@@ -1123,6 +1127,56 @@ static void testDisarmButton() {
 }
 
 /**
+ * @brief Both rails are reachable without a finger on the panel's rim.
+ *
+ * Reported from a 2" board: a ceiling set to 20 % that would only ever reach
+ * 19 %, and 60 % that stopped at 58 %. The gauge mapped finger position
+ * straight onto the drawn track, so full throttle lived in the last pixel
+ * column -- under the case rim, where a fingertip does not go.
+ *
+ * The test therefore drives the furthest x a finger actually reaches, not the
+ * furthest the hit-test would accept. Reverting @ref THR_EDGE_SAT to zero puts
+ * the numbers back to 96 % and 4 % of the ceiling and fails both ends.
+ */
+static void testThrottleRailsAreReachable() {
+	section("Throttle: both rails are reachable short of the rim");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+
+	const int ceiling = (int)settings()->maxThrottle;
+
+	// The track is drawn x 8..232. The report puts a fingertip's limit around
+	// x=221; 224 is generous to the old behaviour and still clear of the end.
+	fakePress(224, THR_Y); frames(1);
+	fakeHold(224, THR_Y);  frames(1);
+	checkInt("a finger short of the right rim reads the ceiling",
+	         fakeThrottle(), ceiling);
+
+	// The same at the other end, which had the fault mirrored: zero was only
+	// available in the leftmost columns, so releasing was the only way to stop.
+	fakeHold(120, THR_Y); frames(1);
+	checkTrue("mid-track is neither rail",
+	          fakeThrottle() > 0 && fakeThrottle() < ceiling);
+	fakeHold(18, THR_Y); frames(1);
+	checkInt("a finger short of the left rim reads zero", fakeThrottle(), 0);
+
+	// The span between the rails still scales, rather than the gauge having
+	// become a three-position switch: the centre is half the ceiling.
+	fakeHold(THR_TRACK_X_T + THR_EDGE_SAT_T + THR_USABLE_W_T / 2, THR_Y);
+	frames(1);
+	checkTrue("and the centre of the usable span is half the ceiling",
+	          fakeThrottle() > ceiling * 45 / 100 &&
+	          fakeThrottle() < ceiling * 55 / 100);
+
+	fakeRelease(); frames(2);
+	checkInt("released, it springs back to zero", fakeThrottle(), 0);
+}
+
+/**
  * @brief The throttle ceiling binds in relative mode, not just absolute.
  *
  * Deleting the upper clamp in relativeThrottle() outright used to pass: only
@@ -1712,7 +1766,10 @@ void runUiTests() {
 		fakeRelease(); frames(2);
 		checkTrue("armed only after a 1 s hold", fakeArmed());
 
-		int tx = 8 + (224 * 70 / 100);
+		// 70 % of the *usable* span, which is the track minus the margin at
+		// each end that reads as a rail. Measuring from the drawn edge instead
+		// would now be asking for 73 % and calling it 70. @see THR_EDGE_SAT
+		int tx = THR_TRACK_X_T + THR_EDGE_SAT_T + (THR_USABLE_W_T * 70 / 100);
 		fakePress(tx, 260); frames(1); fakeHold(tx, 260); frames(2);
 		checkInt("drag to 70% of track", fakeThrottle(), 400 * 70 / 100, 6);
 		feedLiveTelemetry(); frames(2);   // the arm hold outlasted the fixture
@@ -1952,6 +2009,7 @@ void runUiTests() {
 	testHitBoundaries();
 	testRailReAnchor();
 	testDisarmButton();
+	testThrottleRailsAreReachable();
 	testCeilingBindsInRelativeMode();
 	testDisarmedThrottleBackstop();
 	testFrameAction();

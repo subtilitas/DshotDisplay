@@ -71,6 +71,30 @@ static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 #define THR_TRACK_H   26
 #define THR_TOUCH_PAD 8       // vertical grab slop around the track
 
+/**
+ * @brief Track columns at each end that count as the rail rather than as a
+ *        position on it.
+ *
+ * The last few columns of the panel are not reachable with a finger: the case
+ * rim overhangs the glass, and the fingertip stops short of the edge even when
+ * the touch controller would happily report it. A slider whose ends exist only
+ * in theory cannot be set to zero or to the ceiling, which is what a 2" board
+ * reported as a 20 % ceiling that would only reach 19 %.
+ *
+ * So the ends saturate: @ref THR_USABLE_W is what maps onto 0..ceiling, and
+ * everything outside it is the rail it is nearest. The drawn track keeps its
+ * full width, so the bar still fills to its visible end -- it just gets there
+ * while the finger is still clear of the rim.
+ *
+ * 16 px is a little over 7 % of the track, and comfortably more than the ~11 px
+ * that report was short by.
+ */
+#define THR_EDGE_SAT  16
+#define THR_USABLE_W  (THR_TRACK_W - 2 * THR_EDGE_SAT)
+static_assert(THR_USABLE_W > 0, "the saturation margins have eaten the track");
+static_assert(THR_EDGE_SAT * 2 < THR_TRACK_W / 2,
+              "saturating half the track would make it a two-position switch");
+
 // The number-display area doubles as a large relative throttle pad. It runs
 // from the top of the RPM readout down to where the gauge's grab area starts,
 // so the two regions abut exactly: no overlap, no dead strip between them.
@@ -1177,11 +1201,13 @@ static void handleMainTouch() {
 			                 THR_TRACK_W, HOLD_DRAG_SENSITIVITY_PCT);
 		} else {
 			// ABSOLUTE. Spring-loaded trigger: finger position is the throttle,
-			// and it returns to zero the moment you let go.
-			int rel = x - THR_TRACK_X;
+			// and it returns to zero the moment you let go. Measured from the
+			// inner edge of the saturation margin, so both rails are reachable
+			// without touching the rim. @see THR_EDGE_SAT
+			int rel = x - THR_TRACK_X - THR_EDGE_SAT;
 			if (rel < 0) rel = 0;
-			if (rel > THR_TRACK_W) rel = THR_TRACK_W;
-			s_throttle = (uint16_t)((uint32_t)rel * s_maxThrottle / THR_TRACK_W);
+			if (rel > THR_USABLE_W) rel = THR_USABLE_W;
+			s_throttle = (uint16_t)((uint32_t)rel * s_maxThrottle / THR_USABLE_W);
 		}
 	} else if (s_padDragging && s_armed) {
 		// Always relative, in both modes: the number area has no positional
