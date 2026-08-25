@@ -82,16 +82,23 @@ static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
  */
 #define THR_TRACK_H   34
 /**
- * @brief Vertical grab slop above and below the track.
+ * @brief Vertical grab slop above the track.
  *
- * Asymmetric, and it has to be. Slop is what lets a finger that lands just off
- * the bar still drive it, but the bar now ends three pixels above the button
- * row, and slop that reached into DISARM would make the top of that button
- * drive the throttle instead of pressing it -- the exact accident issue #24 is
- * about, arriving by the other road. The assert below is what keeps that true
- * if either number moves again.
+ * Slop is what lets a finger that lands just off the bar still drive it. Above
+ * the track there is room for a fingertip's worth of it: the row above holds
+ * the caption, and the throttle pad's own region (PAD_Y1) stops short of it to
+ * make space.
  */
 #define THR_TOUCH_PAD_TOP 8
+/**
+ * @brief Vertical grab slop below the track, which is not the same number.
+ *
+ * The bar ends three pixels above the button row, so there is no room for a
+ * matching margin here: slop that reached into DISARM would make the top of
+ * that button drive the throttle instead of pressing it -- the accident issue
+ * #24 asks for protection from, arriving by the other road. The static_assert
+ * beside @ref BTN_ROW_Y is what keeps this true if either number moves again.
+ */
 #define THR_TOUCH_PAD_BOT 1
 
 /**
@@ -117,6 +124,12 @@ static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 #define THR_HANDLE_OVER 3
 static_assert(THR_TRACK_Y - THR_HANDLE_OVER >= Z_THR_Y0,
               "the HOLD handle is drawn above the throttle band");
+/**
+ * @brief The part of the track that is a position rather than a rail.
+ *
+ * THR_TRACK_W less @ref THR_EDGE_SAT at each end. This is what maps onto
+ * 0..ceiling; the drawn track stays its full width.
+ */
 #define THR_USABLE_W  (THR_TRACK_W - 2 * THR_EDGE_SAT)
 static_assert(THR_USABLE_W > 0, "the saturation margins have eaten the track");
 static_assert(THR_TRACK_Y + THR_TRACK_H - 1 <= Z_THR_Y1,
