@@ -1074,10 +1074,11 @@ static void drawLogScreen() {
 
 	bool active = (st.state == SdLogState::Logging);
 	bool usable = (st.state != SdLogState::NoCard);
+	// Without a card there is nothing to start. It was drawn grey for that
+	// reason already, and pressed it anyway. @see #23
 	uiButton(BTN_LOG_TOGGLE, active ? "STOP" : "START",
-	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
-	        usable ? (active ? C_ONACCENT : C_LIME) : C_GRID, 2,
-	        pressing(BTN_LOG_TOGGLE, s_touch));
+	        active ? C_RED : C_PANEL, active ? C_ONACCENT : C_LIME, 2,
+	        pressing(BTN_LOG_TOGGLE, s_touch), usable);
 
 	// The card is only mounted once, at boot, so one inserted afterwards needs
 	// this. Without it, "insert card, nothing happens" is indistinguishable
@@ -1088,8 +1089,11 @@ static void drawLogScreen() {
 	// Hands the card to a computer over the same USB cable that powers the
 	// board. Cyan like the other navigation-ish controls; it is not
 	// destructive, and it is refused rather than guarded by a hold.
-	uiButton(BTN_LOG_USB, "USB DRIVE", C_PANEL, usable ? C_CYAN : C_GRID, 1,
-	        pressing(BTN_LOG_USB, s_touch));
+	// Same again. With a card present it stays live even when it will refuse --
+	// armed, or recording -- because those refusals say something the screen
+	// does not already: "NO CARD TO SHARE" only repeats the CARD row above.
+	uiButton(BTN_LOG_USB, "USB DRIVE", C_PANEL, C_CYAN, 1,
+	        pressing(BTN_LOG_USB, s_touch), usable);
 
 	// The note line says why the last press was refused. Blank the row even
 	// when there is nothing to say, or a stale reason outlives its cause.
@@ -1117,14 +1121,22 @@ static void handleLogTouch() {
 		return;
 	}
 
-	if (tapped(BTN_LOG_TOGGLE, s_touch)) {
+	// The same expression the buttons are drawn with: no card, no start and no
+	// handover. RETRY is exempt and always live -- it is the control that gets
+	// you *out* of the no-card state, and disabling it would be a screen with
+	// nothing on it that does anything.
+	SdLogStatus st;
+	sdLogStatus(&st);
+	const bool usable = (st.state != SdLogState::NoCard);
+
+	if (usable && tapped(BTN_LOG_TOGGLE, s_touch)) {
 		if (sdLogActive()) sdLogStop();
 		else               sdLogStart();
 		s_shown.config = -1;
 	} else if (tapped(BTN_LOG_RETRY, s_touch)) {
 		sdLogRemount();
 		s_shown.config = -1;
-	} else if (tapped(BTN_LOG_USB, s_touch)) {
+	} else if (usable && tapped(BTN_LOG_USB, s_touch)) {
 		MscRefusal r = mscRequest();
 		if (r != MscRefusal::None) {
 			s_mscNote = r;

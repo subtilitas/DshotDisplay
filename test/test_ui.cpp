@@ -754,6 +754,57 @@ static void testSetupKiss() {
 	// Switching it off is always available.
 	tap(SET_TOGGLE_X, SET_R_KISS);
 	checkInt("toggling again switches it off", settings()->kissEnable, 0);
+
+	// ...and with it off, the pin row stops being a control. It used to look
+	// live and step a pin that was not in use, which SAVE then wrote to flash:
+	// a reconfiguration nobody asked for, on a row already reading "--", with
+	// nothing on the screen to say it had happened. Reported as #23, and the
+	// hard part of it is that the old behaviour was invisible rather than
+	// wrong-looking. Both buttons, both directions, several times.
+	// Each direction is checked against the pin it started from, immediately.
+	// Stepping up and then down and checking once at the end passes whether or
+	// not the row is gated, because the two cancel: the first version of this
+	// test did exactly that and proved nothing.
+	int pinWhenOff = (int)settings()->kissPin;
+	tap(SET_PLUS_X, SET_R_KISSPIN);
+	checkInt("with KISS off, + does not step the pin",
+	         (int)settings()->kissPin, pinWhenOff);
+	// Re-read rather than reusing pinWhenOff: if + had stepped, - would step
+	// back onto it and the second check would pass on the strength of the
+	// first one failing.
+	int pinBeforeMinus = (int)settings()->kissPin;
+	tap(SET_MINUS_X, SET_R_KISSPIN);
+	checkInt("and neither does -", (int)settings()->kissPin, pinBeforeMinus);
+
+	// The row comes back to life with the function, rather than staying dead
+	// until something repaints it.
+	//
+	// Only assertable where the board has a pin to step to. The 2.8" frees two
+	// and the ESC holds one of them, so there the step correctly stays put --
+	// the same case the loop above is written around. Count the free set rather
+	// than special-casing a board name: walk settingsNextPinOn() until it comes
+	// back to where it started, which is the board's own answer.
+	tap(SET_TOGGLE_X, SET_R_KISS);
+	checkInt("KISS back on", settings()->kissEnable, 1);
+
+	int freePins = 1;
+	uint8_t first = settings()->kissPin;
+	for (uint8_t q = settingsNextPinOn(settings()->boardId, first, +1);
+	     q != first && freePins < 64;
+	     q = settingsNextPinOn(settings()->boardId, q, +1))
+		freePins++;
+
+	int pinBeforeStep = (int)settings()->kissPin;
+	tap(SET_PLUS_X, SET_R_KISSPIN);
+	if (freePins > 2) {
+		checkTrue("and the pin row steps again",
+		          (int)settings()->kissPin != pinBeforeStep);
+	} else {
+		checkTrue("the pin row is live again, with nowhere on this board to go",
+		          settingsPinFree(settings()->kissPin) &&
+		          settings()->kissPin != settings()->dshotPin);
+	}
+	tap(SET_TOGGLE_X, SET_R_KISS);
 }
 
 /** @brief Contrast and backlight take effect immediately and persist. */

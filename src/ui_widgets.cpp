@@ -24,7 +24,16 @@ bool uiTapped(const UiRect &r, const TouchState *t) {
 }
 
 void uiButton(const UiRect &r, const char *label, uint16_t fill, uint16_t fg,
-              int scale, bool pressed) {
+              int scale, bool pressed, bool enabled) {
+	if (!enabled) {
+		// An outline and nothing else. Deliberately not "the same button with a
+		// dimmer label": on a panel at half backlight in daylight that is the
+		// difference between two greys, and the whole point is that this one
+		// must not read as pressable.
+		fill = C_BG;
+		fg = C_GRID;
+		pressed = false;
+	}
 	gfxRoundRect(r.x, r.y, r.w, r.h, UI_RADIUS, fill);
 	gfxRoundFrame(r.x, r.y, r.w, r.h, UI_RADIUS, pressed ? C_INK : C_GRID);
 	// The inner ring is what makes a press read at arm's length; it needs a
