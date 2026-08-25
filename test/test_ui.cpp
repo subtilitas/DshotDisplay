@@ -103,8 +103,12 @@ static void swipe(int x0, int x1, int y, int step) {
 #define CFG_MAXT_Y    156   // BTN_MAXT_*  y 134..177
 // --- the AM32/LOG/SETUP row: three 68 px buttons with 4 px gaps, from x=14 ---
 #define BTN_AM32_Y   282   // all three span y 258..305
-// --- throttle gauge: THR_TRACK_Y 248, height 26 ---
+// --- throttle gauge: THR_TRACK_Y 248, height 34, band ends at 281 ---
 #define THR_Y         260
+// ...and the horizontal extent, which the rail tests need to be explicit about.
+#define THR_TRACK_X_T   8
+#define THR_EDGE_SAT_T 16   // must match THR_EDGE_SAT in ui.cpp
+#define THR_USABLE_W_T (224 - 2 * THR_EDGE_SAT_T)
 // --- logging-screen coordinates, mirroring ui.cpp ---
 #define LOG_TOGGLE_Y 262   // BTN_LOG_TOGGLE y 240..283, full width
 // The bottom row is two buttons now, so a tap at x=120 lands in the gap
@@ -750,6 +754,57 @@ static void testSetupKiss() {
 	// Switching it off is always available.
 	tap(SET_TOGGLE_X, SET_R_KISS);
 	checkInt("toggling again switches it off", settings()->kissEnable, 0);
+
+	// ...and with it off, the pin row stops being a control. It used to look
+	// live and step a pin that was not in use, which SAVE then wrote to flash:
+	// a reconfiguration nobody asked for, on a row already reading "--", with
+	// nothing on the screen to say it had happened. Reported as #23, and the
+	// hard part of it is that the old behaviour was invisible rather than
+	// wrong-looking. Both buttons, both directions, several times.
+	// Each direction is checked against the pin it started from, immediately.
+	// Stepping up and then down and checking once at the end passes whether or
+	// not the row is gated, because the two cancel: the first version of this
+	// test did exactly that and proved nothing.
+	int pinWhenOff = (int)settings()->kissPin;
+	tap(SET_PLUS_X, SET_R_KISSPIN);
+	checkInt("with KISS off, + does not step the pin",
+	         (int)settings()->kissPin, pinWhenOff);
+	// Re-read rather than reusing pinWhenOff: if + had stepped, - would step
+	// back onto it and the second check would pass on the strength of the
+	// first one failing.
+	int pinBeforeMinus = (int)settings()->kissPin;
+	tap(SET_MINUS_X, SET_R_KISSPIN);
+	checkInt("and neither does -", (int)settings()->kissPin, pinBeforeMinus);
+
+	// The row comes back to life with the function, rather than staying dead
+	// until something repaints it.
+	//
+	// Only assertable where the board has a pin to step to. The 2.8" frees two
+	// and the ESC holds one of them, so there the step correctly stays put --
+	// the same case the loop above is written around. Count the free set rather
+	// than special-casing a board name: walk settingsNextPinOn() until it comes
+	// back to where it started, which is the board's own answer.
+	tap(SET_TOGGLE_X, SET_R_KISS);
+	checkInt("KISS back on", settings()->kissEnable, 1);
+
+	int freePins = 1;
+	uint8_t first = settings()->kissPin;
+	for (uint8_t q = settingsNextPinOn(settings()->boardId, first, +1);
+	     q != first && freePins < 64;
+	     q = settingsNextPinOn(settings()->boardId, q, +1))
+		freePins++;
+
+	int pinBeforeStep = (int)settings()->kissPin;
+	tap(SET_PLUS_X, SET_R_KISSPIN);
+	if (freePins > 2) {
+		checkTrue("and the pin row steps again",
+		          (int)settings()->kissPin != pinBeforeStep);
+	} else {
+		checkTrue("the pin row is live again, with nowhere on this board to go",
+		          settingsPinFree(settings()->kissPin) &&
+		          settings()->kissPin != settings()->dshotPin);
+	}
+	tap(SET_TOGGLE_X, SET_R_KISS);
 }
 
 /** @brief Contrast and backlight take effect immediately and persist. */
@@ -1120,6 +1175,90 @@ static void testDisarmButton() {
 	swipe(20, 120, THR_Y, 8);
 	frames(2);
 	checkInt("re-arming does not restore a latched throttle", fakeThrottle(), 0);
+}
+
+/**
+ * @brief Both rails are reachable without a finger on the panel's rim.
+ *
+ * Reported from a 2" board: a ceiling set to 20 % that would only ever reach
+ * 19 %, and 60 % that stopped at 58 %. The gauge mapped finger position
+ * straight onto the drawn track, so full throttle lived in the last pixel
+ * column -- under the case rim, where a fingertip does not go.
+ *
+ * The test therefore drives the furthest x a finger actually reaches, not the
+ * furthest the hit-test would accept. Reverting @ref THR_EDGE_SAT to zero puts
+ * the numbers back to 96 % and 4 % of the ceiling and fails both ends.
+ */
+static void testThrottleRailsAreReachable() {
+	section("Throttle: both rails are reachable short of the rim");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+
+	const int ceiling = (int)settings()->maxThrottle;
+
+	// The track is drawn x 8..232. The report puts a fingertip's limit around
+	// x=221; 224 is generous to the old behaviour and still clear of the end.
+	fakePress(224, THR_Y); frames(1);
+	fakeHold(224, THR_Y);  frames(1);
+	checkInt("a finger short of the right rim reads the ceiling",
+	         fakeThrottle(), ceiling);
+
+	// The same at the other end, which had the fault mirrored: zero was only
+	// available in the leftmost columns, so releasing was the only way to stop.
+	fakeHold(120, THR_Y); frames(1);
+	checkTrue("mid-track is neither rail",
+	          fakeThrottle() > 0 && fakeThrottle() < ceiling);
+	fakeHold(18, THR_Y); frames(1);
+	checkInt("a finger short of the left rim reads zero", fakeThrottle(), 0);
+
+	// The span between the rails still scales, rather than the gauge having
+	// become a three-position switch: the centre is half the ceiling.
+	fakeHold(THR_TRACK_X_T + THR_EDGE_SAT_T + THR_USABLE_W_T / 2, THR_Y);
+	frames(1);
+	checkTrue("and the centre of the usable span is half the ceiling",
+	          fakeThrottle() > ceiling * 45 / 100 &&
+	          fakeThrottle() < ceiling * 55 / 100);
+
+	fakeRelease(); frames(2);
+	checkInt("released, it springs back to zero", fakeThrottle(), 0);
+}
+
+/**
+ * @brief The taller bar stops exactly where the button row starts.
+ *
+ * The gauge grew from 26 px to 34 by taking the padding above the buttons, and
+ * the grab slop below it had to shrink to 1 px to pay for that. Slop reaching
+ * into the button row would make the top of DISARM a throttle surface, which is
+ * the accident #24 asks for protection from arriving by the other road.
+ *
+ * Both halves matter: that the last row of the band still drives the bar, and
+ * that the first row below it does not.
+ */
+static void testThrottleBarStopsAtTheButtons() {
+	section("Throttle: the taller bar stops where the buttons start");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+
+	// 282 is the last row of the throttle band.
+	fakePress(143, 282); frames(1);
+	fakeHold(143, 282);  frames(1);
+	checkTrue("the last row of the band still drives the bar", fakeThrottle() > 0);
+	fakeRelease(); frames(2);
+	checkInt("and it springs back", fakeThrottle(), 0);
+
+	// 283 is the first row of the button row, and belongs to it whole.
+	checkTrue("still armed", fakeArmed());
+	fakePress(BTN_ARM_X, 283); frames(2);
+	checkTrue("the row below it disarms instead of driving", !fakeArmed());
+	fakeRelease(); frames(2);
 }
 
 /**
@@ -1712,7 +1851,10 @@ void runUiTests() {
 		fakeRelease(); frames(2);
 		checkTrue("armed only after a 1 s hold", fakeArmed());
 
-		int tx = 8 + (224 * 70 / 100);
+		// 70 % of the *usable* span, which is the track minus the margin at
+		// each end that reads as a rail. Measuring from the drawn edge instead
+		// would now be asking for 73 % and calling it 70. @see THR_EDGE_SAT
+		int tx = THR_TRACK_X_T + THR_EDGE_SAT_T + (THR_USABLE_W_T * 70 / 100);
 		fakePress(tx, 260); frames(1); fakeHold(tx, 260); frames(2);
 		checkInt("drag to 70% of track", fakeThrottle(), 400 * 70 / 100, 6);
 		feedLiveTelemetry(); frames(2);   // the arm hold outlasted the fixture
@@ -1952,6 +2094,8 @@ void runUiTests() {
 	testHitBoundaries();
 	testRailReAnchor();
 	testDisarmButton();
+	testThrottleRailsAreReachable();
+	testThrottleBarStopsAtTheButtons();
 	testCeilingBindsInRelativeMode();
 	testDisarmedThrottleBackstop();
 	testFrameAction();

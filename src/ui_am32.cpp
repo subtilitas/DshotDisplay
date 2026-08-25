@@ -339,12 +339,14 @@ static void drawList() {
 		if (pct > 100) pct = 100;
 		gfxRect(6, FOOT_Y - 4, 110 * pct / 100, 3, C_LIME);
 	}
+	// Both are gated on the same `dirty` their hit tests are. WRITE already
+	// was; REVERT was drawn grey and ran regardless, which was harmless only
+	// because reverting nothing to nothing is a no-op. @see #23
 	uiButton(BTN_WRITE, dirty ? "HOLD TO WRITE" : "NO CHANGES",
-	         dirty ? writeFill : C_PANEL,
-	         dirty ? (s_writeHolding ? C_ONACCENT : C_TEXT) : C_GRID, 1,
-	         s_writeHolding);
-	uiButton(BTN_REVERT, "REVERT", C_PANEL, dirty ? C_AMBER : C_GRID, 1,
-	         uiPressing(BTN_REVERT, s_frameTouch));
+	         writeFill, s_writeHolding ? C_ONACCENT : C_TEXT, 1,
+	         s_writeHolding, dirty);
+	uiButton(BTN_REVERT, "REVERT", C_PANEL, C_AMBER, 1,
+	         uiPressing(BTN_REVERT, s_frameTouch), dirty);
 	uiButton(BTN_HEX, s_hexView ? "FIELDS" : "HEX", C_PANEL, C_CYAN, 1,
 	         uiPressing(BTN_HEX, s_frameTouch));
 }
@@ -531,7 +533,7 @@ static void handleListTouch(const TouchState *t) {
 	// --- destructive taps fire on release, inside, having started inside, so
 	//     a mis-tap can slide off. REVERT throws away every unsaved edit; it
 	//     used to do so on touch-down ---
-	if (uiTapped(BTN_REVERT, t)) {
+	if (dirty && uiTapped(BTN_REVERT, t)) {
 		memcpy(s_eeprom, s_original, sizeof(s_eeprom));
 		s_redraw = true;
 	} else if (uiTapped(BTN_HEX, t)) {

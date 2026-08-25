@@ -22,6 +22,13 @@
  *   to stay legible. Adding to what is there cannot break any pairing.
  * - **Touch targets have a floor.** @ref UI_TAP_MIN is what a fingertip needs;
  *   the 18 px BACK strips this replaces were below it.
+ * - **A control that is drawn unavailable does not act.** Pass `enabled=false`
+ *   to uiButton() and gate its hit test on the same expression. Before this
+ *   there were three answers on three screens: SETUP's KISS PIN steppers looked
+ *   live and silently moved a pin that was not in use, the logging screen's
+ *   START looked dead and started a log anyway, and AM32's REVERT looked dead
+ *   and ran. A greyed control that still fires is worse than either, because
+ *   the screen has told you it will not.
  *
  * Hit testing is not duplicated here: it is inputPressing() and inputTapped()
  * in ui_input.h, and the wrappers below only spare callers from spelling out
@@ -104,10 +111,20 @@ bool uiTapped(const UiRect &r, const TouchState *t);
  * @param fill    Resting fill colour.
  * @param fg      Label colour, chosen against @p fill.
  * @param scale   Text scale.
- * @param pressed True while a finger is on it, from uiPressing().
+ * @param pressed True while a finger is on it, from uiPressing(). Ignored when
+ *                @p enabled is false -- a control that cannot act cannot show a
+ *                press either.
+ * @param enabled False draws the unavailable look: an outline with no fill,
+ *                which reads as "not a thing you press" at arm's length in a
+ *                way that a dimmed label does not. @p fill and @p fg are then
+ *                ignored, so callers can keep passing the colours the control
+ *                has when it is live.
+ *
+ * Drawing a button disabled is half of it. The caller must gate the hit test on
+ * the same expression; see the rule at the top of this file.
  */
 void uiButton(const UiRect &r, const char *label, uint16_t fill, uint16_t fg,
-              int scale, bool pressed);
+              int scale, bool pressed, bool enabled = true);
 
 /**
  * @brief Draw the header band: title on the left, BACK on the right.

@@ -167,13 +167,18 @@ static UiRect toggleAt(int y) { return UiRect{BTN_M_X, (int16_t)y, TOGGLE_W, ROW
  * @param label Left-hand caption.
  * @param value Right-aligned value.
  * @param vcol  Value colour.
+ * @param enabled False when the row's setting is not in use: the buttons are
+ *                drawn unavailable and the caller must not step the value.
  */
-static void drawStepRow(int y, const char *label, const char *value, uint16_t vcol) {
+static void drawStepRow(int y, const char *label, const char *value,
+                        uint16_t vcol, bool enabled = true) {
 	gfxRect(0, y, GFX_W, ROW_H, C_BG);
 	gfxText(UI_MARGIN, y + (ROW_H - 7) / 2, label, C_DIM, 1);
 	gfxText(VAL_R - gfxTextW(value, 2), y + (ROW_H - 14) / 2, value, vcol, 2);
-	uiButton(minusAt(y), "-", C_PANEL, C_TEXT, 2, uiPressing(minusAt(y), &s_touchSnap));
-	uiButton(plusAt(y),  "+", C_PANEL, C_TEXT, 2, uiPressing(plusAt(y),  &s_touchSnap));
+	uiButton(minusAt(y), "-", C_PANEL, C_TEXT, 2,
+	         uiPressing(minusAt(y), &s_touchSnap), enabled);
+	uiButton(plusAt(y),  "+", C_PANEL, C_TEXT, 2,
+	         uiPressing(plusAt(y),  &s_touchSnap), enabled);
 }
 
 /**
@@ -273,8 +278,12 @@ static void drawAll() {
 
 	if (s->kissEnable) snprintf(buf, sizeof(buf), "GP%u", (unsigned)s->kissPin);
 	else               snprintf(buf, sizeof(buf), "--");
+	// With KISS off this row has nothing to set: the value reads "--", and the
+	// buttons say so too now. They used to look live and quietly move a pin
+	// that was not in use, which SAVE then wrote to flash -- a reconfiguration
+	// nobody asked for and nothing on the screen reported. @see #23
 	drawStepRow(R_KISSPIN, "KISS PIN", buf,
-	            s->kissEnable ? C_CYAN : C_DIM);
+	            s->kissEnable ? C_CYAN : C_DIM, s->kissEnable != 0);
 
 	drawToggleRow(R_CONTRAST, "CONTRAST",
 	              s->highContrast ? "HIGH" : "NORMAL", s->highContrast != 0);
@@ -432,7 +441,10 @@ bool uiSetupTick(const TouchState *t) {
 		else       s->dshotKbaud = (uint16_t)(s->dshotKbaud >= 1200 ? 150 : s->dshotKbaud * 2);
 		changed = true;
 	}
-	d = stepDir(t, R_KISSPIN);
+	// Gated on the same expression the row is drawn with. Still stepped through
+	// repeatFires() with a zero direction rather than skipped outright, or the
+	// repeat state would keep whatever it held when KISS was switched off.
+	d = s->kissEnable ? stepDir(t, R_KISSPIN) : 0;
 	if (repeatFires(&s_kissPinRep, d, millis())) {
 		s->kissPin = stepPinAvoiding(s->kissPin, d, s->dshotPin, true);
 		changed = true;

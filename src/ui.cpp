@@ -54,8 +54,8 @@ static_assert(GFX_W == 240 && GFX_H == 320,
 #define Z_TELE_Y0     128
 #define Z_TELE_Y1     233
 #define Z_THR_Y0      234
-#define Z_THR_Y1      278
-#define Z_BTN_Y0      279
+#define Z_THR_Y1      281
+#define Z_BTN_Y0      282
 #define Z_BTN_Y1      319
 
 static_assert(Z_STATUS_Y0 == 0, "regions must start at the top of the panel");
@@ -68,14 +68,67 @@ static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 #define THR_TRACK_X   8
 #define THR_TRACK_Y   248
 #define THR_TRACK_W   224
-#define THR_TRACK_H   26
-#define THR_TOUCH_PAD 8       // vertical grab slop around the track
+/**
+ * @brief Track height.
+ *
+ * 26 px until a report that a powerful setup with the brake on gets a real jolt
+ * when the slider is knocked back to zero, and that a taller bar is both harder
+ * to miss and harder to fall off the bottom of into DISARM.
+ *
+ * The 8 px came out of the padding above the button row -- the buttons are
+ * still at @ref BTN_ROW_Y, and the RPM digits and telemetry rows above are
+ * untouched. What it costs is the slop below the track: see
+ * @ref THR_TOUCH_PAD_BOT.
+ */
+#define THR_TRACK_H   34
+/**
+ * @brief Vertical grab slop above and below the track.
+ *
+ * Asymmetric, and it has to be. Slop is what lets a finger that lands just off
+ * the bar still drive it, but the bar now ends three pixels above the button
+ * row, and slop that reached into DISARM would make the top of that button
+ * drive the throttle instead of pressing it -- the exact accident issue #24 is
+ * about, arriving by the other road. The assert below is what keeps that true
+ * if either number moves again.
+ */
+#define THR_TOUCH_PAD_TOP 8
+#define THR_TOUCH_PAD_BOT 1
+
+/**
+ * @brief Track columns at each end that count as the rail rather than as a
+ *        position on it.
+ *
+ * The last few columns of the panel are not reachable with a finger: the case
+ * rim overhangs the glass, and the fingertip stops short of the edge even when
+ * the touch controller would happily report it. A slider whose ends exist only
+ * in theory cannot be set to zero or to the ceiling, which is what a 2" board
+ * reported as a 20 % ceiling that would only reach 19 %.
+ *
+ * So the ends saturate: @ref THR_USABLE_W is what maps onto 0..ceiling, and
+ * everything outside it is the rail it is nearest. The drawn track keeps its
+ * full width, so the bar still fills to its visible end -- it just gets there
+ * while the finger is still clear of the rim.
+ *
+ * 16 px is a little over 7 % of the track, and comfortably more than the ~11 px
+ * that report was short by.
+ */
+#define THR_EDGE_SAT  16
+/** @brief How far the HOLD-mode grab handle stands above the track. */
+#define THR_HANDLE_OVER 3
+static_assert(THR_TRACK_Y - THR_HANDLE_OVER >= Z_THR_Y0,
+              "the HOLD handle is drawn above the throttle band");
+#define THR_USABLE_W  (THR_TRACK_W - 2 * THR_EDGE_SAT)
+static_assert(THR_USABLE_W > 0, "the saturation margins have eaten the track");
+static_assert(THR_TRACK_Y + THR_TRACK_H - 1 <= Z_THR_Y1,
+              "the track overflows the throttle band");
+static_assert(THR_EDGE_SAT * 2 < THR_TRACK_W / 2,
+              "saturating half the track would make it a two-position switch");
 
 // The number-display area doubles as a large relative throttle pad. It runs
 // from the top of the RPM readout down to where the gauge's grab area starts,
 // so the two regions abut exactly: no overlap, no dead strip between them.
 #define PAD_Y0        Z_RPM_Y0
-#define PAD_Y1        (THR_TRACK_Y - THR_TOUCH_PAD - 1)
+#define PAD_Y1        (THR_TRACK_Y - THR_TOUCH_PAD_TOP - 1)
 #define PAD_H         (PAD_Y1 - PAD_Y0 + 1)
 
 /** @} */
@@ -84,9 +137,19 @@ static_assert(Z_BTN_Y1  == GFX_H - 1,       "regions must reach the bottom");
 // nowhere to go back to, and a disabled or missing control in the place the
 // habit says to look is worse than the habit not applying here. CFG is its
 // navigation, and it sits with the other two actions.
-static const UiRect BTN_ARM  = { 6, 283, 104, 33 };
-static const UiRect BTN_HOLD = { 116, 283, 54, 33 };
-static const UiRect BTN_CFG  = { 176, 283, 58, 33 };
+#define BTN_ROW_Y     283   /**< Top of the three main-screen buttons. */
+#define BTN_ROW_H      33   /**< ...and their height. */
+static const UiRect BTN_ARM  = { 6, BTN_ROW_Y, 104, BTN_ROW_H };
+static const UiRect BTN_HOLD = { 116, BTN_ROW_Y, 54, BTN_ROW_H };
+static const UiRect BTN_CFG  = { 176, BTN_ROW_Y, 58, BTN_ROW_H };
+
+// The grab area may not reach the buttons. Written where both numbers are in
+// scope rather than as a comment on either one, because it is a relationship
+// between them and a comment is not checked.
+static_assert(THR_TRACK_Y + THR_TRACK_H + THR_TOUCH_PAD_BOT <= BTN_ROW_Y,
+              "the throttle grab area reaches into the button row");
+static_assert(BTN_ROW_Y + BTN_ROW_H - 1 <= Z_BTN_Y1,
+              "the buttons run off the bottom of the panel");
 
 // config screen
 /**
@@ -690,12 +753,18 @@ static void drawThrottle() {
 		int hx = THR_TRACK_X + fillW - 3;
 		if (hx < THR_TRACK_X) hx = THR_TRACK_X;
 		if (hx > THR_TRACK_X + THR_TRACK_W - 6) hx = THR_TRACK_X + THR_TRACK_W - 6;
-		gfxRect(hx, THR_TRACK_Y - 3, 6, THR_TRACK_H + 6, C_INK);
+		// Overhangs the top only. It used to overhang both ends by 3 px, which
+		// the taller track has no room for: the bar now ends on the last row of
+		// the band, and three more would be drawn into the button row and wiped
+		// the next time the buttons repainted.
+		gfxRect(hx, THR_TRACK_Y - THR_HANDLE_OVER, 6,
+		        THR_TRACK_H + THR_HANDLE_OVER, C_INK);
 	}
 
 	gfxRoundFrame(THR_TRACK_X, THR_TRACK_Y, THR_TRACK_W, THR_TRACK_H, 5, C_GRID);
 	if (!s_armed) {
-		gfxText(THR_TRACK_X + 8, THR_TRACK_Y + 10, "ARM TO ENABLE", C_DIM, 1);
+		gfxText(THR_TRACK_X + 8, THR_TRACK_Y + (THR_TRACK_H - 7) / 2,
+		        "ARM TO ENABLE", C_DIM, 1);
 	}
 }
 
@@ -1005,10 +1074,11 @@ static void drawLogScreen() {
 
 	bool active = (st.state == SdLogState::Logging);
 	bool usable = (st.state != SdLogState::NoCard);
+	// Without a card there is nothing to start. It was drawn grey for that
+	// reason already, and pressed it anyway. @see #23
 	uiButton(BTN_LOG_TOGGLE, active ? "STOP" : "START",
-	        usable ? (active ? C_RED : C_PANEL) : C_PANEL,
-	        usable ? (active ? C_ONACCENT : C_LIME) : C_GRID, 2,
-	        pressing(BTN_LOG_TOGGLE, s_touch));
+	        active ? C_RED : C_PANEL, active ? C_ONACCENT : C_LIME, 2,
+	        pressing(BTN_LOG_TOGGLE, s_touch), usable);
 
 	// The card is only mounted once, at boot, so one inserted afterwards needs
 	// this. Without it, "insert card, nothing happens" is indistinguishable
@@ -1019,8 +1089,11 @@ static void drawLogScreen() {
 	// Hands the card to a computer over the same USB cable that powers the
 	// board. Cyan like the other navigation-ish controls; it is not
 	// destructive, and it is refused rather than guarded by a hold.
-	uiButton(BTN_LOG_USB, "USB DRIVE", C_PANEL, usable ? C_CYAN : C_GRID, 1,
-	        pressing(BTN_LOG_USB, s_touch));
+	// Same again. With a card present it stays live even when it will refuse --
+	// armed, or recording -- because those refusals say something the screen
+	// does not already: "NO CARD TO SHARE" only repeats the CARD row above.
+	uiButton(BTN_LOG_USB, "USB DRIVE", C_PANEL, C_CYAN, 1,
+	        pressing(BTN_LOG_USB, s_touch), usable);
 
 	// The note line says why the last press was refused. Blank the row even
 	// when there is nothing to say, or a stale reason outlives its cause.
@@ -1048,14 +1121,22 @@ static void handleLogTouch() {
 		return;
 	}
 
-	if (tapped(BTN_LOG_TOGGLE, s_touch)) {
+	// The same expression the buttons are drawn with: no card, no start and no
+	// handover. RETRY is exempt and always live -- it is the control that gets
+	// you *out* of the no-card state, and disabling it would be a screen with
+	// nothing on it that does anything.
+	SdLogStatus st;
+	sdLogStatus(&st);
+	const bool usable = (st.state != SdLogState::NoCard);
+
+	if (usable && tapped(BTN_LOG_TOGGLE, s_touch)) {
 		if (sdLogActive()) sdLogStop();
 		else               sdLogStart();
 		s_shown.config = -1;
 	} else if (tapped(BTN_LOG_RETRY, s_touch)) {
 		sdLogRemount();
 		s_shown.config = -1;
-	} else if (tapped(BTN_LOG_USB, s_touch)) {
+	} else if (usable && tapped(BTN_LOG_USB, s_touch)) {
 		MscRefusal r = mscRequest();
 		if (r != MscRefusal::None) {
 			s_mscNote = r;
@@ -1146,8 +1227,8 @@ static void handleMainTouch() {
 	int x = s_touch.x, y = s_touch.y;
 
 	// --- throttle slider ---
-	bool inTrack = (y >= THR_TRACK_Y - THR_TOUCH_PAD) &&
-	               (y < THR_TRACK_Y + THR_TRACK_H + THR_TOUCH_PAD) &&
+	bool inTrack = (y >= THR_TRACK_Y - THR_TOUCH_PAD_TOP) &&
+	               (y < THR_TRACK_Y + THR_TRACK_H + THR_TOUCH_PAD_BOT) &&
 	               (x >= THR_TRACK_X - 8) && (x < THR_TRACK_X + THR_TRACK_W + 8);
 
 	bool inPad = (y >= PAD_Y0) && (y <= PAD_Y1);
@@ -1177,11 +1258,13 @@ static void handleMainTouch() {
 			                 THR_TRACK_W, HOLD_DRAG_SENSITIVITY_PCT);
 		} else {
 			// ABSOLUTE. Spring-loaded trigger: finger position is the throttle,
-			// and it returns to zero the moment you let go.
-			int rel = x - THR_TRACK_X;
+			// and it returns to zero the moment you let go. Measured from the
+			// inner edge of the saturation margin, so both rails are reachable
+			// without touching the rim. @see THR_EDGE_SAT
+			int rel = x - THR_TRACK_X - THR_EDGE_SAT;
 			if (rel < 0) rel = 0;
-			if (rel > THR_TRACK_W) rel = THR_TRACK_W;
-			s_throttle = (uint16_t)((uint32_t)rel * s_maxThrottle / THR_TRACK_W);
+			if (rel > THR_USABLE_W) rel = THR_USABLE_W;
+			s_throttle = (uint16_t)((uint32_t)rel * s_maxThrottle / THR_USABLE_W);
 		}
 	} else if (s_padDragging && s_armed) {
 		// Always relative, in both modes: the number area has no positional
