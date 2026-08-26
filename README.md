@@ -988,3 +988,7 @@ Note that `pico-bidir-dshot` is **GPL-3.0**. That's fine for personal use, but a
 binary of this sketch links GPL-3.0 code, so if you distribute firmware images or a
 derived product you'll need to satisfy GPL-3.0 for the combined work. Worth settling
 before you ship anything.
+
+---
+
+In collaboration with Claude Code.
