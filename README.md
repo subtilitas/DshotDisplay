@@ -13,7 +13,8 @@ temperature, stress and status. The touch panel shows all of it.
 
 ![UI preview](docs/ui-preview.png)
 
-*The host test suite renders every screenshot here from the UI code.
+*The host test suite renders every screenshot here from the UI (user
+interface) code.
 `tools/make_previews.py` stitches them together.*
 
 > ### [User manual — the Wiki](https://github.com/subtilitas/DshotDisplay/wiki)
@@ -36,11 +37,11 @@ and it disarms when frames stop. A telemetry display therefore cannot listen
 passively. It has to be the throttle source. This makes the device a bench
 tester, not an inline monitor.
 
-The display transfers 153,600 bytes per full frame (240 × 320 RGB565 pixels)
-over SPI (Serial Peripheral Interface) by DMA (direct memory access). At the
-62.5 MHz write maximum in `LCD_SPI_HZ` that is at least 19.7 ms (computed, not
-measured). DShot frame timing cannot share a core with that, so the
-work is split:
+The display transfers 153,600 bytes per full frame (240 × 320 pixels in RGB565,
+16 bits per pixel: 5 red, 6 green, 5 blue) over SPI (Serial Peripheral
+Interface) by DMA (direct memory access). At the 62.5 MHz write maximum in
+`LCD_SPI_HZ` that is at least 19.7 ms (computed, not measured). DShot frame
+timing cannot share a core with that, so the work is split:
 
 | | core0 | core1 |
 |---|---|---|
@@ -97,19 +98,19 @@ they keep the preprocessor path compiling. A single-board image flashed onto
 the other board drives the wrong pins. The 2.8" image also asserts the GP26
 power latch, which the 2.0" lacks.
 
-The 2.0" is an RP2350A with a 240×320 IPS (in-plane switching)
-panel (ST7789T3 over SPI), CST816D capacitive touch, a QMI8658 IMU and a LiPo
-charger. The 2.8" uses the same RP2350A and panel with a CST328 touch
+The 2.0" is an RP2350A with a 240×320 IPS (in-plane switching) panel (ST7789T3
+over SPI), CST816D capacitive touch, a QMI8658 IMU and a LiPo (lithium-polymer)
+battery charger. The 2.8" uses the same RP2350A and panel with a CST328 touch
 controller.
 
 ### Pin map (2.0", from the official schematic)
 
 | Function | GPIO | Notes |
 |---|---|---|
-| LCD (liquid-crystal display) DC / CS / SCK / MOSI / RST | 16 / 17 / 18 / 19 / 20 | SPI0 |
-| LCD backlight | 15 | NPN low-side switch, PWM (pulse-width modulation) at 20 kHz, 8-bit |
-| Touch + IMU I2C SDA / SCL | 12 / 13 | I2C0, **shared bus** (touch 0x15, IMU 0x6B) |
-| Touch INT | 29 | active low |
+| LCD (liquid-crystal display) DC / CS / SCK / MOSI / RST | 16 / 17 / 18 / 19 / 20 | SPI0. DC is data/command, CS chip select, SCK serial clock, MOSI master out, slave in, RST reset |
+| LCD backlight | 15 | NPN (negative-positive-negative) transistor as low-side switch, PWM (pulse-width modulation) at 20 kHz, 8-bit |
+| Touch + IMU I2C SDA / SCL | 12 / 13 | I2C0, **shared bus** (touch 0x15, IMU 0x6B). SDA is serial data, SCL serial clock |
+| Touch INT | 29 | interrupt, active low |
 | Touch RESET | 20 | **same net as LCD_RST**: resetting one resets both |
 | Battery sense | 28 | ADC (analog-to-digital converter) input 2, 200k/100k divider → `VBAT = Vadc × 3` |
 | microSD | 24–27 | SPI1, blackbox logging, see below. (2.8": SDIO on 19–24) |
@@ -123,7 +124,7 @@ Two wires:
 | ESC | Board |
 |---|---|
 | Signal | **GP4**, P2 header pin 11 |
-| Ground | **GND**, P2 header pin 13 |
+| Ground | **GND** (ground), P2 header pin 13 |
 
 The ESC pin is set on the board under **CFG → SETUP** and stored in flash.
 `DSHOT_PIN_LCD_2` in `config.h` is the pin a board with blank flash starts on.
@@ -188,8 +189,9 @@ effect.
 
 ## Building
 
-Native [Pico SDK](https://github.com/raspberrypi/pico-sdk) with CMake. No
-Arduino core, no IDE.
+Native [Pico SDK](https://github.com/raspberrypi/pico-sdk) (software
+development kit) with CMake. No Arduino core, no IDE (integrated development
+environment).
 
 Requirements: `cmake` 3.18 or later, `ninja` and an `arm-none-eabi` toolchain.
 
@@ -268,10 +270,10 @@ files names the rcbench commit it was taken from.
 
 | Dependency | Version | Pinned by |
 |---|---|---|
-| pico-sdk | 2.1.1 | commit SHA (hash) |
-| no-OS-FatFS-SD-SDIO-SPI-RPi-Pico | v3.6.2 | commit SHA |
+| pico-sdk | 2.1.1 | commit hash |
+| no-OS-FatFS-SD-SDIO-SPI-RPi-Pico | v3.6.2 | commit hash |
 
-Each SHA has its tag in a comment beside it. A tag can be moved; a SHA cannot.
+Each hash has its tag in a comment beside it. A tag can be moved; a hash cannot.
 
 Two constraints on these dependencies:
 
@@ -539,7 +541,8 @@ unused number from 00001 to 09999. Existing files are not overwritten.
 
 The 2.0" drives the card over hardware SPI at 12 MHz (`SD_LOG_SPI_MHZ`). The
 2.8" uses 4-bit PIO SDIO at 10 MHz (`SD_LOG_SDIO_HZ`). The 2.8" cannot use
-hardware SPI: its SD clock is on GP19, which is SPI0 TX in the pin mux.
+hardware SPI: its SD clock is on GP19, which is SPI0 TX (transmit) in the pin
+mux.
 
 Open the screen with **CFG → SD LOG**. By default arming starts a log and
 disarming stops it (`SD_LOG_AUTO_ON_ARM`). Auto-stop ends only a log that
@@ -560,10 +563,10 @@ The logger drops frames rather than block. The UI never waits for the card.
 the USB host as a read-only removable drive, using MSC (mass storage class) on
 the same USB cable as the serial port. The logger unmounts before the drive
 appears and touches the card again only after eject. The host and the
-firmware never share the FAT volume. The request is refused while armed
-(`DISARM FIRST`), while recording (`STOP RECORDING FIRST`) or with no card
-(`NO CARD TO SHARE`). Arming is blocked while the host holds the card. See
-`src/usb_msc.h`.
+firmware never share the FAT volume. Without a card the button is drawn
+unavailable and does nothing. With a card, the request is refused while armed
+(`DISARM FIRST`) or while recording (`STOP RECORDING FIRST`). Arming is
+blocked while the host holds the card. See `src/usb_msc.h`.
 
 ### Tuning
 
@@ -743,9 +746,9 @@ The host test harness runs two cross-checks:
   configurator: init string, all six command encodings, CRC polynomial and
   byte order, ACK position, and all three MCU-to-address mappings.
 - The field table is decoded against that tool's default settings blob and
-  compared to the meanings in its byte comments: 14 poles, 24 kHz, 2200 KV,
-  15° advance, 3.0 V cell cutoff, 1502 µs servo neutral, 204 A current limit,
-  and others.
+  compared to the meanings in its byte comments: 14 poles, 24 kHz, 2200 KV
+  (motor velocity constant, RPM per volt), 15° advance, 3.0 V cell cutoff,
+  1502 µs servo neutral, 204 A current limit, and others.
 
 ---
 
@@ -833,12 +836,13 @@ tools/
   sdtest/               standalone SD bring-up test; built locally, never released
   make_previews.py      restitches docs/*.png and wiki/img/ from the test suite's frames
   check_wiki.py         wiki link, anchor and image checks
+  coverage.py           host-suite line coverage: writes and checks the README and STATUS.md figures
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + preview images
 docs/design/            design notes, kept in step with the code
 test/                   host test suites + Pico SDK stubs
 wiki/                   the user manual, mirrored to the GitHub wiki
-.github/workflows/      CI
+.github/workflows/      ci.yml (CI), release.yml (Release), docs.yml (Docs: wiki publishing)
 ```
 
 All firmware source is under `src/`, `main.cpp` included. Files include each
@@ -850,21 +854,32 @@ host test binary and tested directly, without a board.
 
 ### Tests
 
-The firmware's own logic runs on a PC against stubs in `test/stubs/` that mirror the
-Pico SDK signatures:
+The firmware's own logic runs on a host computer against stubs in `test/stubs/`
+that mirror the Pico SDK signatures:
 
 ```sh
 cd test && make
 ```
 
-Needs nothing but a C++17 compiler and a C11 compiler: the DShot core in `src/dshot/` is
-compiled as C, as the firmware compiles it, and linked into the C++ suite. Time is
-virtual — `millis()` advances only when a test says so — which makes hold-to-arm,
-hold-to-write and gesture repeat deterministic rather than dependent on machine speed. The fake ESC serves a real settings blob recovered from
-the reference configurator, so the UI tests operate on values a real ESC would report.
-The suite renders every screen to PPM (portable pixmap) images as it runs — splash, the main screen live, armed
-and with the ESC gone, the settings screen in each of its states, all three SD log states
-and the four AM32 screens — so a layout change is visible in the frames.
+Needs nothing but a C++17 compiler and a C11 compiler: the DShot core in
+`src/dshot/` is compiled as C, as the firmware compiles it, and linked into the
+C++ suite. Time is virtual — `millis()` advances only
+when a test says so — which makes hold-to-arm, hold-to-write and gesture repeat
+deterministic rather than dependent on machine speed. The fake ESC serves a real
+settings blob recovered from the reference configurator, so the UI tests operate
+on values a real ESC would report. The suite renders 26 screens to PPM (portable
+pixmap) images as it runs, so a layout change is visible in the frames:
+
+- the splash;
+- six of the main screen: disarmed, armed, live, stale, with KISS values,
+  high contrast;
+- six of CFG: on arrival, the EDT chip on and off, BEEP accepted and refused,
+  unsaved settings;
+- two of CFG → SETUP: normal and high contrast;
+- six of CFG → SD LOG: ready, recording, no card, a card found by RETRY, USB
+  DRIVE refused, USB DRIVE serving;
+- five of the AM32 editor: list, field edit, scrolled, written, hex view.
+
 Failing tests dump their frame too.
 
 `make previews` restitches the images in `docs/` from those frames. It is a separate
@@ -909,10 +924,11 @@ the per-board pin options reach the build. The check that a value reaches the
 firmware is in the host job, which rebuilds the suite
 with the macros overridden.
 
-The permutation job exists because those options are exactly the ones nobody compiles by
-hand. `check_docs.py` enforces documentation precisely — public API documented, `@param`
-names matching signatures, no dangling `@ref` — where Doxygen's `WARN_IF_UNDOCUMENTED`
-would also demand a comment on every file-static `s_scroll`.
+The permutation job exists because those options are exactly the ones nobody
+compiles by hand. `check_docs.py` enforces documentation precisely — public API
+(application programming interface) documented, `@param` names matching
+signatures, no dangling `@ref` — where Doxygen's `WARN_IF_UNDOCUMENTED` would
+also demand a comment on every file-static `s_scroll`.
 
 `docs.yml` publishes `wiki/` to the GitHub wiki after every successful Release run, from a
 tag push or started by hand, so the wiki describes firmware that can be downloaded. It
@@ -945,7 +961,7 @@ The workflow refuses four things:
   magic and a size that is a multiple of 512 bytes.
 - **Inventing a tag**: `--verify-tag` aborts if the tag was never pushed.
 - **Leaving a half-populated release**: creating a release and attaching assets
-  are separate API (application programming interface) calls, so the workflow reads the release back and confirms
+  are separate API calls, so the workflow reads the release back and confirms
   every expected asset is present.
 
 ### API documentation
@@ -969,11 +985,11 @@ README is the front page.
 
 ### Rendering
 
-The whole 240×320 RGB565 frame lives in SRAM (static RAM): 150 KB of the RP2350's 520 KB.
-Draw calls record the rows they touched. Only those full-width bands are sent
-by DMA, each as one contiguous transfer. Each UI zone caches the values it last
-drew and skips drawing when nothing changed, so a static screen sends almost
-no SPI traffic.
+The whole 240×320 RGB565 frame lives in SRAM (static random-access memory):
+150 KB of the RP2350's 520 KB. Draw calls record the rows they touched. Only those
+full-width bands are sent by DMA, each as one contiguous transfer. Each UI zone
+caches the values it last drew and skips drawing when nothing changed, so a
+static screen sends almost no SPI traffic.
 
 **Pixel format**: the SPI peripheral uses 16-bit frames for pixel data, so
 RGB565 words go out MSB-first (most significant byte first) with no software
@@ -983,18 +999,21 @@ byte swap. Commands use 8-bit frames. The panel clock is set to 62.5 MHz
 ### The user manual
 
 The [wiki](https://github.com/subtilitas/DshotDisplay/wiki) source is `wiki/`
-in this repository, in English and German. CI mirrors it to GitHub and
-overwrites edits made in the browser. Every page says so in its footer.
+in this repository, in English and German. `docs.yml` mirrors it to GitHub
+after each successful Release run and overwrites edits made in the browser.
+Every page says so in its footer.
 
-Its screenshots are not committed. The host suite renders them, one PNG per
-captured screen, with the same tool that builds the previews above:
+Its screenshots are not committed. The host suite renders them, one PNG
+(Portable Network Graphics) image per captured screen, with the same tool that
+builds the previews above:
 
 ```bash
 cd test && make wiki      # render wiki/img/, then check every link and image
 ```
 
-CI runs this on every push. A renamed page or a dropped `fakeDumpFrame()` call
-fails the commit that caused it.
+The Host tests job in `ci.yml` runs the same render and check on every push to
+`main` or `master` and on every pull request. A renamed page or a dropped
+`fakeDumpFrame()` call fails that run.
 
 ---
 

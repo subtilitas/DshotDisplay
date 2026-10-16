@@ -68,9 +68,11 @@ beiden: Es erkennt die Platine bei jedem Start und zeigt das Ergebnis unter
 ---
 
 *The project's test suite renders the screenshots on this wiki from the UI
-code. CI (continuous integration) publishes them with the wiki, so they match
-the released firmware.*
+(user interface) code. After each release the Docs workflow (`docs.yml`)
+renders them at the release tag and publishes them with the wiki, so they
+match the released firmware.*
 
 *Die Testsuite des Projekts erzeugt die Screenshots in diesem Wiki aus dem
-UI-Code. Die CI (Continuous Integration) veröffentlicht sie mit dem Wiki,
-daher entsprechen sie der veröffentlichten Firmware.*
+Code der Bedienoberfläche (UI, User Interface). Nach jedem Release erzeugt der
+Docs-Workflow (`docs.yml`) sie am Release-Tag neu und veröffentlicht sie mit
+dem Wiki, daher entsprechen sie der veröffentlichten Firmware.*

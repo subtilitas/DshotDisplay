@@ -69,7 +69,7 @@ means the card answers and the filesystem is the problem. Format it as FAT32.
 
 ### A card inserted after boot
 
-<img src="img/log-mounted.png" width="240" alt="A card found by RETRY MOUNT">
+<img src="img/log-mounted.png" width="240" alt="A card found by RETRY">
 
 Press `RETRY`. Without it, a card inserted after power-up is not mounted.
 
@@ -96,7 +96,9 @@ writers. Before the drive appears the logger flushes, closes and unmounts, and
 it does not touch the card until eject. Meanwhile the SD LOG screen shows the
 handover in place of its counters.
 
-**The button refuses in three cases, and names the reason:**
+Without a card, `USB DRIVE` is drawn unavailable and does nothing.
+
+**With a card, the button refuses in two cases, and names the reason:**
 
 <img src="img/log-usb-refused.png" width="240" alt="USB DRIVE refused while recording">
 
@@ -104,7 +106,6 @@ handover in place of its counters.
 |---|---|
 | `DISARM FIRST` | Disarm. The handover pauses the logger |
 | `STOP RECORDING FIRST` | Stop the recording |
-| `NO CARD TO SHARE` | Insert or mount a card |
 
 **Arming is blocked while the computer holds the card.** `BACK` leaves the
 screen without cancelling the handover, so the tester screen is reachable, but
@@ -142,8 +143,8 @@ Fields per frame:
 | `motor[0]` | Commanded throttle |
 | `eRPM[0]` | eRPM (electrical RPM) from bidirectional DShot |
 | `eRPMkiss[0]` | eRPM from KISS |
-| `vbatLatest`, `amperageLatest` | Voltage and current, KISS where live, else EDT (Extended DShot Telemetry) |
-| `vbatEdt`, `amperageEdt` | Voltage and current from EDT |
+| `vbatLatest`, `amperageLatest` | Voltage and current from KISS; 0 while KISS is not live |
+| `vbatEdt`, `amperageEdt` | Voltage and current from EDT (Extended DShot Telemetry) |
 | `escTemperature[0]` | ESC (electronic speed controller) temperature |
 | `escConsumption` | Consumed mAh (KISS only) |
 | `escStress` | EDT stress value |

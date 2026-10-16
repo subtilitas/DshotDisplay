@@ -235,14 +235,16 @@ jobs:
 
           | File | Use it when |
           |---|---|
-          | `DshotDisplay-VERSION-unified.uf2` | **Start here.** Runs on either board; the first boot detects which one it is on (a safe probe of the board's always-on I2C devices) and shows the answer under **CFG → SETUP** to confirm with a save |
-          | `DshotDisplay-VERSION-touch-lcd-2.uf2` | The 2.0" board only. A few kB smaller, and never asks |
-          | `DshotDisplay-VERSION-touch-lcd-2.8.uf2` | The 2.8" board only |
+          | `DshotDisplay-VERSION-unified.uf2` | **Start here.** Runs on either board. Every boot identifies the board by probing its always-on I2C (Inter-Integrated Circuit) devices. **CFG → SETUP** shows the result, read-only |
+          | `DshotDisplay-VERSION-touch-lcd-2.uf2` | The 2.0" board only. A few kB smaller. Skips the probe |
+          | `DshotDisplay-VERSION-touch-lcd-2.8.uf2` | The 2.8" board only. Skips the probe |
 
-          The unified image costs about 3 kB of flash over a single-board one,
-          against 4 MB available. Take it unless you have a reason not to: the
-          single-board images are indistinguishable once flashed, and the 2.8"
-          one asserts a power latch the 2.0" does not.
+          The unified image costs a few kB of flash against 4 MB available.
+          A single-board image flashed onto the other board drives the wrong
+          pins, and the 2.8" one asserts a power latch the 2.0" does not.
+          If the probe finds no board, or both, the unified image stops with
+          the latch held, the display off and no DShot output. It stays
+          reachable over USB (Universal Serial Bus) for reflashing.
 
           ## Flashing
 
@@ -252,25 +254,35 @@ jobs:
 
           ## Wiring
 
+          Two wires run from the ESC (electronic speed controller):
+
           | ESC | 2.0" board | 2.8" board |
           |---|---|---|
           | Signal | **GP4** — P2 header, pin 11 | **GP29** — J4 pin 12 |
           | Ground | **GND** — P2 header, pin 13 | **GND** — J4 pin 1 or 5 |
 
-          The 2.8" brings out only GP28 and GP29. Either works — change it on the
-          board itself from **CFG → SETUP**, which remembers the choice across
-          power cycles. An ESC on the wrong pin used to be silent with no error
-          anywhere; the SETUP screen now shows the live packet rate beside the
-          pin selector, so you can see it come off zero.
+          The 2.8" brings out only GP28 and GP29. The ESC pin is a setting
+          under **CFG → SETUP**, kept across power cycles after **HOLD TO SAVE**.
+          A wrong pin produces no error: the ESC receives no frames. The
+          **LINK** row on the same screen shows the live packet rate. A
+          non-zero rate means the pin is correct.
 
-          Cut or depin the middle wire of the ESC lead: it is the BEC +5 V output,
-          and RP2350 GPIO is not 5 V tolerant.
+          Cut or depin the middle wire of the ESC lead: it is the BEC (battery
+          eliminator circuit) +5 V output, and RP2350 GPIO (general-purpose
+          input/output) pins are not 5 V tolerant.
 
           ## Optional: KISS telemetry
 
           A third wire from the ESC's telemetry pad gives 0.01 V and 0.01 A
-          instead of Extended DShot Telemetry's 0.25 V and 1 A. On the 2.0" board
-          it lands on **GP5**, P1 header pin 10. The 2.8" has no free pin for it.
+          steps instead of Extended DShot Telemetry's 0.25 V and 1 A. It lands
+          on **GP5**, P1 header pin 10, on the 2.0" board, and on **GP28**, J4
+          pin 11, on the 2.8". KISS is on by default on the 2.0" and off on the
+          2.8", where the ESC takes one of the two free pins. One tap under
+          **CFG → SETUP** turns it on.
+
+          The level the ESC drives on this line is not measured by this
+          project. The KISS specification puts it at 3.6 V, the RP2350's
+          absolute-maximum GPIO voltage. Measure yours before connecting it.
 
           ## Verify the download
 

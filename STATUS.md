@@ -3,13 +3,11 @@
 The running record: what exists, how far each part is verified, and what is
 open. Two parts of this file are held to the tree by a checker. Every relative
 link here and in [CHANGELOG.md](CHANGELOG.md) is checked by
-`test/check_docs.py`. The coverage table under "Tests and CI" is written and
-checked by `tools/coverage.py`. Nothing else is checked: the architecture
-figures, pin numbers, suite and job lists and verification states are written
-by hand against commit 82baec4, the branches that add the Coverage job and
-`docs.yml`, the branch that replaces the DShot driver (`feat/dshot-mit`), and
-the issue tracker as of 2026-10-16. Read them as a dated
-record, not as an inventory.
+`test/check_docs.py`. The coverage table under "Tests and CI" (continuous
+integration) is written and checked by `tools/coverage.py`. Nothing else is
+checked: the architecture figures, pin numbers, suite and job lists and
+verification states are written by hand, against the code and the issue tracker
+as of 2026-10-16. Read them as a dated record, not as an inventory.
 
 [README.md](README.md) is the technical document, the
 [wiki](https://github.com/subtilitas/DshotDisplay/wiki) is the manual,
@@ -57,7 +55,8 @@ Rates and defaults, from `src/config.h` and `src/main.cpp`:
   14.5 bytes a frame, 7.3 kB/s, per `config.h`. 8192-byte ring buffer, 512-byte
   card writes, 16 MiB pre-allocated per file, directory entry synced every
   2000 ms.
-- Display: 240 × 320 pixel RGB565 framebuffer (153,600 bytes), panel SPI
+- Display: 240 × 320 pixel RGB565 framebuffer (16 bits per pixel: 5 red,
+  6 green, 5 blue; 153,600 bytes), panel SPI
   (Serial Peripheral Interface) clock 62.5 MHz.
 - Serial dump over USB CDC (communications device class) at 10 Hz
   (`SERIAL_TELEMETRY` = 1).
@@ -91,12 +90,12 @@ apart. Exactly one answering bus selects the board. Otherwise the firmware
 holds a safe state: power latch held, no display, no DShot. The board is never
 stored and never chosen by the user.
 
-Build: native Pico SDK 2.1.1 with CMake, ARM cores
+Build: native Pico SDK (software development kit) 2.1.1 with CMake, ARM cores
 only. The one dependency besides the SDK is pinned by commit:
 `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2. The DShot driver in `src/dshot/` is
 part of the tree, from rcbench `protocols/dshot` at commit 453cf334 (MIT, same
-copyright holder). A release carries three UF2
-(USB Flashing Format) images: `touch-lcd-2`, `touch-lcd-2.8` and `unified`.
+copyright holder). A release carries three UF2 (USB Flashing Format) images:
+`touch-lcd-2`, `touch-lcd-2.8` and `unified`.
 
 ## Boards
 
@@ -141,7 +140,7 @@ record either way.
 | Board detection, unified image | board selection and defaults | not recorded |
 | Touch handling, high-contrast theme, throttle gauge | tap on release, repeats, screen residue, gauge reach | hardware use recorded: the reports #22 to #24 named in the v2.3 commits; the fixes on hardware: not recorded |
 | Serial telemetry dump | none | not recorded |
-| `tools/sdtest`, SD bring-up firmware | none, not built in CI (continuous integration) | hardware use recorded on both boards: f16a70f, e9c9d9a |
+| `tools/sdtest`, SD bring-up firmware | none, not built in CI | hardware use recorded on both boards: f16a70f, e9c9d9a |
 
 KISS in detail. The owner reports KISS telemetry working on hardware, the
 display's own telemetry request included. Issue #1 separately reports correct
@@ -196,8 +195,9 @@ merged.
 5. **Settings flash and the USB card reader on hardware.** Not recorded.
 6. **Design questions left open** in [kiss-telemetry.md](docs/design/kiss-telemetry.md)
    and [blackbox-logging.md](docs/design/blackbox-logging.md): which eRPM source
-   the main readout uses above about 5,000 RPM, whether consumption is shown
-   from ESC power-on or from arming, whether a slow frame type is worth adding.
+   the main readout uses above the crossover (about 5,500 RPM on a 14-pole
+   motor), whether consumption is shown from ESC power-on or from arming,
+   whether a slow frame type is worth adding.
 7. **`tools/sdtest` is built by nothing in CI**, so a change that breaks it
    shows only in a local build.
 8. **Licence of a distributed image.** The repository's code is MIT, the
@@ -222,8 +222,9 @@ merged.
 - **Bidirectional DShot only.** An ESC that does not accept the inverted
   bidirectional signal is not driven.
 - **Saved settings outrank `config.h`.** On a board with saved settings, a
-  changed default in `config.h` has no effect after reflashing. SETUP marks
-  each row SAVED or DEFAULT.
+  changed default in `config.h` has no effect after reflashing. SETUP marks the
+  whole block, not each row: while no change is pending, its note line reads
+  `SAVED SETTINGS IN USE` or `COMPILED DEFAULTS IN USE`.
 - **Power loss during a log.** A log is readable up to its last directory
   sync, so pulling power loses up to 2000 ms (`SD_LOG_SYNC_MS`).
 - **Logs past the pre-allocation.** 16 MiB lasts about 38 minutes at

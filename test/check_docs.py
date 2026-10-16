@@ -26,7 +26,9 @@ file-static internals. A comment on `s_scroll` saying "scroll position" is
 noise; a public function with no documentation, or an @param that silently
 stopped matching after a rename, is not.
 
-Exit status is the number of problems, so CI fails without extra plumbing.
+Exit status is the number of problems, capped at 255: a process exit status
+holds 8 bits, so an uncapped count of 256 would read as success. CI fails on
+any non-zero status without extra plumbing.
 
 Paths are resolved from the repository root, found from this file's own
 location, so the result does not depend on the directory the script is run
@@ -67,25 +69,59 @@ def collect_symbols():
     return symbols
 
 
+# An opening code fence: up to three spaces, then three or more backticks or
+# tildes. A backtick fence may not have a backtick in its info string.
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def strip_fences(text):
+    """Drop fenced code blocks, ``` and ~~~ alike, indented at most 3 spaces.
+
+    A block closes on a fence of the same character, at least as long as the
+    opening one, with nothing after it. An unclosed block runs to the end.
+    A fence nested in a list item (indented 4 spaces or more) and an
+    indented code block are not recognised: links inside them are checked.
+    No checked document uses either form.
+    """
+    out, fence = [], None
+    for line in text.splitlines(keepends=True):
+        m = FENCE.match(line.rstrip("\n"))
+        if fence is None:
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence = m.group(1)
+            else:
+                out.append(line)
+        elif (m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence)
+              and not m.group(2).strip()):
+            fence = None
+    return "".join(out)
+
+
 def strip_code(text):
     """Drop fenced blocks and inline code spans; brackets there are not links."""
-    text = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
-    return re.sub(r"`[^`\n]*`", "", text)
+    return re.sub(r"`[^`\n]*`", "", strip_fences(text))
 
 
 def heading_text(title):
-    """A heading's rendered text: links become their label, markup is dropped."""
+    """A heading's rendered text: links become their label, markup is dropped.
+
+    Emphasis delimiters (* and _ at the edge of a word) are markup, so
+    '## _ital_' renders as 'ital'. An underscore inside a word, as in
+    'snake_case', and anything inside a code span are literal text.
+    """
     title = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", title)   # [label](url)
     title = re.sub(r"<[^>]+>", "", title)                         # inline HTML
-    return title.replace("`", "")
+    parts = re.split(r"(`[^`]*`)", title)
+    for i in range(0, len(parts), 2):                             # outside code
+        parts[i] = re.sub(r"(?<![\w\\])[*_]+|(?<!\\)[*_]+(?!\w)", "", parts[i])
+    return "".join(parts).replace("`", "")
 
 
 @functools.lru_cache(maxsize=None)
 def heading_anchors(path):
     """The anchors GitHub generates for the headings of a Markdown file."""
     anchors, seen = set(), {}
-    text = re.sub(r"^```.*?^```", "", open(path, encoding="utf-8").read(),
-                  flags=re.S | re.M)
+    text = strip_fences(open(path, encoding="utf-8").read())
     for title in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", text, re.M):
         slug = re.sub(r"[^\w\- ]", "", heading_text(title).lower()).replace(" ", "-")
         n = seen.get(slug, 0)
@@ -228,7 +264,7 @@ def main():
         print(f"\n{len(problems)} problem(s):")
         for p in problems:
             print(f"  {p}")
-        return len(problems)
+        return min(len(problems), 255)
     print("documentation checks passed")
     return 0
 

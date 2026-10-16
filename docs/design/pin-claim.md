@@ -1,11 +1,7 @@
 # Pin claim and core1 jobs
 
-Status: planned. Nothing here is built. The design targets the DShot driver
-from rcbench (`out_dshot_bind()`, `out_dshot_release()`), which replaces
-`pico-bidir-dshot` on a separate branch; the claim is built after that port
-merges.
-
-Branch: `feat/servo-design` holds this design and no code.
+Status: planned. Nothing here is built. The design uses the DShot driver in
+`src/dshot/` (`out_dshot_bind()`, `out_dshot_release()`).
 
 Terms: ESC is electronic speed controller. DShot is the digital ESC protocol
 the tester drives; bidirectional DShot inverts the line and the ESC answers on

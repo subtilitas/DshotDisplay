@@ -91,6 +91,16 @@ its own wire. AM32 is an open-source ESC firmware.
 - `test/check_docs.py` checks links with single-quoted titles, angle-bracket
   targets and parentheses in the path, skips footnotes, and builds heading
   anchors from the rendered heading text.
+- `test/check_docs.py` strips `~~~` code fences as well as backtick fences,
+  builds heading anchors without `_` and `*` emphasis markers, and caps its
+  exit status at 255, so a multiple of 256 problems does not exit 0.
+- The release notes describe the board probe as it runs: on every boot,
+  shown read-only under CFG → SETUP. They give GP28 as the KISS pin of the
+  2.8" board, off by default.
+- The manual and README.md list two USB DRIVE refusals. Without a card the
+  button is drawn unavailable, so `NO CARD TO SHARE` cannot appear.
+- The manual gives `vbatLatest` and `amperageLatest` as KISS only, 0 while
+  KISS is not live, as `src/sd_log.cpp` writes them.
 - Three comments in `src/config.h` disagreed with the code: the SD
   preallocation of 16 MiB lasts about 38 min, SETUP shows one note line for
   saved settings or compiled defaults, and the card interface differs per
@@ -120,7 +130,8 @@ Merges PR #25.
 
 ## [2.2] - 2026-08-17
 
-Merges PR #20 and PR #21.
+Merges PR #20 and PR #21. The USB card reader comes from
+`feat/usb-mass-storage`.
 
 ### Added
 
@@ -149,7 +160,10 @@ Merges PR #20 and PR #21.
 ## [2.0] - 2026-08-15
 
 Merges PR #3, #7, #9, #10, #11, #15, #16 and #17, and the branch
-`test/multi-board-support`.
+`test/multi-board-support`. The SD card writer comes from the native Pico SDK
+port on `dev/pico-sdk-native`. The SD LOG screen, the KISS readout and the
+2.8" SDIO path come from `dev/multiboard-sdio`, the PIO KISS receiver from
+`feat/runtime-config`.
 
 ### Added
 

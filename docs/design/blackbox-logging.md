@@ -1,18 +1,5 @@
 # SD logging in Betaflight blackbox format
 
-Status: implemented on both boards. Hardware use is recorded in commits: the
-2.8" board mounted a card over SDIO at 25 MHz in `tools/sdtest` and wrote a
-file (036adfe); a replacement 2.0" board works over SPI (5b9c7bd). A run at the
-shipped SDIO clock of 10 MHz is not recorded separately. BUF PEAK and WORST
-FLUSH under sustained logging are not recorded, so the buffer size is
-unmeasured. See "Bring-up" below.
-
-Branches: the encoder was built on `dev/telemetry-logging` and released in
-v1.1.0 with nothing writing to a card. The card writer came with the port to
-the native Pico SDK on `dev/pico-sdk-native`; the SDIO path and the SD LOG
-screen on `dev/multiboard-sdio`. Logging first shipped in v2.0. The USB card
-reader came from `feat/usb-mass-storage` in v2.2.
-
 Terms: SD is Secure Digital, SPI is Serial Peripheral Interface, SDIO is
 Secure Digital input/output, PIO is the RP2350's programmable input/output,
 FAT is File Allocation Table, CSV is comma-separated values, ESC is electronic
@@ -21,7 +8,17 @@ Extended DShot Telemetry, eRPM is electrical revolutions per minute, RPM is
 revolutions per minute, KISS telemetry is the serial protocol of the KISS ESC
 line on its own wire, UI is user interface, USB is Universal Serial Bus, CI is
 continuous integration, VB is variable-byte, SDK is software development kit,
-GPIO is general-purpose input/output.
+GPIO is general-purpose input/output. In the pin tables, MISO is master in,
+slave out, MOSI master out, slave in, SCK and CLK the serial clock, CS and CSn
+chip select (n: active low), CMD the SDIO command line, RX receive and TX
+transmit.
+
+Status: implemented on both boards. Hardware use is recorded in commits: the
+2.8" board mounted a card over SDIO at 25 MHz in `tools/sdtest` and wrote a
+file (036adfe); a replacement 2.0" board works over SPI (5b9c7bd). A run at the
+shipped SDIO clock of 10 MHz is not recorded separately. BUF PEAK and WORST
+FLUSH under sustained logging are not recorded, so the buffer size is
+unmeasured. See "Bring-up" below.
 
 ## Why blackbox format rather than CSV
 
@@ -40,9 +37,8 @@ real `blackbox_decode`.
 
 ## Scope
 
-Both boards, by two different interfaces. The plan covered the 2.0" board
-only. The 2.8" was added when the 2.0" board in hand turned out to have a
-hardware fault and the question became which board could read a card at all.
+Both boards, by two different interfaces: hardware SPI on the 2.0", PIO SDIO
+on the 2.8". The board descriptor selects the interface at run time.
 
 ## Hardware
 
@@ -98,8 +94,8 @@ v3.6.2. `f_expand()` reserves a contiguous cluster run of
 FAT allocation mid-log. A failed reservation is not reported; the log then
 allocates as it grows.
 
-The plan named SdFat. SdFat is Arduino-bound and did not survive the move to
-the native Pico SDK.
+SdFat is not used: it depends on Arduino, and the firmware builds on the
+native Pico SDK.
 
 ## File format
 
@@ -108,7 +104,8 @@ Checked against `betaflight/blackbox-tools` (`src/parser.c`,
 
 ### Header
 
-ASCII `H <name>:<value>\n` lines. The first must be exactly the start marker;
+ASCII (American Standard Code for Information Interchange) `H <name>:<value>\n`
+lines. The first must be exactly the start marker;
 the parser uses it to find log boundaries in a file that may hold several.
 `bbBegin()` in `src/blackbox_encode.cpp` writes, among others:
 
@@ -142,7 +139,7 @@ Field 0 must be `loopIteration` and field 1 must be `time` (µs):
 | `P` | Inter: every field predicted from history. |
 | `E` | Event, including `LOG_END` (255). |
 | `S` | Slow: infrequently changing fields. Not written. |
-| `G`, `H` | GPS. Not applicable here. |
+| `G`, `H` | GPS (Global Positioning System). Not applicable here. |
 
 ### Predictors and encodings
 
@@ -197,7 +194,8 @@ unsigned field wraps to about 4.29e9 instead of failing, so values are clamped
 non-negative before encoding.
 
 Both eRPM sources are logged. Neither dominates: bidirectional DShot wins on
-rate, KISS wins on resolution above about 5,000 RPM on a 12 to 16 pole motor.
+rate, KISS wins on resolution above about 6,500 mechanical RPM on a 12-pole
+motor, 5,500 on 14 poles and 4,800 on 16.
 See [kiss-telemetry.md](kiss-telemetry.md#erpm-which-source-is-finer).
 Voltage and current are also logged per source rather than merged. It costs
 about two bytes a frame, and it means the KISS decoder can be checked against
@@ -209,11 +207,10 @@ log keeps the sources apart.
 DShot runs at 1 kHz, but eRPM is the only signal here that changes at that
 rate. KISS arrives at 50 Hz and the display repaints at 40 Hz.
 
-As built: 500 Hz frames (`SD_LOG_RATE_HZ`) with an I frame every 32
+The log writes 500 Hz frames (`SD_LOG_RATE_HZ`) with an I frame every 32
 (`SD_LOG_I_INTERVAL`, Betaflight's usual value). Both are compile-time
 settings. With 12 fields `config.h` gives about 14.5 bytes a frame, 7.3 kB/s or
-26 MB an hour. The plan's estimate, 20 kB/s at 1 kHz with 9 fields, is
-superseded.
+26 MB an hour.
 
 ## Buffering and where it runs
 
@@ -221,7 +218,7 @@ The failure to design against: an SD card stalls for tens of milliseconds
 during an internal erase, and code that blocks on it for that long breaks
 whatever else it was doing.
 
-As built, in `src/sd_log.cpp` and `src/log_ring.cpp`:
+In `src/sd_log.cpp` and `src/log_ring.cpp`:
 
 - `sdLogTick()` encodes into a RAM (random-access memory) ring buffer of
   `SD_LOG_BUFFER_BYTES`, 8192 bytes. `sdLogFlush()` writes it out in
@@ -237,13 +234,13 @@ As built, in `src/sd_log.cpp` and `src/log_ring.cpp`:
 - The ring tracks its high-water mark (BUF PEAK) and the log tracks its
   slowest single write or sync (WORST FLUSH). The SD LOG screen shows BUF PEAK
   against the buffer size, amber above half and red above three quarters.
-- 8192 bytes holds about 1.1 s at 7.3 kB/s. It has not been sized from a
-  measured stall; see "Bring-up".
+- 8192 bytes holds about 1.1 s at 7.3 kB/s. It is not sized from a measured
+  stall; see "Bring-up".
 
 ## Lifecycle
 
 - The card is mounted at boot. An absent card is not an error: logging is
-  unavailable and the screen says so. RETRY MOUNT mounts a card inserted
+  unavailable and the screen says so. RETRY mounts a card inserted
   later. A failed mount shows the FatFs result and the card type.
 - Files are `LOG00001.BFL` onwards, at the first free number. Betaflight uses
   `.BFL` for single logs and `.BBL` for concatenated ones.
@@ -271,8 +268,9 @@ them.
 2. Header and frames, and the straight-line time prediction across I frames.
 3. `make -C test bbcheck`, run by CI's Blackbox round-trip job: 2000 generated
    frames go through Betaflight's `blackbox_decode`, built from source, and
-   all 24,000 values must round-trip with no corrupt frames. This test caught
-   an I-frame history bug that every unit test passed.
+   all 24,000 values must round-trip with no corrupt frames. A unit test
+   checks the bytes against the same reading of the format the encoder was
+   written from; the round trip checks them against the reference decoder.
 4. A truncated file (the last frame cut in half) decoding up to the cut: not
    implemented.
 5. The encoder writes to a `BlackboxSink` the caller supplies, so the host
@@ -282,56 +280,58 @@ them.
 7. The SD LOG screen, manual logging against auto-on-arm, and the USB DRIVE
    handover rules, through `test/test_ui.cpp` and `test/test_usb_msc.cpp`.
 
-## Work breakdown
+## Where the code is
 
-1. `src/blackbox_encode.h` and `.cpp`: primitives, header, I and P frames,
-   predictor state. Done.
-2. Host tests for the primitives. Done.
-3. CI step: build `blackbox-tools`, generate a log, decode it, assert clean.
-   Done.
-4. `src/log_ring.h`: the buffer the encoder writes into. Done.
-5. `src/sd_log.cpp`: mount, pre-allocation, ring, chunked flush, overrun
-   counting, periodic sync. Done.
-6. Field table wired to `EscTelemetry` and the commanded throttle. Done.
-7. UI: card state, start and stop, bytes written, drops: CFG → SD LOG and a
-   REC indicator in the status bar. Done.
-8. `config.h`: log rate, I interval, buffer size, chunk size, pre-allocation,
-   sync interval, auto-on-arm. Done. Field selection is not configurable.
-9. Hardware bring-up: measure real throughput and worst-case stall, and size
-   the buffer from that. Mounting and writing are done on both boards; the
-   measurement is not recorded.
-10. README section. Done: "Blackbox logging to microSD".
+- `src/blackbox_encode.h` and `.cpp`: primitives, header, I and P frames,
+  predictor state.
+- `src/log_ring.h` and `.cpp`: the buffer the encoder writes into.
+- `src/sd_log.cpp`: mount, pre-allocation, ring, chunked flush, overrun
+  counting, periodic sync, and the field table filled from `EscTelemetry` and
+  the commanded throttle.
+- `src/ui.cpp`: CFG → SD LOG, with card state, start and stop, bytes written
+  and drops, and the REC (recording) indicator in the status bar.
+- `src/config.h`: log rate, I interval, buffer size, chunk size,
+  pre-allocation, sync interval, auto-on-arm. Field selection is not
+  configurable.
+- `.github/workflows/ci.yml`, job Blackbox round-trip: builds
+  `blackbox-tools`, generates a log, decodes it.
+- README.md, section "Blackbox logging to microSD".
 
 ## Bring-up
 
-Both boards mount a card and write files. The 2.8" did it first, over SDIO at
-25 MHz in `sdtest`; the 2.0" followed once its board was replaced.
+Recorded on hardware: the 2.8" board mounts a card over SDIO at 25 MHz in
+`tools/sdtest` and writes a file (036adfe). A replacement 2.0" board mounts a
+card and writes over SPI (5b9c7bd).
 
-The first 2.0" board never reached the code. Every card reported FatFs
-`FR_NOT_READY` at every clock rate from 12 MHz down to 200 kHz, and
-`tools/sdtest` found why: **GPIO27, the CMD line, was shorted to ground on that
-board.** It could not be driven high push-pull with the slot empty, so the card
-never received a command. A replacement board works over the same SPI path, so
-it was a fault of that unit, not of the design.
+One 2.0" board has GPIO27, the card's CMD line (SPI MOSI), shorted to ground.
+On that board every card reports FatFs `FR_NOT_READY` at every clock rate from
+12 MHz down to 200 kHz, because the card never receives a command.
+`tools/sdtest` shows the short: the pin does not go high when driven
+push-pull with the slot empty. The replacement board works over the same SPI
+path, so the fault is in that unit, not in the design. That record excludes
+these causes of `FR_NOT_READY`:
 
-Ruled out along the way: the pin map (checked against the schematic netlist),
-the SPI clock (all five rates failed identically), exFAT (enabled), SDXC
-(HCS/CCS handled), the driver's init sequence (correct 74-clock preamble), and
-the integration (`tools/sdtest` shares only `sd_hw_config.c` with the firmware
-and failed the same way).
+- the pin map, checked against the schematic netlist;
+- the SPI clock: all five rates fail identically;
+- exFAT (Extended File Allocation Table) support, which is enabled;
+- SDXC (Secure Digital eXtended Capacity) cards, whose HCS (Host Capacity
+  Support) and CCS (Card Capacity Status) bits the driver handles;
+- the driver's init sequence, which sends the 74-clock preamble;
+- the firmware integration: `tools/sdtest` shares only `sd_hw_config.c` with
+  the firmware and fails the same way.
 
-Two mistakes in the bring-up tools produced confident wrong answers:
+Two properties of `tools/sdtest` keep its answers correct:
 
-- The pin test used an internal pull-down, which triggers erratum
-  **RP2350-E9**: a pad so configured latches at about 2.1 V and reads high from
-  then on. It reported six good SDIO lines as "held high". The test now drives
-  the pad and reads it back, which the erratum does not affect.
-- "Retry at a lower clock" retried nothing: the driver caches both the SPI
-  setup and the card state and revisits neither, so every attempt used the
-  first speed.
+- The pin test drives each pad and reads it back. It does not use the
+  internal pull-down: on the RP2350 that triggers erratum **RP2350-E9**, where
+  a pad so configured latches at about 2.1 V and reads high from then on, and
+  a good line reports as "held high".
+- Each attempt at a lower clock forces a full re-initialisation. The driver
+  caches both the SPI setup and the card state and revisits neither, so a
+  plain retry runs at the first speed.
 
-Still unmeasured: BUF PEAK and WORST FLUSH under sustained logging, which are
-what should size `SD_LOG_BUFFER_BYTES`. 8192 bytes is unmeasured.
+Unmeasured: BUF PEAK and WORST FLUSH under sustained logging, which are what
+should size `SD_LOG_BUFFER_BYTES`. 8192 bytes is unmeasured.
 
 ## Open questions
 
