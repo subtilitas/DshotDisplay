@@ -2,56 +2,56 @@
 
 # AM32-Konfiguration
 
-Die Einstellungen eines AM32-ESC über dasselbe Signalkabel lesen, ändern und
-schreiben — ohne Laptop und ohne Konfigurator.
+Dieser Bildschirm liest, ändert und schreibt die Einstellungen eines AM32-ESC
+(Electronic Speed Controller, Motorregler) über das Signalkabel. Er braucht
+keinen Laptop und keinen Konfigurator. Er aktualisiert keine ESC-Firmware.
 
 <img src="img/am32-list.png" width="240" alt="AM32-Einstellungsliste">
 
-> **Das schreibt in den Flash deines ESC.** Alles hier ist rücknehmbar, solange
-> du auf diesem Bildschirm bist, und nichts erreicht den ESC, bevor du eine
-> Schaltfläche eine volle Sekunde gehalten hast. Aber eine geschriebene
-> Einstellung ist geschrieben.
+> **Das schreibt in den Flash deines ESC.** Änderungen bleiben im Tester, bis
+> du `HOLD TO WRITE` 1 s lang hältst. Danach stehen sie im ESC.
 
 ---
 
 ## Verbinden
 
-`CFG → AM32`.
+`CFG → AM32` öffnen.
 
-Der Bildschirm übergibt den Signalpin von der DShot-Ausgabe an den
-Bootloader-Transport und beginnt dann, nach einem ESC zu suchen.
+Der Bildschirm übergibt den Signalpin vom DShot-Treiber an die
+Bootloader-Verbindung (19200 Baud, ein Draht, halbduplex) und beginnt dann zu
+suchen.
 
-**Dann den ESC neu starten.** Das ist nicht optional und keine Schikane des
-Testers: der AM32-Bootloader lauscht nur in einem kurzen Fenster beim
-Einschalten. Zieh den ESC-Akku ab und steck ihn wieder an, **während dieser
-Bildschirm angezeigt wird**. Die Firmware wiederholt ihren Verbindungsaufbau so
-schnell sie kann, damit sie gerade sendet, wenn dieses Fenster auftaucht.
+**Dann den ESC neu starten.** Der AM32-Bootloader lauscht nur in einem kurzen
+Fenster nach dem Einschalten. Zieh den ESC-Akku ab und steck ihn wieder an,
+während dieser Bildschirm offen ist. Die Firmware wiederholt ihren
+Verbindungsaufbau und wartet je 30 ms auf eine Antwort, damit sie sendet, wenn
+das Fenster aufgeht. Die Länge des Fensters ist nicht gemessen.
 
-Du siehst `SEARCHING...` und einen Ladekringel. Erwischt sie das Fenster,
-erscheint die Liste, und der Streifen unter dem Titel nennt den ESC und seine
-Firmware-Version.
+Der Bildschirm zeigt `SEARCHING...`, dann `WAITING... (TRY n)` mit einem
+Versuchszähler, und einen Ladekringel. Bei Erfolg erscheint die Liste, und der
+Streifen unter dem Titel zeigt den ESC-Namen, die MCU-Familie (Microcontroller)
+und die Firmware-Version.
 
-Kommen Bytes zurück, die sich nicht deuten lassen, sagt der Bildschirm das
-ausdrücklich — `REPLY NOT UNDERSTOOD` mit den ersten Bytes und der Baudrate. Das
-ist ein anderes Problem als Schweigen und lohnt die Unterscheidung: es heißt,
-das Kabel ist in Ordnung und die Rahmenbildung nicht.
+Kommen Bytes an, die sich nicht deuten lassen, zeigt der Bildschirm
+`REPLY NOT UNDERSTOOD:`, die Byteanzahl, die ersten drei Bytes und die
+Baudrate sowie `LINK WORKS BUT FRAMING IS OFF.` Das heißt: Das Kabel
+funktioniert, Rahmenbildung oder Baudrate passen nicht.
 
 ---
 
 ## Blättern
 
-Die Liste scrollt durch Ziehen. Sie folgt deinem Finger, sobald die Bewegung
-erkannt ist, und ein Ziehen wählt nie etwas aus — du kannst also durchblättern,
-ohne Zeilen aufleuchten zu lassen, die du gar nicht treffen wolltest.
+Hoch oder runter ziehen scrollt. Die Liste folgt dem Finger 1:1, sobald die
+Bewegung erkannt ist. Ziehen wählt nie eine Zeile aus.
 
 <img src="img/am32-scrolled.png" width="240" alt="Die Liste mitten im Scrollen">
 
-Ein **Tippen, das nirgendwohin geht**, wählt die Zeile darunter aus. Die
-Editorleiste am unteren Rand zeigt dann Namen und Wert dieses Feldes.
+Ein **Tippen ohne Bewegung** wählt die Zeile darunter aus. Die Editorleiste am
+unteren Rand zeigt dann Namen und Wert des Feldes.
 
-Die Zeilen sind gruppiert, mit dem Gruppennamen in Grau darüber. Welche Felder
-es gibt, hängt von der Layout-Version des ESC ab — die Firmware zeigt nur die,
-die zur gelesenen Version passen.
+Die Zeilen sind gruppiert, mit dem Gruppennamen in Grau über jeder Gruppe.
+Welche Felder es gibt, hängt von der Layout-Version der ESC-Einstellungen ab.
+Angezeigt werden nur die Felder, die zur gelesenen Version passen.
 
 ---
 
@@ -62,25 +62,22 @@ die zur gelesenen Version passen.
 | Geste | Wirkung |
 |---|---|
 | Zeile antippen | Auswählen |
-| `-` / `+` in der Editorleiste | **Fein** — ein Schritt je Betätigung. Halten wiederholt, zunehmend schneller |
-| Zeile **seitwärts** wischen | **Grob** — ein Wisch über die volle Breite deckt den gesamten Bereich des Feldes ab |
+| `-` / `+` in der Editorleiste | **Fein**: ein Schritt je Betätigung. Halten wiederholt, zunehmend schneller |
+| Zeile **seitwärts** wischen | **Grob**: 180 px Weg decken den gesamten Bereich des Feldes ab |
 | **Hoch / runter** ziehen | Scrollen |
 
-Eine Geste ist entweder Scrollen oder Ändern, nie beides: die Achse wird in den
-ersten Pixeln der Bewegung entschieden und dann festgehalten.
+Eine Geste ist entweder Scrollen oder Ändern. Die Achse steht nach 6 px
+Bewegung fest.
 
-Grobe Wischer beachten die Schrittweite des jeweiligen Feldes, sodass Werte, die
-gültig bleiben müssen, es auch tun — die Polzahl bleibt zum Beispiel gerade. Sie
-setzen an den Enden neu an: schießt du oben über und wischst ein Stück zurück,
-reagiert es sofort, statt erst zurücklaufen zu müssen, wie weit du hinausgekommen
-bist.
+Grobe Wischer rasten auf die Schrittweite des Feldes ein, sodass Werte gültig
+bleiben; die Polzahl bleibt zum Beispiel gerade. Am Ende des Bereichs setzt
+der Wischer neu an, sodass ein kleiner Wischer zurück sofort wirkt.
 
 **Geänderte Zeilen sind am linken Rand bernsteinfarben markiert**, und ihre
-Werte werden ebenfalls bernsteinfarben. Bis hierher hat noch nichts den ESC
-erreicht.
+Werte sind bernsteinfarben. An den ESC ist noch nichts gesendet.
 
-`REVERT` verwirft jede ungespeicherte Änderung und stellt das Gelesene wieder
-her.
+`REVERT` verwirft alle ungespeicherten Änderungen und stellt die gelesenen
+Werte wieder her.
 
 ---
 
@@ -88,15 +85,17 @@ her.
 
 <img src="img/am32-written.png" width="240" alt="Schreiben überprüft">
 
-`HOLD TO WRITE` eine volle Sekunde halten. Ein Fortschrittsbalken füllt sich
-dabei, und die Schaltfläche zeigt `NO CHANGES`, wenn es nichts zu schreiben gibt.
+`HOLD TO WRITE` 1 s lang halten. Währenddessen füllt sich ein
+Fortschrittsbalken. Ohne Änderungen zeigt die Schaltfläche `NO CHANGES`.
 
-Die Firmware **liest die Einstellungen anschließend zurück und vergleicht sie**,
-statt der Bestätigung des ESC zu trauen — ein Schreibvorgang, der Erfolg meldet
-und falsch landet, ist schlimmer als einer, der laut scheitert. Du bekommst
-`WRITE VERIFIED`, oder genau das Byte, das abweicht, und was dort stehen sollte.
+Nach dem Schreiben wartet die Firmware 300 ms, **liest die Einstellungen
+zurück und vergleicht sie** Byte für Byte. Sie verlässt sich nicht auf die
+Bestätigung des ESC. Bei Übereinstimmung erscheint `WRITE VERIFIED`. Bei einer
+Abweichung erscheint das erste abweichende Byte als
+`DIFF @xx: GOT xx WANT xx`.
 
-Die meisten AM32-Einstellungen werden beim nächsten Einschalten des ESC wirksam.
+Die meisten AM32-Einstellungen wirken ab dem nächsten Einschalten des ESC. Das
+ist Verhalten von AM32; der Tester prüft es nicht.
 
 ---
 
@@ -104,27 +103,28 @@ Die meisten AM32-Einstellungen werden beim nächsten Einschalten des ESC wirksam
 
 <img src="img/am32-hex.png" width="240" alt="Die rohen Einstellungsbytes">
 
-`HEX` zeigt die rohen Einstellungsbytes. Das ist die Notluke: wenn ein Feld für
-deine Layout-Version nicht angeboten wird, oder wenn du prüfen willst, was eine
-Änderung auf Byte-Ebene tatsächlich bewirkt hat, findest du es hier. Nur lesbar.
+`HEX` zeigt die 48 rohen Einstellungsbytes, nur lesbar. Damit prüfst du ein
+Feld, das deine Layout-Version nicht anbietet, oder siehst, was eine Änderung
+auf Byte-Ebene bewirkt hat. `FIELDS` kehrt zur Liste zurück.
 
 ---
 
 ## Verlassen
 
-`BACK` gibt den Signalpin an die DShot-Ausgabe zurück und kehrt zum
-Einstellungsbildschirm zurück. Die Ausgabe startet entschärft.
+`BACK` gibt den Signalpin an den DShot-Treiber zurück und kehrt zum
+Einstellungsbildschirm zurück. Der Tester ist entschärft.
 
 ---
 
 ## Wenn keine Verbindung zustande kommt
 
-- **Endlos `SEARCHING...`.** Das Fenster beim Einschalten ist der springende
-  Punkt. Zieh den ESC-Akku ab und steck ihn wieder an, *während der Bildschirm
-  angezeigt wird*. Vorher zu starten funktioniert nicht.
-- **`REPLY NOT UNDERSTOOD`.** Die Verbindung lebt, die Rahmenbildung stimmt
-  nicht. Meist ein ESC, der kein AM32 ist.
-- **`NO VALID SETTINGS`.** Es hat etwas geantwortet, und der Einstellungsblock
-  sah nicht plausibel aus. Schreibe nichts.
+- **Endlos `SEARCHING...` oder `WAITING...`.** Zieh den ESC-Akku ab und steck
+  ihn wieder an, *während der Bildschirm offen ist*. Ein Neustart vor dem
+  Öffnen des Bildschirms funktioniert nicht.
+- **`REPLY NOT UNDERSTOOD`.** Die Verbindung funktioniert, die Rahmenbildung
+  nicht. Mögliche Ursachen: Der ESC läuft nicht mit AM32, oder sein Bootloader
+  nutzt ein Protokoll, das dieser Transport nicht umsetzt.
+- **`NO VALID SETTINGS`.** Der ESC hat geantwortet, und der Einstellungsblock
+  hat die Plausibilitätsprüfung nicht bestanden. Schreibe nichts.
 
 Mehr unter [Fehlersuche](Fehlersuche#am32-verbindet-nicht).

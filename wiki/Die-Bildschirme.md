@@ -2,8 +2,8 @@
 
 # Die Bildschirme
 
-Fünf Bildschirme. Der Tester ist die Wurzel; alles andere erreichst du über
-`CFG` und verlässt es mit `BACK`.
+Die Firmware hat fünf Bildschirme. Der Tester ist die Wurzel. Die anderen
+erreichst du über `CFG` und verlässt sie mit `BACK`.
 
 ```
 Tester ──CFG──> Einstellungen ──┬── AM32     ──BACK──> Einstellungen
@@ -12,9 +12,8 @@ Tester ──CFG──> Einstellungen ──┬── AM32     ──BACK──>
                           └─────BACK──> Tester
 ```
 
-**BACK sitzt immer an derselben Stelle**: oben rechts im Kopfbereich, auf jedem
-Bildschirm, der einen hat. Der Tester hat keinen, weil er die Wurzel ist — es
-gibt nichts, wohin man zurückkehren könnte.
+**BACK sitzt oben rechts** im Kopfbereich, auf jedem Bildschirm außer dem
+Tester. Der Tester ist die Wurzel und hat keinen Kopfbereich.
 
 ---
 
@@ -22,22 +21,33 @@ gibt nichts, wohin man zurückkehren könnte.
 
 <img src="img/tester-armed.png" width="240" alt="Tester-Bildschirm">
 
-**Obere Zeile.** Das Scharf-Feld (`SAFE` grün / `ARMED` rot), die DShot-Bitrate
-— sie wird cyan, sobald eine EDT-Freigabe hinausgegangen ist — der
-Aufzeichnungszustand und die von der Platine selbst gemessene Akkuspannung.
-Wenn der Leerlauf-Timer kurz vor dem Entschärfen steht, ersetzt der Countdown
-die Spannung.
+**Obere Zeile.** Von links nach rechts:
 
-**Drehzahl.** Mechanische Drehzahl, errechnet aus der vom ESC gemeldeten eRPM
-und deiner Polzahl. `ERPM` und die Polzahl stehen darunter. Grüne Ziffern heißen
-lebende Verbindung; dunkelrote heißen, dass zuletzt nichts angekommen ist.
+- das Scharf-Feld: `SAFE` (grün) oder `ARMED` (rot);
+- `DS` und die DShot-Bitrate in kbit/s, cyan, sobald eine EDT-Freigabe
+  (Extended DShot Telemetry) gesendet wurde. **Aktuelle Einschränkung:** Die
+  Anzeige zeigt die kompilierte Voreinstellung `DS600`, nicht die im SETUP
+  eingestellte Bitrate;
+- der Aufzeichnungszustand: `REC`, `SD`, `SDERR` oder `NOSD`
+  (siehe [SD-Aufzeichnung](SD-Aufzeichnung));
+- die Spannung des platineneigenen Akkus, gemessen über den
+  200k/100k-Teiler. Was sie bei reiner USB-Versorgung (Universal Serial Bus)
+  anzeigt, ist nicht gemessen. In den letzten 5 s vor dem Entschärfen durch
+  die Leerlaufsperre ersetzt `IDLE ns` in Bernstein die Spannung.
+
+**Drehzahl.** Mechanische Drehzahl (RPM, Umdrehungen pro Minute), berechnet
+aus der vom ESC (Electronic Speed Controller, Motorregler) gemeldeten eRPM
+(elektrische Drehzahl) und der Polzahl. Der `ERPM`-Wert und die Polzahl stehen
+darunter. Grüne Ziffern: eRPM ist in den letzten 500 ms eingetroffen.
+Dunkelrote Null: nicht, und die Zeile zeigt `NO TELEMETRY`.
 
 **Sechs Kacheln.** Spannung, Strom, ESC-Temperatur, Stress, ESC-Status und
 Verbindungsqualität. Siehe [Telemetrie](Telemetrie).
 
 **Gas.** Die Anzeige, die Obergrenze und der befohlene Prozentwert. Der
-Prozentwert bezieht sich auf den echten DShot-Bereich von 0–100 %, beschönigt
-also nichts: bei 20 % Obergrenze zeigt ein Zug über die volle Breite `20%`.
+Prozentwert bezieht sich auf den vollen DShot-Bereich (0–2000 = 0–100 %): Bei
+20 % Obergrenze zeigt ein Zug über die volle Breite `20%`. Im entschärften
+Zustand zeigt der Balken `ARM TO ENABLE`.
 
 **Schaltflächen.** `HOLD TO ARM` / `DISARM`, `HOLD` (haltendes Gas), `CFG`.
 
@@ -47,30 +57,30 @@ also nichts: bei 20 % Obergrenze zeigt ein Zug über die volle Breite `20%`.
 
 <img src="img/settings.png" width="240" alt="Einstellungsbildschirm">
 
-Erreichbar über `CFG`, das dabei **zwangsweise entschärft**.
+Erreichbar über `CFG`, das dabei **entschärft**.
 
-- **EDT ON / EDT OFF** — ein reines Anzeigefeld unter dem Titel. Grün, solange
-  tatsächlich Extended-DShot-Telemetry-Frames eintreffen, rot, wenn nicht. Es
-  gibt keine Einschalt-Schaltfläche: die Firmware fragt jeden ESC von sich aus,
-  sobald er erscheint, und fragt weiter, solange ein ESC antwortet, aber kein
-  EDT sendet. Das Feld folgt den *empfangenen Frames*, nicht der Frage, ob
-  etwas gesendet wurde — die Anforderung wird abgeschickt und nie bestätigt.
-- **MOTOR POLES** und **THROTTLE CEILING** — Schrittschalter; halten wiederholt.
-- **BEEP** — lässt den Motor piepen, womit sich herausfinden lässt, an welchem
-  ESC man eigentlich hängt. Der ESC muss dafür entschärft sein; eine abgelehnte
-  Betätigung blinkt bernsteinfarben und die Bildunterschrift nennt den Grund.
-- **AM32 / SD LOG / SETUP** — die drei Unterbildschirme.
+- **EDT ON / EDT OFF**: ein reines Anzeigefeld unter dem Titel. Grün, solange
+  Extended-DShot-Telemetry-Frames eintreffen, sonst rot. Es gibt keine
+  Einschalt-Schaltfläche. Die Firmware schickt die Freigabe an jeden ESC, der
+  zu antworten beginnt, und wiederholt sie jede Sekunde, solange eRPM eintrifft
+  und EDT nicht. Der ESC bestätigt die Freigabe nicht, daher zeigt das Feld
+  *empfangene Frames*, nicht gesendete Befehle.
+- **MOTOR POLES** und **THROTTLE CEILING**: Schrittschalter; halten
+  wiederholt.
+- **BEEP**: sendet den DShot-Beacon-Befehl, der Motor piept. Damit erkennst du,
+  welcher ESC angeschlossen ist. Es funktioniert nur im entschärften Zustand.
+  Die Bildunterschrift lautet `BEEP NEEDS THE ESC DISARMED`, nach einer
+  abgelehnten Betätigung `REFUSED - DISARM THE ESC FIRST`.
+- **AM32 / SD LOG / SETUP**: die drei Unterbildschirme.
 
-`UNSAVED` erscheint unter dem Titel, wenn hier oder im SETUP etwas von dem
-abweicht, was im Flash steht. Die Schaltfläche zum Speichern liegt im SETUP.
+`UNSAVED` erscheint unter dem Titel, wenn ein Wert hier oder im SETUP vom
+Flash abweicht. Die Schaltfläche zum Speichern liegt im SETUP.
 
 <img src="img/settings-unsaved.png" width="240" alt="UNSAVED — Änderungen noch nicht im Flash">
 
-Eine Betätigung von `BEEP` wird auf dem Bildschirm quittiert, denn der Befehl
-selbst ist nach etwa sechs Millisekunden vorbei — gegen einen Bildaufbau mit
-40 Hz sähe die Schaltfläche sonst tot aus. Weiß heißt, er ging hinaus;
-bernsteinfarben heißt, er wurde abgelehnt, und die Bildunterschrift wird zur
-Begründung.
+Der Befehl dauert 6 ms (6 Frames bei 1 kHz). Der Bildschirm wird alle 25 ms
+neu gezeichnet, daher hebt die Firmware die Schaltfläche nach jeder Betätigung
+350 ms lang hervor: weiß bei gesendet, bernsteinfarben bei abgelehnt.
 
 <img src="img/config-beep-flash.png" width="240" alt="BEEP angenommen"> <img src="img/config-beep-refused.png" width="240" alt="BEEP abgelehnt, weil der ESC scharf ist">
 
@@ -80,40 +90,41 @@ Begründung.
 
 <img src="img/setup.png" width="240" alt="SETUP-Bildschirm">
 
-Verkabelung und Anzeige, dazu die einzige Schaltfläche, die davon etwas ins
+Verkabelung und Anzeige, dazu die Schaltfläche, die alle Einstellungen ins
 Flash schreibt.
 
 | Zeile | Bedeutung |
 |---|---|
-| **BOARD** | Nur Anzeige. Was die Hardware beim Start geantwortet hat. Keine Auswahl — siehe unten |
-| **ESC PIN** | An welchem GPIO das Signalkabel hängt. Angeboten werden nur Pins, die auf deiner Platine wirklich frei sind |
-| **DSHOT KBAUD** | 150 / 300 / 600 / 1200. Herunterstellen, wenn die Telemetrie unzuverlässig ist |
-| **KISS TELEM** | Ob das optionale dritte Telemetriekabel erwartet wird |
-| **KISS PIN** | An welchem GPIO dieses Kabel hängt. Springt über den ESC-Pin hinweg, sodass sich beide nie überschneiden können |
+| **BOARD** | Nur Anzeige. Die Platine, die die Start-Erkennung gefunden hat |
+| **ESC PIN** | GPIO (General Purpose Input/Output, frei verwendbarer Pin) für das Signalkabel. Angeboten werden nur die freien GPIOs dieser Platine: GP0–GP11 und GP21–GP23 auf der 2,0", GP28 und GP29 auf der 2,8" |
+| **DSHOT KBAUD** | 150 / 300 / 600 / 1200. Herunterstellen, wenn die `LINK`-Fehlerrate steigt |
+| **KISS TELEM** | Ob auf dem optionalen dritten Telemetriekabel empfangen wird |
+| **KISS PIN** | GPIO für dieses Kabel. Überspringt den ESC-Pin, sodass beide nie zusammenfallen |
 | **CONTRAST** | `NORMAL` oder `HIGH`. Hoher Kontrast ist für Tageslicht |
-| **BACKLIGHT** | 0–255 |
+| **BACKLIGHT** | 16–255, in Schritten von 32 |
 
-**LINK** darunter ist live: Pakete pro Sekunde und Fehlerrate, direkt vom ESC.
-Das steht dort, damit sich das Ändern des ESC-Pins überprüfen lässt, ohne zum
-Tester-Bildschirm zurückzugehen — grün heißt, dass Frames zurückkommen, und das
-heißt, der Pin stimmt.
+**LINK** unter den Zeilen ist live: Pakete pro Sekunde und Fehlerrate. Grün
+heißt, es kommen Pakete an, der ESC-Pin stimmt also. Bernstein heißt, mehr als
+5 % Fehler.
 
-**Änderungen wirken sofort; nur das Behalten braucht das Halten.** Stelle die
-Bitrate herunter, und die Frame-Ausgabe wird noch in diesem Bild neu aufgebaut.
-`HOLD TO SAVE` schreibt nach einer Sekunde ins Flash. `RESET` stellt die
-kompilierten Vorgaben nur in den laufenden Einstellungen wieder her — gehst du
-weg, ohne zu speichern, ist nichts verloren.
+**Änderungen wirken sofort. Nur das Speichern braucht das Halten.** Eine neue
+Bitrate baut den DShot-Treiber vor dem nächsten Frame neu auf. `HOLD TO SAVE`
+1 s lang schreibt ins Flash. `RESET` lädt die kompilierten Voreinstellungen
+nur in die laufenden Einstellungen. Wer ohne Speichern weggeht, lässt das
+Flash unverändert.
 
-> **Die Platine wird erkannt, nicht gewählt.** Kurzzeitig war sie eine
-> Auswahl, und das war ein Fehler: falsch gewählt und gespeichert, und der
-> *nächste* Start baute Anzeige und Pin-Belegung für Hardware auf, die nicht da
-> war — und der Bildschirm, mit dem man es hätte zurücknehmen können, war genau
-> der, der nicht mehr kam.
+Die Hinweiszeile unten nennt die verwendeten Werte: `SAVED SETTINGS IN USE`
+oder `COMPILED DEFAULTS IN USE`. Nach einer Änderung zeigt sie
+`UNSAVED - HOLD SAVE TO KEEP`.
+
+> **Die Platine wird bei jedem Start erkannt, nicht gewählt.** Keine
+> gespeicherte Einstellung kann die Erkennung überstimmen, daher kann ein
+> falscher Wert den Start der Anzeige nicht verhindern.
 
 <img src="img/setup-contrast.png" width="240" alt="SETUP mit hohem Kontrast"> <img src="img/tester-contrast.png" width="240" alt="Der Tester-Bildschirm mit hohem Kontrast">
 
-*Hoher Kontrast, für draußen. Er gilt für jeden Bildschirm, nicht nur für
-diesen, und stellt die Hintergrundbeleuchtung auf voll, solange er an ist.*
+*Hoher Kontrast gilt für jeden Bildschirm und setzt die
+Hintergrundbeleuchtung auf 255, solange er an ist.*
 
 ---
 
@@ -129,22 +140,21 @@ Aufzeichnungszustand und Zähler. Siehe [SD-Aufzeichnung](SD-Aufzeichnung).
 
 <img src="img/am32-list.png" width="240" alt="AM32-Einstellungsliste">
 
-Liest, ändert und schreibt die Einstellungen eines AM32-ESC über dasselbe
+Liest, ändert und schreibt die Einstellungen eines AM32-ESC über das
 Signalkabel. Siehe [AM32-Konfiguration](AM32-Konfiguration).
 
 ---
 
 ## Was jeder Bildschirm gleich macht
 
-- **Ein Tippen löst beim Loslassen aus, nicht beim Berühren.** Rutscht du von
-  einer versehentlich berührten Schaltfläche weg, passiert nichts. Die eine
-  bewusste Ausnahme ist `DISARM`, das beim Berühren wirkt — das Bedienelement,
-  dessen Aufgabe „Motor sofort anhalten" ist, kann nicht auf das Loslassen
-  warten.
-- **Eine Schaltfläche unter dem Finger sieht auch so aus.** Reagiert ein
-  Bedienelement nicht, hat es die Berührung nicht angenommen.
-- **`-` / `+` wiederholen beim Halten und werden schneller.** Drei Stufen:
-  schrittweise, laufend, rasend.
-- **Alles Unwiderrufliche ist ein Halten von einer Sekunde**, mit
-  Fortschrittsbalken: Einstellungen ins Flash der Platine schreiben, und
-  Einstellungen in einen ESC schreiben.
+- **Ein Tippen wirkt beim Loslassen, nicht beim Berühren.** Rutschst du vor
+  dem Loslassen von der Schaltfläche, wird nichts ausgelöst. `DISARM` ist die
+  Ausnahme und wirkt beim Berühren.
+- **Eine gedrückte Schaltfläche zeigt einen Druckrahmen.** Zeigt ein
+  Bedienelement keinen Rahmen, hat es die Berührung nicht erkannt.
+- **`-` / `+` wiederholen beim Halten und werden schneller.** Ein Schritt beim
+  Drücken; nach 400 ms ein Schritt alle 120 ms; nach 1,2 s alle 60 ms; nach
+  2,5 s alle 25 ms.
+- **Schreiben ins Flash braucht 1 s Halten** mit Fortschrittsbalken:
+  Einstellungen auf der Platine speichern und Einstellungen in einen ESC
+  schreiben.
