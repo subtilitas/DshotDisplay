@@ -17,6 +17,9 @@ Enforces what actually goes wrong, and nothing else:
   7. a @ref is not immediately followed by a colon -- Doxygen's reference
      grammar includes ':' so that Class::member resolves, so "@ref foo.h: and
      then some prose" is read as a reference to "foo.h:" and does not
+  8. every relative link in the running record (STATUS.md, CHANGELOG.md) and
+     the design notes (docs/design/*.md) names a file that exists, and an
+     anchor into a Markdown file names a heading that exists
 
 Deliberately narrower than Doxygen's WARN_IF_UNDOCUMENTED, which also fires on
 file-static internals. A comment on `s_scroll` saying "scroll position" is
@@ -24,14 +27,24 @@ noise; a public function with no documentation, or an @param that silently
 stopped matching after a rename, is not.
 
 Exit status is the number of problems, so CI fails without extra plumbing.
+
+Paths are resolved from the repository root, found from this file's own
+location, so the result does not depend on the directory the script is run
+from. Run from test/ it used to glob nothing, check nothing and pass.
 """
 
 import glob
+import os
 import re
 import sys
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(ROOT)
+
 HEADERS = sorted(glob.glob("src/*.h"))
 SOURCES = sorted(glob.glob("src/*.cpp") + glob.glob("*.ino") + HEADERS)
+LINKED_DOCS = sorted(glob.glob("STATUS.md") + glob.glob("CHANGELOG.md") +
+                     glob.glob("docs/design/*.md"))
 
 
 def collect_symbols():
@@ -53,10 +66,49 @@ def collect_symbols():
     return symbols
 
 
+def heading_anchors(path):
+    """The anchors GitHub generates for the headings of a Markdown file."""
+    anchors, seen = set(), {}
+    text = re.sub(r"^```.*?^```", "", open(path, encoding="utf-8").read(),
+                  flags=re.S | re.M)
+    for title in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", text, re.M):
+        slug = re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
+        n = seen.get(slug, 0)
+        seen[slug] = n + 1
+        anchors.add(slug if n == 0 else f"{slug}-{n}")
+    return anchors
+
+
+def check_links(path):
+    """Rule 8: relative links in one Markdown file resolve."""
+    problems = []
+    text = open(path, encoding="utf-8").read()
+    # Code is not prose: a fenced block or an inline span may hold brackets.
+    text = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
+    text = re.sub(r"`[^`\n]*`", "", text)
+    targets = re.findall(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)", text)
+    targets += re.findall(r"^\s*\[[^\]]+\]:\s*(\S+)", text, re.M)
+    for target in targets:
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            continue                      # https:, mailto: -- not ours to check
+        file_part, _, anchor = target.partition("#")
+        dest = os.path.normpath(os.path.join(os.path.dirname(path), file_part)) \
+            if file_part else path
+        if not os.path.exists(dest):
+            problems.append(f"{path}: link '{target}' names a missing file")
+        elif anchor and dest.endswith(".md") and anchor not in heading_anchors(dest):
+            problems.append(f"{path}: link '{target}' names a missing heading")
+    return problems
+
+
 def main():
     problems = []
     documented = 0
     symbols = collect_symbols()
+
+    if not SOURCES:
+        print(f"no sources found under {ROOT}/src")
+        return 1
 
     for path in SOURCES:
         text = open(path, encoding="utf-8").read()
@@ -147,7 +199,12 @@ def main():
             if not before.endswith("*/"):
                 problems.append(f"{path}: {m.group(2)}() has no doc comment")
 
-    print(f"checked {len(SOURCES)} files, {documented} documented signatures")
+    # --- 8. relative links in the running record and design notes ---
+    for path in LINKED_DOCS:
+        problems.extend(check_links(path))
+
+    print(f"checked {len(SOURCES)} files, {documented} documented signatures, "
+          f"links in {len(LINKED_DOCS)} documents")
     if problems:
         print(f"\n{len(problems)} problem(s):")
         for p in problems:
