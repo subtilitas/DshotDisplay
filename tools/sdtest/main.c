@@ -30,6 +30,9 @@
 #include "board_pins.h"
 
 #if defined(SD_IFACE_SPI)
+/* Defined in sd_hw_config.c; the library's hw_config.h does not declare it. */
+spi_t *spi_get_by_num(size_t num);
+
 /** @brief SPI speeds to try, fastest first. */
 static const uint32_t kBauds[] = {
     12u * 1000 * 1000, 4u * 1000 * 1000, 1u * 1000 * 1000,

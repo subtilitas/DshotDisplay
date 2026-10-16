@@ -172,12 +172,12 @@
  * @{
  */
 /*
- * This board is wired for **SDIO**, not SPI, and the pins satisfy every
- * constraint the PIO SDIO driver imposes -- which is not luck, it is how
- * Waveshare laid it out:
+ * This board is wired for **SDIO**, not SPI, and the pins satisfy the
+ * constraint the PIO SDIO driver imposes:
  *
  *     D1 = D0+1 = 22, D2 = D0+2 = 23, D3 = D0+3 = 24   (must be consecutive)
- *     CLK = (D0 + 30) % 32 = 19                        (fixed by the PIO program)
+ *
+ * CLK (GP19) and CMD (GP20) can be any other GPIO below 32.
  *
  * Hardware SPI is impossible here in any case: SD_SCK is GP19, which is SPI0
  * **TX** in the RP2350 pin mux, not SCK. Four-bit SDIO is also faster than the

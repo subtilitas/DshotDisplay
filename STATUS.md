@@ -70,7 +70,7 @@ PIO (programmable input/output) blocks: three, each with 4 state machines and
 | Block | 2.0" board | 2.8" board |
 | --- | --- | --- |
 | pio0 | free | free |
-| pio1 | free | SDIO (Secure Digital input/output) card driver: 2 state machines, 32 of 32 instructions (`src/sd_hw_config.c`) |
+| pio1 | free | SDIO (Secure Digital input/output) card driver in `src/sdio/`: 2 state machines, 32 of 32 instructions, plus 2 DMA channels and no interrupt (`src/sd_hw_config.c`) |
 | pio2 | DShot transmitter and receiver on adjacent state machines, 16 instructions; KISS receiver when KISS is on, 1 state machine, 9 instructions | the same |
 
 The unified image uses the column of the board it detects. DShot and KISS
@@ -92,10 +92,13 @@ stored and never chosen by the user.
 
 Build: native Pico SDK (software development kit) 2.1.1 with CMake, ARM cores
 only. The one dependency besides the SDK is pinned by commit:
-`no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2. The DShot driver in `src/dshot/` is
-part of the tree, from rcbench `protocols/dshot` at commit 453cf334 (MIT, same
-copyright holder). A release carries three UF2 (USB Flashing Format) images:
-`touch-lcd-2`, `touch-lcd-2.8` and `unified`.
+`no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2. Its FatFs, glue and SPI driver are
+built; its SDIO driver is not. The DShot driver in `src/dshot/` is part of the
+tree, from rcbench `protocols/dshot` at commit 453cf334 (MIT, same copyright
+holder). The SDIO driver in `src/sdio/` is part of the tree, MIT, written from
+the SD Association's Physical Layer Simplified Specification v9.10 and the
+RP2350 datasheet ([design note](docs/design/sdio-driver.md)). A release carries three UF2
+(USB Flashing Format) images: `touch-lcd-2`, `touch-lcd-2.8` and `unified`.
 
 ## Boards
 
@@ -133,14 +136,15 @@ record either way.
 | EDT telemetry, automatic enable, expiry | merge, expiry, enable rule, decode of each frame type | hardware-tested (owner report) with `pico-bidir-dshot` |
 | KISS telemetry: request, PIO receiver, decode, merge, KISS/EDT tags | CRC, decode, resynchronisation, request payload, merge; the PIO receiver is typechecked only | hardware-tested (owner report) with `pico-bidir-dshot`; see below |
 | DShot bitrate label in the status bar, `DSERR` | label at each bitrate, colour, `DSERR` | not recorded |
-| Blackbox logging to SD, CFG → SD LOG screen | encoder, ring buffer, round trip through `blackbox_decode`, screen states | hardware use recorded; see below |
+| SDIO card driver in `src/sdio/` (2.8" board): protocol, PIO and DMA bus, library callbacks | CRC7 and CRC16 against the specification's examples, command framing, response parsing, CSD (card-specific data register), four-bit packing, CRC status token; initialisation, reads and writes against a simulated card (standard capacity SDSC v1 and v2, high capacity SDHC, no card, voltage mismatch, timeouts, removal); the PIO programs and the bus are compiled only | not tested on hardware; open item 8 lists the bench tests |
+| Blackbox logging to SD, CFG → SD LOG screen | encoder, ring buffer, round trip through `blackbox_decode`, screen states | hardware use recorded with the previous SDIO driver on the 2.8" board; see below |
 | USB card reader (read-only mass storage) | handover state machine, screen | not recorded |
 | AM32 settings editor over the signal wire (AM32 is an open-source ESC firmware) | init string, CRC-16/ARC, 39-field codec, timing advance encodings, write interlock | hardware use recorded: ab79c67, bd90e17 |
 | Settings in flash (CFG → SETUP) | block validation, CRC, board re-judging, pin defaults | not recorded; 46a64a7 states no hardware coverage |
 | Board detection, unified image | board selection and defaults | not recorded |
 | Touch handling, high-contrast theme, throttle gauge | tap on release, repeats, screen residue, gauge reach | hardware use recorded: the reports #22 to #24 named in the v2.3 commits; the fixes on hardware: not recorded |
 | Serial telemetry dump | none | not recorded |
-| `tools/sdtest`, SD bring-up firmware | none, not built in CI | hardware use recorded on both boards: f16a70f, e9c9d9a |
+| `tools/sdtest`, SD bring-up firmware | none, not built in CI | hardware use recorded on both boards: f16a70f, e9c9d9a, with the previous SDIO driver on the 2.8" board |
 
 KISS in detail. The owner reports KISS telemetry working on hardware, the
 display's own telemetry request included. Issue #1 separately reports correct
@@ -148,12 +152,13 @@ KISS values with a receiver driving the ESC and the display only listening.
 Which board each report covers is not recorded.
 
 SD logging in detail. Commit 036adfe records the 2.8" board mounting a 64 GB
-card over SDIO at 25 MHz and writing a file. Commit 5b9c7bd and the design
-note record a replacement 2.0" board working over SPI, after the first 2.0"
-board had GPIO27 shorted to ground. Commit 5cec1ec fixes a logging fault
-reported from hardware. A run at the shipped SDIO clock of 10 MHz is not
-recorded separately. BUF PEAK and WORST FLUSH under sustained logging are not
-recorded.
+card over SDIO at 25 MHz and writing a file, with the library's SDIO driver
+that `src/sdio/` replaces. Nothing is recorded for the current driver. Commit
+5b9c7bd and the design note record a replacement 2.0" board working over SPI,
+after the first 2.0" board had GPIO27 shorted to ground; the SPI path is
+unchanged. Commit 5cec1ec fixes a logging fault reported from hardware. A run
+at the shipped SDIO clock of 10 MHz is not recorded separately. BUF PEAK and
+WORST FLUSH under sustained logging are not recorded.
 
 Not on `main`: the branches `feat/usb-bridge` (a USB to one-wire bridge,
 6693084) and `copilot/create-lcars-display` (a themed UI, 5d17541) are not
@@ -200,12 +205,16 @@ merged.
    whether a slow frame type is worth adding.
 7. **`tools/sdtest` is built by nothing in CI**, so a change that breaks it
    shows only in a local build.
-8. **Licence of a distributed image.** The repository's code is MIT, the
-   DShot driver included. The README of `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`
-   states that its 4-bit SDIO driver is derived from ZuluSCSI-firmware, which
-   is GPL-3.0 (GNU General Public License version 3). That code is linked into
-   all three images, the 2.0" one included. Its effect on a distributed image
-   is not settled.
+8. **SDIO driver on hardware.** The driver in `src/sdio/` is not tested on
+   hardware. Bench tests needed on the 2.8" board:
+   - initialisation on an SDSC card (2 GB or less) and on SDHC and SDXC
+     (extended capacity) cards;
+   - sustained logging at 7.3 kB/s, with BUF PEAK and WORST FLUSH read off the
+     SD LOG screen;
+   - USB DRIVE: a host reads files, which takes multi-block reads;
+   - the card pulled out while logging, while idle and while a host reads,
+     then put back;
+   - 10 MHz in the firmware, and 10 MHz and 25 MHz in `tools/sdtest`.
 9. **Extended frames before the first enable.** The DShot decoder reads EDT
    frames as such only once an enable has gone out. An ESC that kept EDT on
    across a board restart or a SETUP pin change sends EDT frames that read as
@@ -248,8 +257,8 @@ merged.
 
 **Host suite.** `make -C test run` compiles the firmware sources with a C++17
 compiler against the stubs in `test/stubs/`, and the DShot core in
-`src/dshot/` as C11, and runs one binary, `dshot_tests`. `test/test_main.cpp`
-runs eleven suites:
+`src/dshot/` and the SDIO protocol layers in `src/sdio/` as C11, and runs one
+binary, `dshot_tests`. `test/test_main.cpp` runs twelve suites:
 
 | Suite | File | Covers |
 | --- | --- | --- |
@@ -264,6 +273,7 @@ runs eleven suites:
 | `runDshotFrameTests` | `test_dshot_frame.cpp` | DShot frame layout, checksum, inverted checksum, EDT enable word, throttle map (from rcbench) |
 | `runDshotTelemTests` | `test_dshot_telem.cpp` | line and group code, eRPM and EDT decode, checksum against single-bit errors, sampler (from rcbench); three-state poll, counters |
 | `runDshotEdtTests` | `test_dshot_edt.cpp` | extended telemetry schedule against an AM32 model (from rcbench) |
+| `runSdioTests` | `test_sdio.cpp` | SDIO driver: CRC7 and CRC16 vectors, framing, responses, CSD, four-bit packing, CRC status token; initialisation, reads and writes against a simulated card |
 
 Other targets in `test/Makefile`: `both` runs the suite for the 2.0", 2.8" and
 unified configurations; `syntax` typechecks the device-only sources on all
@@ -278,7 +288,7 @@ requests, by hand):
 
 | Job | What it does |
 | --- | --- |
-| Firmware, three legs (`touch-lcd-2`, `touch-lcd-2.8`, `unified`) | builds with arm-none-eabi-gcc 13.3 and `STRICT=ON`; flash under 1 MiB and RAM (random-access memory) under 400,000 bytes; checks from the DWARF line table that the image holds its own touch driver; checks pin overrides reach CMake and `-DDSHOT_PIN` is refused; validates the UF2 |
+| Firmware, three legs (`touch-lcd-2`, `touch-lcd-2.8`, `unified`) | builds with arm-none-eabi-gcc 13.3 and `STRICT=ON`; flash under 1 MiB and RAM (random-access memory) under 400,000 bytes; checks from the DWARF line table that the image holds its own touch driver; checks from the DWARF compile units that no file of the SD library's SDIO, ZuluSCSI-firmware or SdFat directories is in the image; checks pin overrides reach CMake and `-DDSHOT_PIN` is refused; validates the UF2 |
 | Host tests | `make both`; the unified suite again with all four pin macros overridden; wiki screenshots and `check_wiki.py` |
 | Blackbox round-trip | builds `blackbox_decode` from source, runs `make bbcheck` |
 | Config permutations | typechecks all of `src/` with `-Werror` for 64 combinations: 2 boards × AM32 transmit mode × AM32 low-jump × rotation 0 or 2 × KISS on or off × SD logging on or off; checks the landscape guard fires |
@@ -318,6 +328,8 @@ programs beyond compilation.
 | `src/plat.h` | 5 | 5 | 100.0% |
 | `src/rpm_filter.h` | 17 | 17 | 100.0% |
 | `src/sd_log.h` | 4 | 4 | 100.0% |
+| `src/sdio/sd_host.c` | 180 | 180 | 100.0% |
+| `src/sdio/sd_proto.c` | 135 | 135 | 100.0% |
 | `src/settings.cpp` | 128 | 126 | 98.4% |
 | `src/theme.cpp` | 11 | 11 | 100.0% |
 | `src/ui.cpp` | 608 | 602 | 99.0% |
@@ -326,7 +338,7 @@ programs beyond compilation.
 | `src/ui_setup.cpp` | 188 | 181 | 96.3% |
 | `src/ui_widgets.cpp` | 43 | 43 | 100.0% |
 | `src/usb_msc.h` | 37 | 35 | 94.6% |
-| **Total** | **2201** | **2129** | **96.7%** |
+| **Total** | **2516** | **2444** | **97.1%** |
 
 Generated by `tools/coverage.py`. CI runs it with `--check` and fails on drift.
 <!-- coverage-table:end -->

@@ -22,6 +22,7 @@ void runUsbMscTests();
 void runDshotFrameTests();
 void runDshotTelemTests();
 void runDshotEdtTests();
+void runSdioTests();
 
 int main() {
 	printf("DshotDisplay host tests\n");
@@ -38,6 +39,7 @@ int main() {
 	runDshotFrameTests();
 	runDshotTelemTests();
 	runDshotEdtTests();
+	runSdioTests();
 
 	printf("\n=======================\n");
 	if (g_failures) printf("%d CHECK(S) FAILED\n", g_failures);

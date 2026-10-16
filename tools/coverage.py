@@ -20,8 +20,8 @@ differs from what this script would write, or when coverage is below
 MIN_TOTAL or any file is below MIN_FILE.
 
 What counts: every file under src/ that gcov reports a line for. That is each
-.cpp in the Makefile's SRCS, the C files of the DShot core in src/dshot/ (the
-Makefile's CSRCS), ui_am32.cpp (test_ui.cpp includes it), and the headers
+.cpp in the Makefile's SRCS, the C files of the DShot core in src/dshot/ and
+of the SD card protocol layers in src/sdio/ (the Makefile's CSRCS), ui_am32.cpp (test_ui.cpp includes it), and the headers
 whose inline functions the suite calls. A line counts as covered when
 any translation unit executes it. An inline function no test calls is not
 emitted, so it has no lines and does not count. A source in SRCS with no

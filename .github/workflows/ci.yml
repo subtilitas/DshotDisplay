@@ -163,6 +163,27 @@ jobs:
           fi
           echo "compiled $want; splash says ${{ matrix.board.label }}"
 
+      # The SD library's SDIO driver derives from GPL-3.0 code, so the build
+      # compiles none of it (CMakeLists.txt rebuilds the library target from
+      # its other files) and links the MIT driver in src/sdio/ instead. This
+      # holds the image to that, from the DWARF compile units: none may come
+      # from the library's SDIO, ZuluSCSI or SdFat directories, nor from
+      # dma_interrupts.c, which served only that driver.
+      - name: No file of the library's SDIO driver is in the image
+        run: |
+          set -eo pipefail
+          elf=build/DshotDisplay-${{ matrix.board.slug }}.elf
+          units=$(arm-none-eabi-readelf --debug-dump=info "$elf" \
+                    | grep -A8 DW_TAG_compile_unit | grep DW_AT_name || true)
+          if printf '%s\n' "$units" \
+               | grep -E '/sd_driver/SDIO/|ZuluSCSI|SdFat|rp2040_sdio|dma_interrupts'; then
+            echo "::error::a file of the library's SDIO driver is in the image"
+            exit 1
+          fi
+          grep -q 'src/sdio/sd_pio\.c' <<< "$units" || {
+            echo "::error::src/sdio/sd_pio.c is not in the image"; exit 1; }
+          echo "SDIO driver: src/sdio/ only"
+
       # The pin options are documented build options that CI had never once
       # passed. -DDSHOT_PIN=0 in particular used to be discarded silently,
       # because CMake's if() treats the string "0" as false -- and once that was

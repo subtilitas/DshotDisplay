@@ -25,7 +25,9 @@ integration, UF2 is the USB Flashing Format, PIO is the RP2350's programmable
 input/output, SPI is Serial Peripheral Interface, SDIO is Secure Digital
 input/output, I2C is Inter-Integrated Circuit, GPIO is general-purpose
 input/output, CRC is cyclic redundancy check, UART is universal asynchronous
-receiver-transmitter, SDK is software development kit, PR is pull request.
+receiver-transmitter, SDK is software development kit, PR is pull request,
+DMA is direct memory access, CSD is the card-specific data register. SDSC,
+SDHC and SDXC are the standard, high and extended capacity SD card types.
 KISS telemetry is the serial telemetry protocol of the KISS ESC line, sent on
 its own wire. AM32 is an open-source ESC firmware.
 
@@ -50,6 +52,20 @@ its own wire. AM32 is an open-source ESC firmware.
 - Host tests for the DShot core: the 36 cases of rcbench for the frame, the
   reply and the EDT enable schedule, and new cases for the three-state poll
   and the counters it feeds. The suite compiles the core as C11.
+- An SDIO card driver in `src/sdio/`, MIT, written from the SD Physical Layer
+  Simplified Specification v9.10 and the RP2350 datasheet
+  ([design note](docs/design/sdio-driver.md)). Two PIO programs fill pio1, 13
+  and 19 instructions on 2 state machines, with 2 DMA channels and no
+  interrupt. It initialises SDSC version 1, SDSC version 2
+  and SDHC/SDXC cards, reads and writes single and multiple blocks, and ends
+  every wait with a timeout and an error code. Not tested on hardware.
+- Host tests for the SDIO driver (`runSdioTests`): CRC7 and CRC16 against the
+  specification's examples, command framing, response parsing, CSD capacity,
+  four-bit packing, the write CRC status token, and initialisation, reads and
+  writes against a simulated card, with no card, voltage mismatch, timeouts
+  and removal.
+- CI checks that no compile unit of an image comes from the SD library's
+  SDIO, ZuluSCSI-firmware or SdFat directories.
 
 ### Changed
 
@@ -80,6 +96,14 @@ its own wire. AM32 is an open-source ESC firmware.
 - The wiki is published by `docs.yml` instead of a job inside `release.yml`.
 - `actions/cache` v6 (Node.js 24) in place of v4 (Node.js 20).
 - The workflow lint's duplicate-key check covers every workflow file.
+- The 2.8" board's SD card runs on the driver in `src/sdio/` instead of the
+  SDIO driver of `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`, whose README derives it
+  from ZuluSCSI-firmware (GPL-3.0). The build compiles FatFs, the glue and the SPI driver from a copy of the
+  library's `src/` without its SDIO, ZuluSCSI-firmware and SdFat directories,
+  not through the library's CMakeLists.txt. No GPL code is compiled or linked into any image. The 2.0"
+  board's SPI path is unchanged.
+- The SDIO pins need DAT0 to DAT3 consecutive and nothing more; CLK and CMD
+  can be any other GPIO below 32.
 
 ### Fixed
 
@@ -105,6 +129,9 @@ its own wire. AM32 is an open-source ESC firmware.
   preallocation of 16 MiB lasts about 38 min, SETUP shows one note line for
   saved settings or compiled defaults, and the card interface differs per
   board.
+- `tools/sdtest` links: it carries the mass-storage callbacks that the
+  firmware's TinyUSB configuration requires, and declares
+  `spi_get_by_num()`.
 
 ## [2.3] - 2026-08-26
 

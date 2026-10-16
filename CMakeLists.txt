@@ -116,20 +116,95 @@ endif()
 
 include(FetchContent)
 
-# FatFs over SPI for the microSD slot. Apache-2.0.
+# FatFs, its glue and the SPI card driver for the microSD slot, from
+# no-OS-FatFS-SD-SDIO-SPI-RPi-Pico: Apache-2.0, with FatFs under its own
+# BSD-style licence.
 #
 # The SDIO-SPI repo, not the older SPI-only one: that one's rtc.c includes
 # hardware/rtc.h, which does not exist on RP2350 -- the RP2040 RTC was replaced
 # by powman. It builds fine for RP2040 and fails outright here.
+#
+# The library's own src/CMakeLists.txt is not used. Its SDIO driver derives
+# from GPL-3.0 code, and that CMakeLists compiles it, and assembles its PIO
+# program, into every image. So the source is only fetched -- SOURCE_SUBDIR
+# names a directory with no CMakeLists.txt, which FetchContent_MakeAvailable
+# populates and does not add -- and the target below is rebuilt from the
+# library's other files. The SDIO driver in src/sdio/ is MIT and written from
+# the SD specification; see docs/design/sdio-driver.md.
 FetchContent_Declare(no_os_fatfs
     GIT_REPOSITORY https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico.git
     GIT_TAG        6c644cfc3ab03c161fee2dd7be4877e5b832fa71  # v3.6.2
-    # No CMakeLists.txt at the repo root -- the build lives in src/. Without
-    # this, FetchContent downloads the source and defines no targets at all,
-    # and the failure surfaces much later as a missing ff.h.
-    SOURCE_SUBDIR  src
+    SOURCE_SUBDIR  fetch-only-no-cmake
 )
 FetchContent_MakeAvailable(no_os_fatfs)
+
+# A copy of the library's src/ without the SDIO driver and the two GPL
+# projects it carries. A copy and not the fetched tree, because sd_card.h
+# includes "SDIO/rp2040_sdio.h" with quotes, which looks beside sd_card.h
+# before any include path: in the fetched tree that finds the GPL header. In
+# the copy the directory is absent and the include falls through to
+# src/sdio/compat/, which supplies the two header names the library's public
+# files include. dma_interrupts.c serves only the old SDIO driver and is left
+# out with it; so is rp2040_sdio.pio.h, that driver's assembled program.
+set(SD_FATFS_DIR ${CMAKE_BINARY_DIR}/sd_fatfs)
+file(REMOVE_RECURSE ${SD_FATFS_DIR})
+file(COPY ${no_os_fatfs_SOURCE_DIR}/src/ DESTINATION ${SD_FATFS_DIR}
+    PATTERN "SDIO"              EXCLUDE
+    PATTERN "ZuluSCSI-firmware" EXCLUDE
+    PATTERN "SdFat"             EXCLUDE
+    PATTERN "rp2040_sdio.pio.h" EXCLUDE
+    PATTERN "dma_interrupts.*"  EXCLUDE
+    PATTERN "CMakeLists.txt"    EXCLUDE
+)
+if(EXISTS ${SD_FATFS_DIR}/sd_driver/SDIO)
+    message(FATAL_ERROR "the copy of the SD library still holds its SDIO driver")
+endif()
+
+add_library(sd_fatfs INTERFACE)
+target_sources(sd_fatfs INTERFACE
+    ${SD_FATFS_DIR}/ff15/source/ff.c
+    ${SD_FATFS_DIR}/ff15/source/ffsystem.c
+    ${SD_FATFS_DIR}/ff15/source/ffunicode.c
+    ${SD_FATFS_DIR}/sd_driver/sd_card.c
+    ${SD_FATFS_DIR}/sd_driver/sd_timeouts.c
+    ${SD_FATFS_DIR}/sd_driver/SPI/my_spi.c
+    ${SD_FATFS_DIR}/sd_driver/SPI/sd_card_spi.c
+    ${SD_FATFS_DIR}/sd_driver/SPI/sd_spi.c
+    ${SD_FATFS_DIR}/src/crash.c
+    ${SD_FATFS_DIR}/src/crc.c
+    ${SD_FATFS_DIR}/src/f_util.c
+    ${SD_FATFS_DIR}/src/ff_stdio.c
+    ${SD_FATFS_DIR}/src/file_stream.c
+    ${SD_FATFS_DIR}/src/glue.c
+    ${SD_FATFS_DIR}/src/my_debug.c
+    ${SD_FATFS_DIR}/src/my_rtc.c
+    ${SD_FATFS_DIR}/src/util.c
+    # The SDIO driver: protocol, PIO and DMA bus, library callbacks.
+    ${CMAKE_CURRENT_LIST_DIR}/src/sdio/sd_proto.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/sdio/sd_host.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/sdio/sd_pio.c
+    ${CMAKE_CURRENT_LIST_DIR}/src/sdio/sd_card_glue.c
+)
+target_include_directories(sd_fatfs INTERFACE
+    ${SD_FATFS_DIR}/ff15/source
+    ${SD_FATFS_DIR}/sd_driver
+    ${SD_FATFS_DIR}/include
+    ${CMAKE_CURRENT_LIST_DIR}/src/sdio/compat
+    ${CMAKE_CURRENT_LIST_DIR}/src/sdio
+)
+# As the library's own build sets it.
+target_compile_definitions(sd_fatfs INTERFACE PICO_MAX_SHARED_IRQ_HANDLERS=8u)
+target_link_libraries(sd_fatfs INTERFACE
+    hardware_clocks
+    hardware_dma
+    hardware_gpio
+    hardware_pio
+    hardware_spi
+    pico_aon_timer
+    pico_stdlib
+    cmsis_core
+)
+pico_generate_pio_header(sd_fatfs ${CMAKE_CURRENT_LIST_DIR}/src/sdio/sd_pio.pio)
 
 add_executable(DshotDisplay
     src/main.cpp
@@ -210,7 +285,7 @@ target_link_libraries(DshotDisplay
     hardware_flash
     hardware_sync
     hardware_watchdog
-    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+    sd_fatfs
     tinyusb_device
     pico_unique_id
 )
@@ -283,6 +358,7 @@ if(NOT BOARD STREQUAL "BOARD_UNIFIED")
 add_executable(sdtest
     tools/sdtest/main.c
     tools/sdtest/touch_stubs.cpp
+    tools/sdtest/msc_stubs.c
     src/sd_hw_config.c
     src/board_desc.cpp
     src/board_desc_lcd2.cpp
@@ -295,7 +371,7 @@ target_link_libraries(sdtest
     hardware_spi
     hardware_i2c
     hardware_clocks
-    no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
+    sd_fatfs
 )
 target_compile_definitions(sdtest PRIVATE USE_PRINTF=1 USE_DBG_PRINTF=1)
 pico_enable_stdio_usb(sdtest 1)

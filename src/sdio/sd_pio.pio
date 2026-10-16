@@ -1,0 +1,104 @@
+;
+; SPDX-License-Identifier: MIT
+;
+; Written from the SD Physical Layer Simplified Specification v9.10 and the
+; RP2350 datasheet; no third-party SD host-driver source was consulted.
+;
+; The SD (Secure Digital) bus in SD mode, four data lines, on two state
+; machines of one PIO (programmable input/output) block. 13 + 19 = 32
+; instructions: a whole block. docs/design/sdio-driver.md has the design and
+; the timing; sd_pio.c has the processor side.
+;
+; sdpio_cmd owns the clock. Every instruction side-sets CLK, so one
+; instruction is half a clock period and the clock divider sets the bus rate.
+; sdpio_dat has no side-set: it waits on CLK edges through JMP_PIN, which is
+; why CLK can be any GPIO (general-purpose input/output).
+
+.pio_version 1
+
+; ---------------------------------------------------------------- command
+;
+; OUT, SET, IN and JMP pin map to CMD; side-set maps to CLK. OUT shifts left
+; with autopull at 32; IN shifts left with autopush at 32.
+;
+; Two words per command:
+;   word 0: [31:24] bits to send less one (47), [23:0] command bits 47..24
+;   word 1: [31:8] command bits 23..0, [7:0] bits to read after the
+;           response start bit (47 or 135, plus 8 trailing clocks)
+;
+; Command bits change on falling edges; the card samples on rising edges. The
+; response is sampled in the falling-edge instruction, which sees the pin as
+; it was two system clocks before: late in the high phase. After the response
+; the program toggles CLK until the processor jumps it back to `start`, where
+; it stalls with CLK low.
+
+.program sdpio_cmd
+.side_set 1
+
+public start:
+    out x, 8            side 0      ; bits to send less one; stalls here, CLK low
+    set pindirs, 1      side 0      ; drive CMD (its output latch holds 1)
+tx_bit:
+    out pins, 1         side 0
+    jmp x-- tx_bit      side 1
+    set pindirs, 0      side 0      ; release CMD to the card
+    out x, 8            side 0      ; bits to read after the start bit
+public wait_start:
+    nop                 side 1
+    jmp pin wait_start  side 0      ; CMD high: no start bit yet
+.wrap_target
+rx_next:
+    jmp x-- rx_bit      side 1
+    push                side 0      ; the last, partial word
+public idle:
+    nop                 side 1      ; free-running clock: read data, busy,
+    jmp idle            side 0      ; trailing clocks
+rx_bit:
+    in pins, 1          side 0
+.wrap
+
+; ------------------------------------------------------------------- data
+;
+; IN, OUT and SET map to DAT0..DAT3; JMP_PIN is CLK. OUT shifts left with
+; autopull at 32; IN shifts left with autopush at 32. Runs at the system
+; clock and follows the edges sdpio_cmd makes.
+;
+; Receive, entered at rx_start with Y = nibbles per block less one (1039 for
+; 512 bytes: 1024 data and 16 CRC nibbles). Waits for DAT0 high and then low,
+; a start bit, then samples on every rising edge. It wraps to the next block
+; by itself.
+;
+; Transmit, entered at tx_start with the stream from sdp_tx_pack(): the
+; header's top 16 bits are the nibble count less one, and its low nibbles put
+; three idle clocks and the start bit on the lines. Nibbles change after
+; rising edges. One rising edge after the end bit the lines are released and
+; 16 nibbles are captured for the CRC status token; the program then falls
+; into the receive loop, and the processor stops it.
+
+.program sdpio_dat
+
+public tx_start:
+    out x, 16
+    set pindirs, 15
+tx_nibble:
+    wait 0 jmppin
+    wait 1 jmppin
+    out pins, 4
+    jmp x-- tx_nibble
+    wait 0 jmppin
+    wait 1 jmppin                   ; the card has sampled the end bit
+    set pindirs, 0
+    set x, 15                       ; 16 nibbles of CRC status window
+    jmp rx_nibble
+.wrap_target
+public rx_start:
+    mov x, y
+    wait 1 pin 0                    ; past the end bit of the last block
+    wait 0 pin 0                    ; start bit
+    wait 1 jmppin                   ; its rising edge
+rx_nibble:
+    wait 0 jmppin
+    wait 1 jmppin
+    in pins, 4
+    jmp x-- rx_nibble
+.wrap

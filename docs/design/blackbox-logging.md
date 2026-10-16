@@ -74,22 +74,23 @@ peripheral. They still contend for core0 time.
 | `PIN_SD_D0`..`D3` | 21, 22, 23, 24 |
 
 Hardware SPI is impossible there: `SD_SCK` is GP19, which is SPI0 **TX** in
-the pin mux, not SCK. The pins satisfy every constraint the PIO program
-imposes (D1..D3 directly follow D0, and CLK is `(D0 + 30) % 32`), and
-`board_desc_lcd2_8.cpp` asserts both at compile time. `sdtest` mounted a card
-there at 25 MHz; the firmware ships at 10 MHz, because SDIO is more sensitive
-to signal integrity than one-bit SPI, and a card that enumerates and then
-corrupts is worse than one that refuses.
+the pin mux, not SCK. The pins satisfy the one constraint the PIO programs
+impose (D1..D3 directly follow D0), and `board_desc_lcd2_8.cpp` asserts it at
+compile time. The driver is `src/sdio/` ([sdio-driver.md](sdio-driver.md)).
+The one hardware record, a mount at 25 MHz in `sdtest`, is of the library's
+SDIO driver, not of this one. The firmware ships at 10 MHz, because SDIO is
+more sensitive to signal integrity than one-bit SPI, and a card that
+enumerates and then corrupts is worse than one that refuses.
 
 SDIO runs on **pio1**, and nothing else does: its programs take 2 state
-machines and all 32 instruction slots. The DShot driver (2 state machines, 16
+machines and all 32 instruction slots, and the driver 2 DMA channels. The DShot driver (2 state machines, 16
 instructions) and the KISS receiver (1 state machine, 9 instructions) claim
 from whichever block has room, and the SDK searches pio2 first, so both land
 on pio2. Two drivers sharing one block would make whichever initialised
 second fail depending on timing.
 
 Library: FatFs, via carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`, pinned at
-v3.6.2. `f_expand()` reserves a contiguous cluster run of
+v3.6.2, built without its SDIO driver. `f_expand()` reserves a contiguous cluster run of
 `SD_LOG_PREALLOC_BYTES`, 16 MiB, when a log opens, so writes do not stall on
 FAT allocation mid-log. A failed reservation is not reported; the log then
 allocates as it grows.
