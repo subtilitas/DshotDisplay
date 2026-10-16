@@ -1,16 +1,5 @@
 # KISS ESC telemetry
 
-Status: implemented on both boards: decoder, PIO receiver, request and drain on
-core1, merge with EDT, source tags on the main screen, both eRPM sources in the
-log. Working on hardware (owner report). Issue #1 separately reports correct
-values with a receiver driving the ESC and the display only listening. Which
-board each report covers and the line voltage have no record.
-
-Branches: the decoder, the request path and the merge were built on
-`dev/telemetry-logging` and released in v1.1.0. The main-screen readout came
-from `dev/multiboard-sdio`, the PIO receiver from `feat/runtime-config`. All of
-it is on `main` and first shipped complete in v2.0.
-
 Terms: ESC is electronic speed controller. DShot is the digital ESC protocol
 the tester drives; in bidirectional DShot the ESC answers each frame on the
 same wire. EDT is Extended DShot Telemetry, carried in those answers. eRPM is
@@ -19,7 +8,15 @@ telemetry is the serial protocol of the KISS ESC line, sent on its own wire.
 PIO is the RP2350's programmable input/output, UART is universal asynchronous
 receiver-transmitter, GPIO is general-purpose input/output, CRC is cyclic
 redundancy check, LSB is least significant bit, FIFO is first-in, first-out
-buffer, UI is user interface.
+buffer, XOR is exclusive or, UI is user interface, IOVDD is the RP2350's
+input/output supply voltage, SDIO is Secure Digital input/output, CI is
+continuous integration. AM32 is an open-source ESC firmware.
+
+Status: implemented on both boards: decoder, PIO receiver, request and drain on
+core1, merge with EDT, source tags on the main screen, both eRPM sources in the
+log. Working on hardware (owner report). Issue #1 separately reports correct
+values with a receiver driving the ESC and the display only listening. Which
+board each report covers and the line voltage have no record.
 
 ## Why
 
@@ -35,8 +32,8 @@ but it is coarse, because each frame has only 8 bits of payload:
 | Consumption | not carried | 1 mAh/LSB | — |
 | eRPM | ~eRPM/256 to eRPM/511 | 100 eRPM/LSB | see below |
 
-On a 6S pack, 0.25 V/LSB moves the voltage readout in steps of about 1 %, and
-a sag of 200 mV is invisible. 1 A/LSB makes idle current unmeasurable and any
+On a 6S pack (six cells in series), 0.25 V/LSB moves the voltage readout in
+steps of about 1 %, and a sag of 200 mV is invisible. 1 A/LSB makes idle current unmeasurable and any
 efficiency figure derived from it meaningless.
 
 The eRPM row is not a simple win either way; see the next section.
@@ -76,8 +73,10 @@ Above that, KISS is the finer measurement. In mechanical RPM after dividing by
 | 20,000 | 46.7 | 14.3 |
 | 30,000 | 105.0 | 14.3 |
 
-KISS is flat at about 14 RPM while bidirectional DShot degrades to 105 RPM at
-30,000 RPM. For a 12 to 16 pole motor above idle, **KISS resolves RPM better**.
+On a 14-pole motor KISS is flat at about 14 RPM, while the bidirectional DShot
+step grows to 105 RPM at 30,000 RPM. Above the crossover, about 6,500
+mechanical RPM on 12 poles, 5,500 on 14 and 4,800 on 16, **KISS resolves RPM
+better**. Below it, bidirectional DShot does.
 [erpm_resolution.py](erpm_resolution.py) is the arithmetic behind both tables.
 
 ### Why bidirectional DShot stays the RPM source
@@ -94,7 +93,7 @@ Averaging N bidirectional samples beats quantisation only if the signal is
 noisy enough to dither it. On a steady RPM the quantisation error is
 deterministic and averaging returns the same wrong value.
 
-As built: the log carries both sources, `eRPM[0]` from bidirectional DShot and
+The log carries both sources, `eRPM[0]` from bidirectional DShot and
 `eRPMkiss[0]` from KISS. The main readout shows bidirectional DShot only,
 smoothed for display (`RPM_FILTER_SHIFT`); KISS eRPM is not displayed. Which
 source the readout should use above the crossover is open and is to be
@@ -184,7 +183,7 @@ occupies about 870 µs on the wire (10 bytes × 10 bits ÷ 115200 baud) and the
 ESC starts it about 900 µs after the request, so requests on consecutive
 frames would overlap.
 
-As built: a request on every `KISS_REQUEST_EVERY_N`-th frame, 20 by default,
+A request goes out on every `KISS_REQUEST_EVERY_N`-th frame, 20 by default,
 which is 50 Hz. Values below 2 fail the build. No request goes out while a
 DShot command burst (EDT enable, beacon) is queued. At each request the frame
 assembler is reset, because KISS has no start delimiter and the request
@@ -251,10 +250,9 @@ KISS goes stale, because a stale mAh beside a live voltage would read as the
 motor having stopped drawing current.
 
 EDT fields carry an arrival timestamp each and expire after `EDT_STALE_MS`,
-1000 ms, per field (`escFieldFresh()`). The first design had `have*` flags
-that could only become true, so an unplugged or swapped ESC left its last
-voltage, current and temperature on screen indefinitely. An expired status
-block reads `--`, never OK.
+1000 ms, per field (`escFieldFresh()`). A field without an expiry would keep
+an unplugged or swapped ESC's last voltage, current and temperature on screen
+indefinitely. An expired status block reads `--`, never OK.
 
 The voltage, current and temperature tiles show the merged value with a KISS
 or EDT tag, because 12.25 V from EDT means "within a 0.25 V step" and 12.25 V
@@ -284,17 +282,16 @@ bool     haveKiss;       /**< True once any frame has been decoded. */
 
 ## Where the code runs
 
-Core1 owns DShot and must not block. The two options were decoding on core1
-inside `escTaskPoll()`, or setting the request bit on core1 and owning the
-UART on core0. Core1 was chosen: all ESC state stays on one core, inside the
-existing critical section.
+Core1 owns DShot and must not block. Core1 also decodes KISS, inside
+`escTaskPoll()`, rather than setting the request bit and leaving the receiver
+to core0. That keeps all ESC state on one core, inside the existing critical
+section.
 
-The plan relied on the PL011's 32-byte FIFO. The PIO receiver joins its FIFOs
-into 8 bytes of receive space, about 700 µs at 115200 baud against 1000 µs
-between DShot frames. So `kissDrain()` runs on every pass of core1's loop,
-ahead of the frame deadline, instead of once per frame slot. It is a FIFO read
-that costs nothing when the FIFO is empty. The added time in `escTaskPoll()`
-has not been measured.
+The PIO receiver joins its FIFOs into 8 bytes of receive space, about 700 µs
+at 115200 baud against 1000 µs between DShot frames. So `kissDrain()` runs on
+every pass of core1's loop, ahead of the frame deadline, instead of once per
+frame slot. It is a FIFO read that returns at once when the FIFO is empty. The
+time it adds to `escTaskPoll()` is not measured.
 
 The AM32 bootloader path (`escTaskSuspend()`) and every rebuild of the DShot
 driver stop the KISS receiver first (`kissUartEnd()`), so a receiver left
@@ -319,24 +316,27 @@ The PIO program and `src/pio_uart_rx.cpp` are device-only. `make -C test
 syntax` and the CI permutation job typecheck them; nothing runs them on the
 host.
 
-## Work breakdown
+## Where the code is
 
-1. `src/kiss_telem.h` and `.cpp`: CRC-8, frame decode, byte-feed state
-   machine. Done.
-2. Host tests for the decoder. Done.
-3. Configuration in `config.h`: `KISS_TELEM_ENABLE`, `KISS_PIN_LCD_2`,
-   `KISS_PIN_LCD_2_8`, `KISS_ENABLE_LCD_2`, `KISS_ENABLE_LCD_2_8`,
-   `KISS_REQUEST_EVERY_N`, `KISS_STALE_MS`, `KISS_REPLY_TIMEOUT_MS`. The pin
-   and enable are runtime settings on CFG → SETUP; the macros are their
-   defaults. Done. The planned `KISS_UART` does not exist: the receiver is PIO.
-4. `esc_task.cpp`: request bit through `sendRaw12Bit()`, drain in
-   `escTaskPoll()`, `EscTelemetry` fields. Done.
-5. Merge policy and source tags in the UI. Done.
-6. Hardware bring-up: measure the line level, confirm frames arrive,
-   cross-check KISS against EDT on one ESC. Partly done: a user reports
-   correct values with a receiver driving the ESC (issue #1). The line level,
-   the display's own request and the 2.8" board are not recorded.
-7. README wiring section. Done: "KISS telemetry (optional third wire)".
+- `src/kiss_telem.h` and `.cpp`: CRC-8, frame decode, byte-feed state
+  machine, the 12-bit payload builder.
+- `src/pio_uart_rx.pio`, `.h` and `.cpp`: the PIO receiver.
+- `src/esc_task.cpp`: the request bit through `sendRaw12Bit()`, the drain in
+  `escTaskPoll()`, the `EscTelemetry` fields.
+- `src/esc_merge.cpp`: the merge policy. The UI draws the source tags.
+- `src/config.h`: `KISS_TELEM_ENABLE`, `KISS_PIN_LCD_2`, `KISS_PIN_LCD_2_8`,
+  `KISS_ENABLE_LCD_2`, `KISS_ENABLE_LCD_2_8`, `KISS_REQUEST_EVERY_N`,
+  `KISS_STALE_MS`, `KISS_REPLY_TIMEOUT_MS`. The pin and the enable are
+  runtime settings on CFG → SETUP; the macros are their defaults.
+- README.md, section "KISS telemetry (optional third wire)": the wiring.
+
+## Hardware record
+
+The owner reports KISS telemetry working on hardware, the display's own
+telemetry request included. Issue #1 separately reports correct values with a
+receiver driving the ESC and the display only listening. Which board each
+report covers is not recorded. The line level is not measured.
+[STATUS.md](../../STATUS.md) holds the full verification record.
 
 ## Open questions
 

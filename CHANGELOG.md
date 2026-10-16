@@ -109,7 +109,8 @@ Merges PR #25.
 
 ## [2.2] - 2026-08-17
 
-Merges PR #20 and PR #21.
+Merges PR #20 and PR #21. The USB card reader comes from
+`feat/usb-mass-storage`.
 
 ### Added
 
@@ -138,7 +139,10 @@ Merges PR #20 and PR #21.
 ## [2.0] - 2026-08-15
 
 Merges PR #3, #7, #9, #10, #11, #15, #16 and #17, and the branch
-`test/multi-board-support`.
+`test/multi-board-support`. The SD card writer comes from the native Pico SDK
+port on `dev/pico-sdk-native`. The SD LOG screen, the KISS readout and the
+2.8" SDIO path come from `dev/multiboard-sdio`, the PIO KISS receiver from
+`feat/runtime-config`.
 
 ### Added
 
