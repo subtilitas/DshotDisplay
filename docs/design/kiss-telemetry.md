@@ -225,9 +225,9 @@ wire reads idle instead of decoding noise.
 
 > **Voltage.** The KISS specification says the line idles at 3.6 V. The
 > RP2350's absolute maximum GPIO voltage is IOVDD + 0.3 V = 3.6 V, so a
-> strictly conforming KISS ESC sits at the limit with no margin. Most
-> BLHeli_32 and AM32 ESCs drive 3.3 V. A 1 kΩ series resistor on the line is
-> cheap insurance. No measurement of a real ESC's line is recorded.
+> strictly conforming KISS ESC sits at the limit with no margin. The level
+> real ESCs drive is not measured. A 1 kΩ series resistor on the line limits
+> the current into the pin's clamp diode.
 
 ## Merging with EDT
 

@@ -75,10 +75,13 @@ FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
 def strip_fences(text):
-    """Drop fenced code blocks, ``` and ~~~ alike, as CommonMark delimits them.
+    """Drop fenced code blocks, ``` and ~~~ alike, indented at most 3 spaces.
 
     A block closes on a fence of the same character, at least as long as the
     opening one, with nothing after it. An unclosed block runs to the end.
+    A fence nested in a list item (indented 4 spaces or more) and an
+    indented code block are not recognised: links inside them are checked.
+    No checked document uses either form.
     """
     out, fence = [], None
     for line in text.splitlines(keepends=True):
