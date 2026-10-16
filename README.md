@@ -25,11 +25,11 @@ temperature, stress and status. The touch panel shows all of it.
 > for someone using the board. This README describes the firmware and the
 > build.
 
-Project state and open items: [STATUS.md](STATUS.md). Changes by release: [CHANGELOG.md](CHANGELOG.md).
+Project state and open items: [STATUS.md](https://github.com/subtilitas/DshotDisplay/blob/main/STATUS.md). Changes by release: [CHANGELOG.md](https://github.com/subtilitas/DshotDisplay/blob/main/CHANGELOG.md).
 
 ---
 
-## Architecture
+## Core split
 
 Bidirectional DShot is half-duplex. The ESC answers only frames it receives,
 and it disarms when frames stop. A telemetry display therefore cannot listen
