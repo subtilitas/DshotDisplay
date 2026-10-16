@@ -874,7 +874,7 @@ target so a test run does not leave the working tree dirty.
 `python3 tools/coverage.py` writes the figure below from its gcov counters.
 
 <!-- coverage:start -->
-Host-suite line coverage of `src/` is **96.7%**: 2,129 of 2,201 lines in 23 files. CI fails below 93% in total or below 85% in any file.
+Host-suite line coverage of `src/` is **97.1%**: 2,444 of 2,516 lines in 25 files. CI fails below 93% in total or below 85% in any file.
 <!-- coverage:end -->
 
 `sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the

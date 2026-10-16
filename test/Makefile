@@ -41,7 +41,7 @@ DEFINES := -DBOARD=$(BOARD) $(EXTRA_DEFINES)
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
         test_blackbox.cpp test_log_ring.cpp test_settings.cpp \
         test_usb_msc.cpp test_dshot_frame.cpp test_dshot_telem.cpp \
-        test_dshot_edt.cpp fakes.cpp \
+        test_dshot_edt.cpp test_sdio.cpp fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
         ../src/ui_input.cpp ../src/ui_widgets.cpp ../src/board_desc.cpp \
         ../src/board_desc_lcd2.cpp ../src/board_desc_lcd2_8.cpp \
@@ -65,16 +65,19 @@ DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
                ../src/pio_uart_rx.cpp \
                ../src/settings_flash.cpp ../src/main.cpp
 
-# The DShot core in src/dshot/ is C11, and is compiled here as C, by $(CC),
-# into objects the suite links. The firmware compiles it as C, so the suite
-# tests the same language: C and C++ differ in the implicit conversions this
-# code leans on (integer to enum, int to bool), and a C++ build could pass code
-# the C build reads differently. dshot.h carries extern "C", so the C++ tests
-# call it as the C++ firmware does.
+# The DShot core in src/dshot/ and the SD card protocol layers in src/sdio/
+# are C11, and are compiled here as C, by $(CC), into objects the suite links.
+# The firmware compiles them as C, so the suite tests the same language: C and
+# C++ differ in the implicit conversions this code leans on (integer to enum,
+# int to bool), and a C++ build could pass code the C build reads differently.
+# Their headers carry extern "C", so the C++ tests call them as the C++
+# firmware does. The SDIO hardware layer (sd_pio.c, sd_card_glue.c) drives
+# PIO and DMA and is not here.
 CSRCS := ../src/dshot/dshot_frame.c ../src/dshot/dshot_telem.c \
-         ../src/dshot/dshot_edt.c
+         ../src/dshot/dshot_edt.c \
+         ../src/sdio/sd_proto.c ../src/sdio/sd_host.c
 OBJ_DIR := obj
-COBJS := $(patsubst ../src/dshot/%.c,$(OBJ_DIR)/%.o,$(CSRCS))
+COBJS := $(addprefix $(OBJ_DIR)/,$(notdir $(CSRCS:.c=.o)))
 
 BIN := dshot_tests
 
@@ -88,10 +91,14 @@ build: $(BIN)
 # unconditionally costs a couple of seconds and removes a whole class of "the
 # tests passed for the other board" confusion.
 .PHONY: $(BIN)
-$(BIN): $(SRCS) $(COBJS) $(wildcard ../src/*.h) $(wildcard *.h)
+$(BIN): $(SRCS) $(COBJS) $(wildcard ../src/*.h) $(wildcard ../src/sdio/*.h) $(wildcard *.h)
 	$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) $(DEFINES) -o $@ $(SRCS) $(COBJS)
 
 $(OBJ_DIR)/%.o: ../src/dshot/%.c ../src/dshot/dshot.h
+	@mkdir -p $(OBJ_DIR)
+	$(CC) $(CFLAGS) $(WARN) -Werror -c -o $@ $<
+
+$(OBJ_DIR)/%.o: ../src/sdio/%.c ../src/sdio/sd_proto.h ../src/sdio/sd_host.h
 	@mkdir -p $(OBJ_DIR)
 	$(CC) $(CFLAGS) $(WARN) -Werror -c -o $@ $<
 
@@ -179,7 +186,7 @@ coverage:
 			-c -o $(COV_DIR)/$$(basename $$f .c).o $$f || exit 1; \
 	done
 	$(CXX) -std=gnu++17 -O0 -g --coverage $(WARN) $(INCLUDES) $(DEFINES) \
-		-o $(COV_DIR)/$(BIN) $(SRCS) $(patsubst ../src/dshot/%.c,$(COV_DIR)/%.o,$(CSRCS))
+		-o $(COV_DIR)/$(BIN) $(SRCS) $(addprefix $(COV_DIR)/,$(notdir $(CSRCS:.c=.o)))
 	./$(COV_DIR)/$(BIN)
 	python3 ../tools/coverage.py --print
 
