@@ -55,7 +55,8 @@ Rates and defaults, from `src/config.h` and `src/main.cpp`:
   14.5 bytes a frame, 7.3 kB/s, per `config.h`. 8192-byte ring buffer, 512-byte
   card writes, 16 MiB pre-allocated per file, directory entry synced every
   2000 ms.
-- Display: 240 × 320 pixel RGB565 framebuffer (153,600 bytes), panel SPI
+- Display: 240 × 320 pixel RGB565 framebuffer (16 bits per pixel: 5 red,
+  6 green, 5 blue; 153,600 bytes), panel SPI
   (Serial Peripheral Interface) clock 62.5 MHz.
 - Serial dump over USB CDC (communications device class) at 10 Hz
   (`SERIAL_TELEMETRY` = 1).
@@ -76,9 +77,10 @@ holds a safe state: power latch held, no display, no DShot. The board is never
 stored and never chosen by the user.
 
 Build: native Pico SDK (software development kit) 2.1.1 with CMake, ARM cores
-only. Dependencies are pinned by commit: `pico-bidir-dshot` 1.0.2 (GPL-3.0)
-and `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2. A release carries three UF2
-(USB Flashing Format) images: `touch-lcd-2`, `touch-lcd-2.8` and `unified`.
+only. Dependencies are pinned by commit: `pico-bidir-dshot` 1.0.2 (GPL-3.0, GNU
+General Public License version 3) and `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2.
+A release carries three UF2 (USB Flashing Format) images: `touch-lcd-2`,
+`touch-lcd-2.8` and `unified`.
 
 ## Boards
 
@@ -121,7 +123,7 @@ record either way.
 | Board detection, unified image | board selection and defaults | not recorded |
 | Touch handling, high-contrast theme, throttle gauge | tap on release, repeats, screen residue, gauge reach | hardware use recorded: the reports #22 to #24 named in the v2.3 commits; the fixes on hardware: not recorded |
 | Serial telemetry dump | none | not recorded |
-| `tools/sdtest`, SD bring-up firmware | none, not built in CI (continuous integration) | hardware use recorded on both boards: f16a70f, e9c9d9a |
+| `tools/sdtest`, SD bring-up firmware | none, not built in CI | hardware use recorded on both boards: f16a70f, e9c9d9a |
 
 KISS in detail. The owner reports KISS telemetry working on hardware, the
 display's own telemetry request included. Issue #1 separately reports correct
@@ -213,9 +215,8 @@ merged.
 - **Board probe failure.** When neither or both buses answer, the screen stays
   dark and nothing is driven. Recovery is a reflash over USB.
 - **Landscape.** `LCD_ROTATION` 1 fails the build.
-- **Licence.** `pico-bidir-dshot` is GPL-3.0 (GNU General Public License
-  version 3), so a distributed firmware image falls under GPL-3.0 for the
-  combined work. The repository's own code is MIT.
+- **Licence.** `pico-bidir-dshot` is GPL-3.0, so a distributed firmware image
+  falls under GPL-3.0 for the combined work. The repository's own code is MIT.
 
 ## Tests and CI
 
