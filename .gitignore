@@ -17,6 +17,7 @@ test/gen_blackbox_log
 test/*.ppm
 test/*.BFL
 test/cov/
+test/obj/
 
 # Scratch space for files being retired
 _to_delete/

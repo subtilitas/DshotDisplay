@@ -20,8 +20,9 @@ differs from what this script would write, or when coverage is below
 MIN_TOTAL or any file is below MIN_FILE.
 
 What counts: every file under src/ that gcov reports a line for. That is each
-.cpp in the Makefile's SRCS, ui_am32.cpp (test_ui.cpp includes it), and the
-headers whose inline functions the suite calls. A line counts as covered when
+.cpp in the Makefile's SRCS, the C files of the DShot core in src/dshot/ (the
+Makefile's CSRCS), ui_am32.cpp (test_ui.cpp includes it), and the headers
+whose inline functions the suite calls. A line counts as covered when
 any translation unit executes it. An inline function no test calls is not
 emitted, so it has no lines and does not count. A source in SRCS with no
 executable line has to be in DATA_ONLY, and a DATA_ONLY file that gains one
@@ -108,15 +109,17 @@ def measure():
 def completeness(files):
     """One message per compiled source the measurement does not account for.
 
-    The instrumented build names each unit's notes file <binary>-<base>.gcno,
-    so a src/ source in SRCS is found by its base name.
+    The instrumented build names each unit's notes file <binary>-<base>.gcno
+    when it compiles and links in one step, and <base>.gcno for a C file
+    compiled to an object of its own, so a source is found by its base name
+    anywhere under src/.
     """
     problems = []
     compiled = set()
     for gcno in COV_DIR.glob("*.gcno"):
-        base = gcno.stem.split("-", 1)[1]
+        base = gcno.stem.split("-", 1)[-1]
         compiled.update(p.relative_to(REPO).as_posix()
-                        for p in SRC.glob(base + ".*")
+                        for p in SRC.rglob(base + ".*")
                         if p.suffix in (".cpp", ".c"))
     for rel in sorted(compiled - set(files) - DATA_ONLY):
         problems.append("%s is compiled and has no executable line; "
