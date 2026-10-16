@@ -36,6 +36,12 @@ its own wire. AM32 is an open-source ESC firmware.
 - [STATUS.md](STATUS.md): architecture, boards, verification state of each
   part, open items with issue #1, known limitations, tests and CI.
 - This changelog.
+- `make -C test coverage` and `tools/coverage.py`: host-suite line coverage
+  in README.md and a per-file table in STATUS.md. The CI job Coverage fails
+  on a stale figure, below 93 % in total or below 85 % in any file.
+- `.github/workflows/docs.yml` publishes `wiki/` to the GitHub wiki after
+  every successful Release run, from a tag push or started by hand, and on
+  request for a named tag.
 - `test/check_docs.py` checks that every relative link in STATUS.md,
   CHANGELOG.md and `docs/design/*.md` points at a file that exists, and
   that an anchor into a Markdown file points at a heading that exists.
@@ -67,6 +73,13 @@ its own wire. AM32 is an open-source ESC firmware.
   run time, which log fields carry which source, and the USB card reader.
 - README.md links STATUS.md and this changelog, and credits the
   collaboration.
+- README.md and every wiki page, English and German, describe the firmware
+  in the present tense with values from `src/`. Statements that disagreed
+  with the code are corrected, among them the AM32 status strings, the
+  backlight range of 16 to 255, the 34 px throttle gauge and the log fields.
+- The wiki is published by `docs.yml` instead of a job inside `release.yml`.
+- `actions/cache` v6 (Node.js 24) in place of v4 (Node.js 20).
+- The workflow lint's duplicate-key check covers every workflow file.
 
 ### Fixed
 
@@ -75,6 +88,13 @@ its own wire. AM32 is an open-source ESC firmware.
 - `test/check_docs.py` run from any directory other than the repository root
   checked no files and reported success. It now resolves its paths from its
   own location and fails when it finds no files.
+- `test/check_docs.py` checks links with single-quoted titles, angle-bracket
+  targets and parentheses in the path, skips footnotes, and builds heading
+  anchors from the rendered heading text.
+- Three comments in `src/config.h` disagreed with the code: the SD
+  preallocation of 16 MiB lasts about 38 min, SETUP shows one note line for
+  saved settings or compiled defaults, and the card interface differs per
+  board.
 
 ## [2.3] - 2026-08-26
 

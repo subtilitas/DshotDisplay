@@ -30,10 +30,11 @@ Exit status is the number of problems, so CI fails without extra plumbing.
 
 Paths are resolved from the repository root, found from this file's own
 location, so the result does not depend on the directory the script is run
-from. Run from test/ it used to glob nothing, check nothing and pass.
+from.
 """
 
 import glob
+import functools
 import os
 import re
 import sys
@@ -66,28 +67,46 @@ def collect_symbols():
     return symbols
 
 
+def strip_code(text):
+    """Drop fenced blocks and inline code spans; brackets there are not links."""
+    text = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
+    return re.sub(r"`[^`\n]*`", "", text)
+
+
+def heading_text(title):
+    """A heading's rendered text: links become their label, markup is dropped."""
+    title = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", title)   # [label](url)
+    title = re.sub(r"<[^>]+>", "", title)                         # inline HTML
+    return title.replace("`", "")
+
+
+@functools.lru_cache(maxsize=None)
 def heading_anchors(path):
     """The anchors GitHub generates for the headings of a Markdown file."""
     anchors, seen = set(), {}
     text = re.sub(r"^```.*?^```", "", open(path, encoding="utf-8").read(),
                   flags=re.S | re.M)
     for title in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", text, re.M):
-        slug = re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
+        slug = re.sub(r"[^\w\- ]", "", heading_text(title).lower()).replace(" ", "-")
         n = seen.get(slug, 0)
         seen[slug] = n + 1
         anchors.add(slug if n == 0 else f"{slug}-{n}")
-    return anchors
+    return frozenset(anchors)
 
 
 def check_links(path):
     """Rule 8: relative links in one Markdown file resolve."""
     problems = []
-    text = open(path, encoding="utf-8").read()
     # Code is not prose: a fenced block or an inline span may hold brackets.
-    text = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
-    text = re.sub(r"`[^`\n]*`", "", text)
-    targets = re.findall(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)", text)
-    targets += re.findall(r"^\s*\[[^\]]+\]:\s*(\S+)", text, re.M)
+    text = strip_code(open(path, encoding="utf-8").read())
+    # Inline links: <angle-bracketed> targets may hold spaces and parentheses;
+    # bare targets may hold one level of balanced parentheses. A title in
+    # double quotes, single quotes or parentheses may follow.
+    title = r"""(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?"""
+    targets = re.findall(r"\]\(\s*<([^>]+)>" + title + r"\s*\)", text)
+    targets += re.findall(r"\]\(\s*((?:[^()\s<]|\([^()\s]*\))+)" + title + r"\s*\)", text)
+    # Reference definitions; [^1]: is a footnote, not a link.
+    targets += re.findall(r"^\s*\[(?!\^)[^\]]+\]:\s*<?([^\s>]+)>?", text, re.M)
     for target in targets:
         if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
             continue                      # https:, mailto: -- not ours to check

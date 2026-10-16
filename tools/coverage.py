@@ -198,7 +198,7 @@ def main():
         original = path.read_text() if path.exists() else None
         updated = splice(original, body, start, end) if original else None
         if updated is None:
-            if required:
+            if required and not args.print:
                 sys.exit("%s has no %s / %s markers"
                          % (path.name, start, end))
             if not args.print:

@@ -418,7 +418,7 @@ jobs:
       - name: Reject duplicate keys
         run: |
           python3 - <<'EOF'
-          import sys, yaml
+          import glob, sys, yaml
           # PyYAML accepts duplicate mapping keys and silently keeps the last.
           # GitHub does not. This is the check that would have caught it.
           class Strict(yaml.SafeLoader): pass
@@ -433,7 +433,7 @@ jobs:
               return out
           Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_dupes)
           bad = 0
-          for f in (".github/workflows/ci.yml", ".github/workflows/release.yml"):
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
               try:
                   yaml.load(open(f), Strict)
                   print(f"{f}: ok")

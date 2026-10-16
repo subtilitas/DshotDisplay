@@ -281,18 +281,18 @@ requests, by hand):
 | Host tests | `make both`; the unified suite again with all four pin macros overridden; wiki screenshots and `check_wiki.py` |
 | Blackbox round-trip | builds `blackbox_decode` from source, runs `make bbcheck` |
 | Config permutations | typechecks all of `src/` with `-Werror` for 64 combinations: 2 boards × AM32 transmit mode × AM32 low-jump × rotation 0 or 2 × KISS on or off × SD logging on or off; checks the landscape guard fires |
-| Workflow lint | actionlint 1.7.7 and a duplicate-key check on both workflows |
+| Workflow lint | actionlint 1.7.7 and a duplicate-key check on every workflow in `.github/workflows/` |
 | Docs | `test/check_docs.py`, then Doxygen with zero warnings allowed |
 | Coverage | `make -C test coverage`, then `python3 tools/coverage.py --check`; fails on drift from the table below, below 93 % in total, or below 85 % in any file |
 
 **Release** (`.github/workflows/release.yml`; on `v*` tags, by hand): resolves
 the tag, builds the three images after the host tests and `check_docs.py`
-pass, publishes them with checksums and confirms every asset landed. At
-82baec4 its last job publishes `wiki/` to the GitHub wiki; that job published
-the live wiki, every page in `wiki/` plus `img/`, for v2.0, v2.2 and v2.3.
+pass, publishes them with checksums and confirms every asset landed. Each run
+is titled `Release <tag>`, which Docs reads to find the tag.
 
 **Docs** (`.github/workflows/docs.yml`): mirrors `wiki/` to the GitHub wiki
-after a successful Release run, and can be started by hand. The wiki is
+after every successful Release run, from a tag push or started by hand, and
+can be started by hand itself. The wiki is
 published per release on purpose, so it describes firmware that can be
 downloaded.
 

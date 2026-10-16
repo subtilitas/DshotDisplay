@@ -7,12 +7,13 @@ name: Docs
 #
 # Triggers:
 # - The Release workflow completes.  The job runs only when that run
-#   succeeded and was started by a tag push; it publishes the manual as
-#   committed at that tag.  A Release run started by hand carries its tag
-#   only as an input that the event does not expose, so it publishes nothing.
+#   succeeded, whether a tag push or a manual run started it.  The tag comes
+#   from the run's title, which release.yml sets to "Release <tag>" for both
+#   triggers, and the manual is published as committed at that tag.
 # - A manual run.  The optional input names an existing v* tag; without it,
-#   the newest v* tag is used.  Use this for a Release run started by hand
-#   and to re-publish after the first wiki page has been created.
+#   the newest v* tag without a pre-release suffix (such as -rc1) is used.
+#   Use this to re-publish after the first
+#   wiki page has been created.
 #
 # The wiki must exist before the first run: create one page by hand in the
 # repository's Wiki tab, otherwise the clone below fails with 404.
@@ -50,8 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+      github.event.workflow_run.conclusion == 'success'
     steps:
       # Resolves the tag and the commit to publish.  Everything reaches the
       # script through the environment, never interpolated into it: a tag or
@@ -62,24 +62,22 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
-          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
         run: |
           set -eu
           if [ "$EVENT" = workflow_run ]; then
-            # For a tag push the run's head branch is the tag name, and the
-            # head commit is the commit the tag points at.
-            tag="$RUN_TAG"
-            ref="$RUN_SHA"
+            # release.yml titles every run "Release <tag>".
+            tag="${RUN_TITLE#Release }"
           else
             tag="$INPUT_TAG"
             if [ -z "$tag" ]; then
+              # The newest tag without a pre-release suffix: v2.4, not v2.4-rc1.
               tag=$(git ls-remote --tags --refs --sort=-v:refname \
                       "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git" 'v*' \
-                    | sed -n '1s|.*refs/tags/||p')
+                    | sed 's|.*refs/tags/||' | grep -v -- '-' | sed -n 1p || true)
             fi
-            ref="refs/tags/$tag"
           fi
+          ref="refs/tags/$tag"
           if ! printf '%s' "$tag" | grep -Eq '^v[0-9A-Za-z._-]+$'; then
             echo "::error::'$tag' is not a v-prefixed tag"
             exit 1
