@@ -2,54 +2,54 @@
 
 # AM32 Configuration
 
-Read, change and write an AM32 ESC's settings over the same signal wire, with no
-laptop and no configurator.
+This screen reads, changes and writes the settings of an AM32 ESC (electronic
+speed controller) over the signal wire. It needs no laptop or configurator. It
+does not update ESC firmware.
 
 <img src="img/am32-list.png" width="240" alt="The AM32 settings list">
 
-> **This writes to your ESC's flash.** Everything here is reversible while you
-> are still on the screen, and nothing reaches the ESC until you have held a
-> button down for a full second. But a written setting is written.
+> **This writes to your ESC's flash.** Changes stay on the tester until you
+> hold `HOLD TO WRITE` for 1 s. After that they are in the ESC.
 
 ---
 
 ## Connecting
 
-`CFG → AM32`.
+Open `CFG → AM32`.
 
-The screen hands the signal pin over from the DShot pump to the bootloader
-transport, then starts looking for an ESC.
+The screen hands the signal pin from the DShot driver to the bootloader link
+(19200 baud, one wire, half-duplex), then starts searching.
 
-**Then power-cycle the ESC.** This is not optional and it is not the tester
-being awkward: the AM32 bootloader only listens for a brief window at power-up.
-Unplug the ESC battery and plug it back in while this screen is showing. The
-firmware repeats its handshake as fast as it can so that it is transmitting when
-that window appears.
+**Then power-cycle the ESC.** The AM32 bootloader listens only in a short
+window after power-up. Unplug the ESC battery and plug it back in while this
+screen is open. The firmware repeats its handshake, waiting 30 ms for each
+reply, so that it is sending when the window opens. The window's length is not
+measured.
 
-You will see `SEARCHING...` and a spinner. When it catches the window, the list
-appears and the strip under the title names the ESC and its firmware revision.
+The screen shows `SEARCHING...`, then `WAITING... (TRY n)` with an attempt
+counter, and a spinner. On success the list appears, and the strip under the
+title shows the ESC name, MCU (microcontroller) family and firmware revision.
 
-If bytes come back that cannot be parsed, the screen says so explicitly —
-`REPLY NOT UNDERSTOOD` with the first few bytes and the baud rate. That is a
-different problem from silence, and worth knowing apart: it means the wire is
-fine and the framing is not.
+If bytes arrive that do not parse, the screen shows `REPLY NOT UNDERSTOOD:`,
+the byte count, the first three bytes and the baud rate, and
+`LINK WORKS BUT FRAMING IS OFF.` That means the wire works and the framing or
+baud rate does not match.
 
 ---
 
 ## Browsing
 
-The list scrolls by dragging. It follows your finger from the moment the drag
-is recognised, and a drag never selects anything — so you can flick through
-without lighting up rows you did not mean to touch.
+Drag up or down to scroll. The list follows the finger 1:1 once the drag is
+recognised. A drag never selects a row.
 
 <img src="img/am32-scrolled.png" width="240" alt="The list mid-scroll">
 
-A **tap that goes nowhere** selects the row under it. The editor bar at the
-bottom then shows that field's name and value.
+A **tap without movement** selects the row under it. The editor bar at the
+bottom then shows the field's name and value.
 
-Rows are grouped, with the group name above each one in grey. Which fields exist
-depends on the ESC's layout revision — the firmware only shows the ones that
-apply to the version it read.
+Rows are grouped, with the group name in grey above each group. The available
+fields depend on the ESC's settings layout revision. Only fields that apply to
+the revision read are shown.
 
 ---
 
@@ -60,22 +60,21 @@ apply to the version it read.
 | Gesture | Effect |
 |---|---|
 | Tap a row | Select it |
-| `-` / `+` in the editor bar | **Fine** — one step per press. Hold to repeat, accelerating |
-| Swipe a row **sideways** | **Coarse** — one full-width swipe covers the field's entire range |
+| `-` / `+` in the editor bar | **Fine**: one step per press. Hold to repeat, speeding up |
+| Swipe a row **sideways** | **Coarse**: 180 px of travel covers the field's whole range |
 | Drag **up / down** | Scroll |
 
-A gesture is either a scroll or an edit, never both: the axis is decided in the
-first few pixels of travel and then locked.
+A gesture is either a scroll or an edit. The axis is fixed after 6 px of
+travel.
 
-Coarse swipes respect each field's own step, so values that must stay legal do —
-motor poles stay even, for instance. They also re-anchor at the ends, so
-overshooting the top and swiping back a little responds immediately instead of
-having to unwind however far past the end you went.
+Coarse swipes snap to each field's step, so values stay legal; motor poles
+stay even, for example. At the end of the range the swipe re-anchors, so a
+small swipe back responds at once.
 
-**Changed rows are marked amber down the left edge**, and their values turn
-amber too. Nothing has reached the ESC yet.
+**Changed rows are marked amber on the left edge**, and their values are
+amber. Nothing has been sent to the ESC yet.
 
-`REVERT` throws away every unsaved change and restores what was read.
+`REVERT` discards all unsaved changes and restores the values that were read.
 
 ---
 
@@ -83,15 +82,16 @@ amber too. Nothing has reached the ESC yet.
 
 <img src="img/am32-written.png" width="240" alt="Write verified">
 
-`HOLD TO WRITE` for a full second. A progress bar fills as you hold, and the
-button reads `NO CHANGES` when there is nothing to write.
+Hold `HOLD TO WRITE` for 1 s. A progress bar fills while you hold. With no
+changes the button reads `NO CHANGES`.
 
-The firmware then **reads the settings back and compares them**, rather than
-trusting the ESC's acknowledgement — a write that reports success but lands
-wrong is worse than one that fails loudly. You get `WRITE VERIFIED`, or the
-exact byte that disagreed and what it should have been.
+After the write the firmware waits 300 ms, **reads the settings back and
+compares them** byte by byte. It does not rely on the ESC's acknowledgement.
+A match shows `WRITE VERIFIED`. A mismatch shows the first differing byte as
+`DIFF @xx: GOT xx WANT xx`.
 
-Most AM32 settings take effect on the next ESC power-up.
+Most AM32 settings take effect at the next ESC power-up. This is AM32
+behaviour; the tester does not check it.
 
 ---
 
@@ -99,27 +99,28 @@ Most AM32 settings take effect on the next ESC power-up.
 
 <img src="img/am32-hex.png" width="240" alt="The raw settings bytes">
 
-`HEX` shows the raw settings bytes. It is the escape hatch: if a field is not
-offered for your layout revision, or you want to check what a change actually
-did at the byte level, it is here. Read-only.
+`HEX` shows the raw 48 settings bytes, read-only. Use it to check a field that
+your layout revision does not offer, or to see what a change did at byte
+level. `FIELDS` returns to the list.
 
 ---
 
 ## Leaving
 
-`BACK` hands the signal pin back to the DShot pump and returns to the settings
-screen. The pump restarts disarmed.
+`BACK` hands the signal pin back to the DShot driver and returns to the
+settings screen. The tester is disarmed.
 
 ---
 
 ## When it will not connect
 
-- **`SEARCHING...` forever.** The power-cycle window is the whole game. Unplug
-  and replug the ESC battery *while the screen is showing*. Doing it before
-  entering the screen does not work.
-- **`REPLY NOT UNDERSTOOD`.** The link is alive; the framing is off. Usually a
-  non-AM32 ESC, or one running a bootloader this transport does not speak.
-- **`NO VALID SETTINGS`.** Something answered and the settings block did not
-  look plausible. Do not write anything.
+- **`SEARCHING...` or `WAITING...` with no end.** Unplug and replug the ESC
+  battery *while the screen is open*. A power-cycle before opening the screen
+  does not work.
+- **`REPLY NOT UNDERSTOOD`.** The link works; the framing does not. Possible
+  causes: the ESC does not run AM32, or its bootloader uses a protocol this
+  transport does not implement.
+- **`NO VALID SETTINGS`.** The ESC answered, and the settings block failed the
+  plausibility check. Do not write anything.
 
 More in [Troubleshooting](Troubleshooting#am32-will-not-connect).
