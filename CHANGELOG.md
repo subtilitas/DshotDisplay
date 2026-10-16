@@ -70,6 +70,12 @@ its own wire. AM32 is an open-source ESC firmware.
 - `test/check_docs.py` checks links with single-quoted titles, angle-bracket
   targets and parentheses in the path, skips footnotes, and builds heading
   anchors from the rendered heading text.
+- `test/check_docs.py` strips `~~~` code fences as well as backtick fences,
+  builds heading anchors without `_` and `*` emphasis markers, and caps its
+  exit status at 255, so a multiple of 256 problems does not exit 0.
+- The release notes describe the board probe as it runs: on every boot,
+  shown read-only under CFG → SETUP. They give GP28 as the KISS pin of the
+  2.8" board, off by default.
 - Three comments in `src/config.h` disagreed with the code: the SD
   preallocation of 16 MiB lasts about 38 min, SETUP shows one note line for
   saved settings or compiled defaults, and the card interface differs per
