@@ -1,9 +1,10 @@
 # Design notes
 
-These documents record the design decisions behind two features: protocol
-details, pin choices, and what runs on which core. Both features are built,
-and each document describes the code as it is and says where it diverged from
-the plan.
+These documents record the design decisions behind each feature: protocol
+details, pin choices, and what runs on which core. A document is written
+before the code. While its feature is planned it describes the system as it
+will be; once the feature is built it describes the code as it is and says
+where it diverged from the plan.
 
 A document that no longer matches the code is a bug. When a feature changes,
 update its document, or fold it into the README and delete it.
@@ -14,6 +15,9 @@ firmware; the status lines here summarise it per feature.
 |---|---|
 | [kiss-telemetry.md](kiss-telemetry.md) | Implemented on both boards. Working on hardware (owner report). Off by default on the 2.8" board. |
 | [blackbox-logging.md](blackbox-logging.md) | Implemented on both boards. Hardware use recorded in commits on both boards. Buffer sizing unmeasured. |
+| [pin-claim.md](pin-claim.md) | Planned. A screen takes the ESC and KISS pins from DShot while it is open; shared hardware facts and the slice plan. |
+| [servo-tester.md](servo-tester.md) | Planned. Servo PWM output, manual position, sweep, two servos. Depends on the pin claim. |
+| [kst-programming.md](kst-programming.md) | Planned. KST and Chaservo servo programming, ported from rcbench. Depends on the pin claim. |
 
 ## Shared context
 
