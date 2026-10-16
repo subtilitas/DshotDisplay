@@ -24,6 +24,8 @@ board shows.*
 > written for someone holding the board rather than reading the source. This
 > README is the technical document; the wiki is the manual.
 
+Project state and open items: [STATUS.md](STATUS.md). Changes by release: [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Why it's built this way
