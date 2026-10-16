@@ -25,6 +25,8 @@ temperature, stress and status. The touch panel shows all of it.
 > for someone using the board. This README describes the firmware and the
 > build.
 
+Project state and open items: [STATUS.md](STATUS.md). Changes by release: [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## Architecture
