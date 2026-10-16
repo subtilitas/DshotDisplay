@@ -864,6 +864,13 @@ Failing tests dump their frame too.
 `make previews` restitches the images in `docs/` from those frames. It is a separate
 target so a test run does not leave the working tree dirty.
 
+`make coverage` builds an instrumented copy of the suite in `test/cov/` and runs it, and
+`python3 tools/coverage.py` writes the figure below from its gcov counters.
+
+<!-- coverage:start -->
+Host-suite line coverage of `src/` is **96.3%**: 1,880 of 1,952 lines in 20 files. CI fails below 93% in total or below 85% in any file.
+<!-- coverage:end -->
+
 `sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the
 logging UI is tested against a fake logger in `fakes.cpp`. The fake is the observable:
 tapping START has to actually reach `sdLogStart()` for its state to change, which covers
