@@ -702,6 +702,69 @@ static void testSetupWiring() {
 }
 
 /**
+ * @brief Whether the status bar's DShot label reads @p text in @p colour.
+ *
+ * Draws the expected label over the one on screen and compares the two
+ * hashes, so the check is on the rendered glyphs rather than on a string the
+ * UI meant to draw. The rectangle is the widest label, `DS1200`, at scale 1.
+ */
+static bool statusLabelIs(const char *text, uint16_t colour) {
+	const int x = 104, y = 3, w = 36, h = 7;
+	uint32_t shown = fakeRegionHash(x, y, w, h);
+	gfxRect(x, y, w, h, C_PANEL);
+	gfxText(x, y, text, colour, 1);
+	return fakeRegionHash(x, y, w, h) == shown;
+}
+
+/**
+ * @brief The status bar names the bitrate the pump runs at.
+ *
+ * SETUP changes the bitrate at run time, so the label follows the pump, not
+ * the compiled default. A pin the driver refused shows DSERR instead: nothing
+ * is on the wire at any rate.
+ */
+static void testStatusBarBitrate() {
+	section("Status bar: the DShot label follows the pump");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	fakeSetEdtRequested(false);
+	feedLiveTelemetry();
+	uint8_t pin = escTaskDshotPin();
+	escTaskConfigure(pin, 600, false, 0);
+	frames(2);
+	checkTrue("DS600 at 600 kbit/s", statusLabelIs("DS600", C_DIM));
+
+	escTaskConfigure(pin, 150, false, 0);
+	frames(1);
+	checkTrue("DS150 once the pump runs at 150", statusLabelIs("DS150", C_DIM));
+	escTaskConfigure(pin, 300, false, 0);
+	frames(1);
+	checkTrue("DS300 at 300", statusLabelIs("DS300", C_DIM));
+	escTaskConfigure(pin, 1200, false, 0);
+	frames(1);
+	checkTrue("DS1200 at 1200", statusLabelIs("DS1200", C_DIM));
+
+	fakeSetEdtRequested(true);
+	frames(1);
+	checkTrue("cyan once EDT is requested", statusLabelIs("DS1200", C_CYAN));
+
+	EscTelemetry tel;
+	memset(&tel, 0, sizeof(tel));
+	tel.initError = true;
+	fakeSetTelemetry(&tel);
+	frames(1);
+	checkTrue("DSERR when the bind failed", statusLabelIs("DSERR", C_AMBER));
+
+	// Back to the defaults, so later screenshots show what a fresh board does.
+	feedLiveTelemetry();
+	escTaskConfigure(pin, DSHOT_SPEED_KBAUD, false, 0);
+	frames(1);
+	checkTrue("and the bitrate again when it clears", statusLabelIs("DS600", C_CYAN));
+}
+
+/**
  * @brief KISS can only be switched on against a pin that can actually receive.
  *
  * On the 2.8" board there is exactly one such pin and it is also the default
@@ -2107,6 +2170,7 @@ void runUiTests() {
 	testArmBacklightDip();
 
 	testSetupWiring();
+	testStatusBarBitrate();
 	testSetupKiss();
 	testSetupDisplay();
 	testSetupSave();

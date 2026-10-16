@@ -64,6 +64,10 @@ its own wire. AM32 is an open-source ESC firmware.
 
 ### Fixed
 
+- The tester's top row shows the DShot bitrate the pump runs at, as set
+  under SETUP; it read `DS600`, the compiled default, at every rate. `DSERR`
+  in amber replaces it when the DShot driver fails to set up its PIO state
+  machines.
 - `test/check_docs.py` run from any directory other than the repository root
   checked no files and reported success. It now resolves its paths from its
   own location and fails when it finds no files.

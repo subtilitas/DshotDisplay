@@ -278,6 +278,8 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 
 uint8_t escTaskDshotPin() { return s_dshotPin; }
 
+uint16_t escTaskDshotKbaud() { return s_dshotKbaud; }
+
 void escTaskBegin() {
 	// Nothing is claimed here. The driver and the UART are built by the first
 	// escTaskPoll(), which is also the path a suspend or a reconfigure returns
@@ -381,6 +383,8 @@ void escTaskPoll() {
 		// half-applied. @see esc_wiring
 		uint8_t  pin   = s_dshotPin;
 		uint16_t kbaud = s_dshotKbaud;
+		// A failed state-machine setup sets `initError`, which puts DSERR in the
+		// status bar in place of the bitrate.
 		s_esc = new BidirDShotX1(pin, kbaud);
 		s_armed = false;
 		s_throttle = 0;

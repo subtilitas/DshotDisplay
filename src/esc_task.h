@@ -73,7 +73,7 @@ struct EscTelemetry {
 	uint32_t edtStatusMs;   /**< Last EDT status frame. */
 	/** @} */
 
-	bool     initError;     /**< PIO state machine setup failed. */
+	bool     initError;     /**< PIO state machine setup failed; the status bar shows `DSERR` in place of the bitrate. */
 
 	/**
 	 * @name KISS telemetry
@@ -358,5 +358,12 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 
 /** @brief GPIO the pump is currently driving. @return The live ESC pin. */
 uint8_t escTaskDshotPin();
+
+/**
+ * @brief DShot bitrate the pump is currently using.
+ * @return 150, 300, 600 or 1200, in kbit/s: the value escTaskConfigure() last
+ *         set, which the pump binds at on its next escTaskPoll().
+ */
+uint16_t escTaskDshotKbaud();
 
 /** @} */

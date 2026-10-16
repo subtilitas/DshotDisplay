@@ -24,10 +24,10 @@ Tester. Der Tester ist die Wurzel und hat keinen Kopfbereich.
 **Obere Zeile.** Von links nach rechts:
 
 - das Scharf-Feld: `SAFE` (grün) oder `ARMED` (rot);
-- `DS` und die DShot-Bitrate in kbit/s, cyan, sobald eine EDT-Freigabe
-  (Extended DShot Telemetry) gesendet wurde. **Aktuelle Einschränkung:** Die
-  Anzeige zeigt die kompilierte Voreinstellung `DS600`, nicht die im SETUP
-  eingestellte Bitrate;
+- `DS` und die DShot-Bitrate in kbit/s, wie im SETUP eingestellt, cyan,
+  sobald eine EDT-Freigabe (Extended DShot Telemetry) gesendet wurde. `DSERR`
+  in Bernstein ersetzt sie, wenn die Anzeige ihren DShot-Ausgang nicht
+  einrichten konnte; dann wird nichts an den ESC gesendet;
 - der Aufzeichnungszustand: `REC`, `SD`, `SDERR` oder `NOSD`
   (siehe [SD-Aufzeichnung](SD-Aufzeichnung));
 - die Spannung des platineneigenen Akkus, gemessen über den
