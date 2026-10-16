@@ -7,6 +7,12 @@ name: Release
 #
 # Builds flashable .uf2 images for both supported boards, checksums them, and
 # publishes a GitHub Release with the images attached.
+
+# The run's title carries the tag for both triggers. docs.yml reads it from
+# workflow_run.display_title, because a manual run's head_branch is the branch
+# it was started from, not the tag.
+run-name: Release ${{ inputs.tag || github.ref_name }}
+
 on:
   push:
     tags: ["v*"]

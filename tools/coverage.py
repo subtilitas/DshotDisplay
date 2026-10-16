@@ -114,6 +114,11 @@ def completeness(files):
     problems = []
     compiled = set()
     for gcno in COV_DIR.glob("*.gcno"):
+        if "-" not in gcno.stem:
+            problems.append("%s is not named <binary>-<base>.gcno; the "
+                            "coverage target builds every unit into one "
+                            "binary" % gcno.name)
+            continue
         base = gcno.stem.split("-", 1)[1]
         compiled.update(p.relative_to(REPO).as_posix()
                         for p in SRC.glob(base + ".*")
@@ -195,7 +200,7 @@ def main():
         original = path.read_text() if path.exists() else None
         updated = splice(original, body, start, end) if original else None
         if updated is None:
-            if required:
+            if required and not args.print:
                 sys.exit("%s has no %s / %s markers"
                          % (path.name, start, end))
             if not args.print:

@@ -597,7 +597,7 @@ nothing for those six. The SETUP note line says which set is in use.
 | `SD_LOG_I_INTERVAL` | `32` | Frames between keyframes (I frames). Lower values resynchronise sooner after damage and cost size |
 | `SD_LOG_BUFFER_BYTES` | `8192` | Ring buffer. Size it from BUF PEAK and WORST FLUSH |
 | `SD_LOG_CHUNK_BYTES` | `512` | Flush size. Keep it a multiple of 512 to avoid read-modify-write in the card |
-| `SD_LOG_PREALLOC_BYTES` | `16 MB` | Contiguous space reserved per file, so the FAT is not rewritten mid-log. About 38 min at 7.3 kB/s. Unused space is released at close |
+| `SD_LOG_PREALLOC_BYTES` | `16 MiB` | Contiguous space reserved per file, so the FAT is not rewritten mid-log. About 38 min at 7.3 kB/s. Unused space is released at close |
 | `SD_LOG_SYNC_MS` | `2000` | Interval for committing the file's directory entry. A power cut loses at most the data since the last commit |
 | `SD_LOG_AUTO_ON_ARM` | `1` | Start and stop logging with ARM, in addition to the manual button |
 
@@ -907,8 +907,10 @@ hand. `check_docs.py` enforces documentation precisely — public API documented
 names matching signatures, no dangling `@ref` — where Doxygen's `WARN_IF_UNDOCUMENTED`
 would also demand a comment on every file-static `s_scroll`.
 
-`docs.yml` publishes `wiki/` to the GitHub wiki after a successful tag release, so the wiki
-describes firmware that can be downloaded. It renders the screenshots, runs `tools/check_wiki.py`, and can be run by hand for any `v*` tag.
+`docs.yml` publishes `wiki/` to the GitHub wiki after every successful Release run, from a
+tag push or started by hand, so the wiki describes firmware that can be downloaded. It
+renders the screenshots, runs `tools/check_wiki.py`, and can be run by hand for any `v*`
+tag; without one it takes the newest tag that has no pre-release suffix.
 
 ### Releases
 
