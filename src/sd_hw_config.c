@@ -13,8 +13,8 @@
  *   uses hardware SPI, one bit wide.
  * - **RP2350-Touch-LCD-2.8** brings out all six SDIO lines and cannot use
  *   hardware SPI at all -- its SD_SCK is GP19, which is SPI0 **TX** in the pin
- *   mux, not SCK. It uses the PIO SDIO driver, four bits wide, and is faster
- *   for it.
+ *   mux, not SCK. It uses the PIO SDIO driver in src/sdio/, four bits wide,
+ *   and is faster for it.
  *
  * Both are configured here and `sd_card_t.type` selects between them, which the
  * library already reads at run time. That field is why a unified image is
@@ -57,17 +57,19 @@ static sd_spi_if_t spiIfs[] = {
 /**
  * @brief The SDIO-attached card interface.
  *
- * PIO: pio1, and nothing else uses it. The SDIO programs take 2 state machines
- * and all 32 instruction slots of the block. The DShot driver and the KISS
- * receiver claim from whichever block has room, and the SDK searches pio2
- * first, so they land on pio2 and never compete with this driver. A block
- * shared with this driver would make whichever initialised second fail
- * depending on timing. @see esc_task.cpp for the budget of that block.
+ * PIO: pio1, and nothing else uses it. The driver's two programs take 2 state
+ * machines and all 32 instruction slots of the block, plus 2 DMA channels and
+ * no interrupt. The DShot driver and the KISS receiver claim from whichever
+ * block has room, and the SDK searches pio2 first, so they land on pio2 and
+ * never compete with this driver. A block shared with this driver would make
+ * whichever initialised second fail depending on timing. @see esc_task.cpp for
+ * the budget of that block, and docs/design/sdio-driver.md for the driver.
  *
- * The pin constraints the PIO program encodes -- D1..D3 directly following D0,
- * and CLK at `(D0 + 30) % 32` -- are asserted in board_desc_lcd2_8.cpp, where
- * they are still compile-time constants. They cannot be asserted here any more:
- * these values arrive from a descriptor.
+ * The one pin constraint the PIO programs encode -- D1..D3 directly following
+ * D0, because one instruction moves all four -- is asserted in
+ * board_desc_lcd2_8.cpp, where the pins are still compile-time constants.
+ * CLK and CMD can be any GPIO. The driver ignores the DMA interrupt fields:
+ * it polls.
  */
 static sd_sdio_if_t sdioIf = {
 	.CLK_gpio = 0,        /* filled by sdHwConfigApply() */
@@ -77,7 +79,6 @@ static sd_sdio_if_t sdioIf = {
 	.D2_gpio  = 0,
 	.D3_gpio  = 0,
 	.SDIO_PIO = pio1,
-	.DMA_IRQ_num = DMA_IRQ_1,
 	.baud_rate = SD_LOG_SDIO_HZ,
 };
 

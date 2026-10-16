@@ -53,16 +53,22 @@ const BoardDesc BOARD_DESC_LCD_2_8 = {
 };
 
 /*
- * The two rules the SDIO PIO program encodes and cannot check itself. Asserted
- * here rather than in sd_hw_config.c because that file no longer sees this
- * board's pin macros in a unified build -- it takes them from the descriptor,
- * where they are no longer compile-time constants.
+ * The rule the SDIO PIO programs encode and cannot check themselves: one
+ * instruction moves DAT0..DAT3, so they are consecutive. CLK and CMD can be any
+ * GPIO below 32, apart from those four. Asserted here rather than in
+ * sd_hw_config.c because that file no longer sees this board's pin macros in a
+ * unified build -- it takes them from the descriptor, where they are no longer
+ * compile-time constants. @see src/sdio/sd_pio.pio
  */
 static_assert(PIN_SD_D1 == PIN_SD_D0 + 1, "SDIO D1 must be D0 + 1");
 static_assert(PIN_SD_D2 == PIN_SD_D0 + 2, "SDIO D2 must be D0 + 2");
 static_assert(PIN_SD_D3 == PIN_SD_D0 + 3, "SDIO D3 must be D0 + 3");
-static_assert(PIN_SD_SCK == (PIN_SD_D0 + 30) % 32,
-              "SDIO CLK must be (D0 + 30) % 32; see rp2040_sdio.pio");
+static_assert(PIN_SD_D3 < 32 && PIN_SD_SCK < 32 && PIN_SD_CMD < 32,
+              "SDIO pins must be below GPIO32");
+static_assert((PIN_SD_SCK < PIN_SD_D0 || PIN_SD_SCK > PIN_SD_D3) &&
+              (PIN_SD_CMD < PIN_SD_D0 || PIN_SD_CMD > PIN_SD_D3) &&
+              PIN_SD_SCK != PIN_SD_CMD,
+              "SDIO CLK and CMD must be apart from DAT0..DAT3 and each other");
 
 /*
  * The pin defaults are macros, so they are overridable from the build -- and an
