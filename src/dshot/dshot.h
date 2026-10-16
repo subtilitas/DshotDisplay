@@ -1,0 +1,340 @@
+/*
+ * DShot: sixteen bits per frame to an ESC (electronic speed controller), and
+ * the GCR (group-coded recording) burst that comes back.
+ *
+ * Implements the DShot protocol of ESCs.  DShot is the name of a protocol; it
+ * is used here only to say which ESCs this module works with.  The project
+ * claims no right in the name.
+ *
+ * From rcbench (https://github.com/subtilitas/rcbench), file
+ * protocols/dshot/include/dshot.h at commit 453cf334.  rcbench has the same
+ * copyright holder and the same licence as DshotDisplay, and its DShot module
+ * is written from the published protocol descriptions, not from another
+ * implementation.  The one addition here is dshot_reply_t and
+ * dshot_reply_decode(), which tell a good reply, no reply and a bad reply
+ * apart.
+ *
+ * A frame is eleven bits of value, one bit asking for telemetry and four bits
+ * of checksum, sent most significant bit first.  There is no start bit, no
+ * stop bit and no idle pattern: the bit period is the whole synchronisation,
+ * so both ends agree on the rate by configuration and a frame is located by
+ * the gap before it.  A one is high for 75% of the bit and a zero for 37.5%.
+ *
+ * The value is not a throttle everywhere in its range.  Zero stops the motor,
+ * 1 to 47 are commands, and only 48 to 2047 are throttle.  A driver that maps
+ * a proportion of travel straight onto 0..2047 sends beeps and direction
+ * changes on its way up from idle.
+ *
+ * Bidirectional DShot inverts the line and the checksum.  The ESC answers
+ * about 30 us after the frame with 21 bits at 5/4 of the DShot rate, GCR
+ * coded, carrying an electrical period rather than a speed.  Nothing about
+ * that burst is timed here: this file turns a captured sample stream into
+ * bits, bits into a value, and a value into rpm (revolutions per minute).
+ * The capture itself is a PIO (programmable input/output) program on the
+ * coprocessor.
+ *
+ * What is written from the published description and has not been confirmed
+ * against an ESC in rcbench: the extended-telemetry frame types and their
+ * units, and the 5/4 response rate.  The eRPM path is exercised end to end by
+ * the host suite against frames this file also builds, which proves the
+ * arithmetic and not the wire.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef RCBENCH_DSHOT_H
+#define RCBENCH_DSHOT_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ------------------------------------------------------------- the frame */
+
+#define DSHOT_FRAME_BITS      16u
+#define DSHOT_VALUE_MAX     2047u   /**< eleven bits                       */
+#define DSHOT_CMD_MAX         47u   /**< above this the value is throttle  */
+#define DSHOT_THROTTLE_MIN    48u
+#define DSHOT_THROTTLE_MAX  2047u
+
+/**
+ * How many times a command has to be repeated before an ESC acts on it.
+ *
+ * A command is an ordinary frame; the ESC tells a command from a glitch by
+ * counting repeats.  Sending one once does nothing at all, which looks
+ * exactly like a driver that is not working.
+ */
+#define DSHOT_CMD_REPEATS     10u
+
+/**
+ * The command range, 0 to 47.
+ *
+ * Only the ones this bench sends are named.  The rest are passed through as
+ * numbers: naming a command implies it was tried, and the programmer screen
+ * sends codes the ESC's own documentation lists.
+ */
+typedef enum {
+    DSHOT_CMD_MOTOR_STOP        = 0,
+    DSHOT_CMD_BEEP1             = 1,
+    DSHOT_CMD_BEEP2             = 2,
+    DSHOT_CMD_BEEP3             = 3,
+    DSHOT_CMD_BEEP4             = 4,
+    DSHOT_CMD_BEEP5             = 5,
+    DSHOT_CMD_ESC_INFO          = 6,
+    DSHOT_CMD_SPIN_DIRECTION_1  = 7,
+    DSHOT_CMD_SPIN_DIRECTION_2  = 8,
+    DSHOT_CMD_3D_MODE_OFF       = 9,
+    DSHOT_CMD_3D_MODE_ON        = 10,
+    DSHOT_CMD_SETTINGS_REQUEST  = 11,
+    DSHOT_CMD_SAVE_SETTINGS     = 12,
+    DSHOT_CMD_EDT_ENABLE        = 13,
+    DSHOT_CMD_EDT_DISABLE       = 14,
+    DSHOT_CMD_SPIN_NORMAL       = 20,
+    DSHOT_CMD_SPIN_REVERSED     = 21,
+} dshot_cmd_t;
+
+/**
+ * Build a frame.
+ *
+ * @p value is 0..2047 and is used as given: mapping travel onto it is
+ * dshot_throttle()'s job, and a caller that wants to send command 12 must be
+ * able to say 12.  @p telemetry asks the ESC to answer on its telemetry wire
+ * (the separate serial one, not the signal line).  @p inverted selects
+ * bidirectional DShot, whose checksum is the complement of the ordinary one
+ * so that a receiver cannot mistake one protocol for the other.
+ *
+ * Returns 0 for a value above 2047: zero is motor-stop, which is the safe
+ * reading of a number this end could not encode.
+ */
+uint16_t dshot_frame(uint16_t value, bool telemetry, bool inverted);
+
+/**
+ * Map a command of 0..@p span onto the throttle range.
+ *
+ * Zero is DSHOT_CMD_MOTOR_STOP and everything above it lands in 48..2047, so
+ * the command range is never entered by a throttle that is merely low.  The
+ * discontinuity at the bottom is the protocol's, not this function's: an ESC
+ * has no idea of "barely turning".
+ *
+ * A @p command above @p span returns DSHOT_CMD_MOTOR_STOP, the same reading
+ * of a fault that dshot_frame() applies to a value it cannot encode.  A
+ * @p command equal to @p span is the top of the range and returns 2047.
+ */
+uint16_t dshot_throttle(uint16_t command, uint16_t span);
+
+/* ------------------------------------------------- the burst coming back */
+
+/** Bits in the response, including the leading one the line code produces. */
+#define DSHOT_TELEM_BITS   21u
+
+/** The response rate, as a fraction of the DShot rate: 5/4. */
+#define DSHOT_TELEM_RATE_NUM 5u
+#define DSHOT_TELEM_RATE_DEN 4u
+
+/**
+ * Units of the extended telemetry payload, per count of its eight bits
+ * (0 to 255).  Voltage is 0.25 V per count, current 1 A per count,
+ * temperature 1 degree Celsius per count.
+ */
+#define DSHOT_EDT_MV_PER_COUNT      250u
+#define DSHOT_EDT_A_PER_COUNT       1u
+#define DSHOT_EDT_DEGC_PER_COUNT    1u
+
+/** Millivolts for a DSHOT_TELEM_VOLTAGE payload (at most 255 * 250 = 63,750). */
+uint32_t dshot_edt_millivolts(uint16_t count);
+/** Amperes for a DSHOT_TELEM_CURRENT payload. */
+uint32_t dshot_edt_amps(uint16_t count);
+/** Degrees Celsius for a DSHOT_TELEM_TEMPERATURE payload. */
+uint32_t dshot_edt_celsius(uint16_t count);
+
+/**
+ * What one response carried.
+ *
+ * An ESC that has been sent DSHOT_CMD_EDT_ENABLE interleaves the other kinds
+ * between eRPM frames.  One that has not sends nothing but eRPM, so a decoder
+ * that only understands eRPM still works and simply never sees the rest.
+ */
+typedef enum {
+    DSHOT_TELEM_ERPM = 0,     /**< an electrical period, in microseconds  */
+    DSHOT_TELEM_TEMPERATURE,  /**< degrees Celsius                        */
+    DSHOT_TELEM_VOLTAGE,      /**< DSHOT_EDT_MV_PER_COUNT millivolts      */
+    DSHOT_TELEM_CURRENT,      /**< DSHOT_EDT_A_PER_COUNT amperes          */
+    DSHOT_TELEM_DEBUG1,
+    DSHOT_TELEM_DEBUG2,
+    DSHOT_TELEM_STRESS,
+    DSHOT_TELEM_STATUS,
+    /** How many kinds there are, for anything holding one slot per kind. */
+    DSHOT_TELEM_KINDS,
+} dshot_telem_kind_t;
+
+typedef struct {
+    dshot_telem_kind_t kind;
+    uint16_t payload;        /**< the twelve bits, whatever they meant    */
+    uint32_t period_us;      /**< kind == ERPM: one electrical period     */
+    uint32_t erpm;           /**< kind == ERPM: 0 when it is not turning  */
+    uint8_t  value;          /**< every other kind: the low eight bits    */
+} dshot_telem_t;
+
+/**
+ * Undo the line code and the group code: 21 line bits to a 16-bit value.
+ *
+ * The line is differential -- each bit is the previous one exclusive-ored
+ * with the data -- so a run of identical bits becomes a level that does not
+ * change, which is what keeps the ESC's clock and this end's from having to
+ * agree for long.  Undoing it is `x ^ (x >> 1)`, and the leading bit falls
+ * off the top.  The 20 bits below are four quintets, each one nibble.
+ *
+ * Returns false for a quintet that is not in the table, which is what a
+ * missed or extra sample looks like.
+ */
+bool dshot_gcr_decode(uint32_t line, uint16_t *out);
+
+/** The other direction, for the suite and for anything that fakes an ESC. */
+uint32_t dshot_gcr_encode(uint16_t value);
+
+/**
+ * A 16-bit value to what it meant, checksum first.
+ *
+ * The checksum is the complement of the frame's, so a correct value leaves
+ * 0x0F rather than 0 when it is folded; this returns false otherwise.
+ *
+ * @p edt says whether extended telemetry was turned on and accepted for this
+ * ESC.  It cannot be inferred from the bits: the type nibble that marks an
+ * extended frame is an ordinary exponent and mantissa in an eRPM one, and the
+ * two are only told apart by the guarantee an extended-telemetry ESC makes
+ * about normalising its exponent.  Declaring it false reads every frame as
+ * eRPM, which is correct for every ESC that was not asked.
+ */
+bool dshot_telem_from_value(uint16_t value, bool edt, dshot_telem_t *out);
+
+/** The two steps above, together: 21 line bits to a reading. */
+bool dshot_telem_decode(uint32_t line, bool edt, dshot_telem_t *out);
+
+/** Build a response, for the suite and for anything that fakes an ESC. */
+uint16_t dshot_telem_value(dshot_telem_kind_t kind, uint16_t payload);
+
+/**
+ * Electrical rpm to mechanical rpm.
+ *
+ * @p pole_pairs is half the magnet count, and it is the one number the wire
+ * does not carry: an ESC reports electrical periods and has no idea what it
+ * is bolted to.  Zero pole pairs returns zero rather than dividing by it.
+ */
+uint32_t dshot_rpm(uint32_t erpm, uint8_t pole_pairs);
+
+/* ---------------------------------------- asking for extended telemetry */
+
+/** From the last repeat of an ask that got no answer to the start of the next. */
+#define DSHOT_EDT_RETRY_MS  500u
+
+/** Asks per run before an ESC that never answers is left alone. */
+#define DSHOT_EDT_ASKS       10u
+
+/**
+ * When to send DSHOT_CMD_EDT_ENABLE, and whether the ESC has answered.
+ *
+ * One ask is DSHOT_CMD_REPEATS frames of the command in a row.  An ESC only
+ * acts on a command while its motor is stopped, and AM32 only once it has
+ * armed itself on about a second of zero throttle.  Every run on this bench
+ * starts from silence -- a disarmed bench sends nothing, and AM32 restarts
+ * after 0.5 s without a signal -- so an ask made only in a run's first 10 ms
+ * lands before AM32 can take it and extended telemetry never comes on.
+ *
+ * So the ask is repeated, every DSHOT_EDT_RETRY_MS while the throttle is at
+ * zero, until an extended frame arrives or DSHOT_EDT_ASKS have gone without
+ * one.  An ask only starts, and only continues, on a frame whose throttle is
+ * zero: a throttle the operator has asked for goes out on that frame, and an
+ * ask it interrupts is abandoned and started again from its first repeat.
+ *
+ * Two lifetimes.  What a run has asked and heard is owed again on every run,
+ * because an ESC forgets the setting when it restarts.  @c asked follows the
+ * binding: from the first repeat of the first ask, replies are read as
+ * extended telemetry, because an ESC that kept power kept the setting and
+ * AM32 answers the command once, on a reply after its sixth repeat.
+ */
+typedef struct {
+    uint8_t  left;      /**< repeats still to send in the ask under way   */
+    uint8_t  asks;      /**< asks completed this run                      */
+    uint32_t due_ms;    /**< when the next ask may start                  */
+    bool     answered;  /**< an extended frame arrived this run           */
+    bool     asked;     /**< an ask has started since the binding         */
+} dshot_edt_t;
+
+/** A new binding: nothing asked, nothing heard, an ask due at once. */
+void dshot_edt_bind(dshot_edt_t *e, uint32_t now_ms);
+
+/**
+ * Not driving: the next run owes the ask again, due from its first frame.
+ * Called on every service while disarmed, so it is idempotent; @c asked is
+ * kept.
+ */
+void dshot_edt_idle(dshot_edt_t *e, uint32_t now_ms);
+
+/**
+ * Whether the frame about to go out is a repeat of DSHOT_CMD_EDT_ENABLE.
+ *
+ * @p stopped says the throttle this frame would carry is zero.  False means
+ * send the throttle.
+ */
+bool dshot_edt_frame(dshot_edt_t *e, bool stopped, uint32_t now_ms);
+
+/** A reply arrived; an extended kind after an ask ends the asking. */
+void dshot_edt_heard(dshot_edt_t *e, dshot_telem_kind_t kind);
+
+/* --------------------------------------------------- the captured samples */
+
+/**
+ * Turn an oversampled capture of the line into the 21 bits of the response.
+ *
+ * The capture is a bit per sample, most significant bit of word 0 first, at
+ * @p oversample samples per response bit.  Sampling at a fixed rate and
+ * dividing is not enough on its own: the ESC's bit rate is its own crystal's,
+ * a percent or two from this end's, and 21 bits is long enough for that to
+ * walk a sample point off the end of a bit.  The phase is therefore reset at
+ * every transition, the same way a UART (universal asynchronous
+ * receiver-transmitter) resynchronises on a start bit, and each bit is read
+ * from the middle of its window.
+ *
+ * The response is located by the first falling edge: bidirectional DShot
+ * idles high, so everything before that edge is idle line and not data.
+ *
+ * Returns false when the capture holds no falling edge, or ends before 21
+ * bits have been read.
+ */
+bool dshot_rx_bits(const uint32_t *samples, size_t words, uint8_t oversample,
+                   uint32_t *line);
+
+/** What one capture held: the three outcomes a link-quality count needs. */
+typedef enum {
+    DSHOT_REPLY_NONE = 0,  /**< nothing came back                         */
+    DSHOT_REPLY_GOOD,      /**< a reply that decoded and passed its checksum */
+    DSHOT_REPLY_BAD,       /**< a reply came back and failed to decode    */
+} dshot_reply_t;
+
+/**
+ * A capture to a reading, and which of the three outcomes it was.
+ *
+ * NONE when the capture is too short to hold one idle sample and 21 bits at
+ * @p oversample, which is what the receiver leaves when the ESC never pulls
+ * the line down, and when @p samples or @p out is NULL.  BAD when a burst is
+ * there and cannot be read as 21 bits, or when its quintets are not in the
+ * group code, or when its checksum fails: something answered and what it
+ * sent was damaged.  GOOD fills @p out as dshot_telem_decode() does.
+ *
+ * The split matters to anything that counts errors.  An ESC that does not
+ * answer is a missing reply, not a corrupted one, and folding the two
+ * together reports a quiet line as a noisy one.
+ */
+dshot_reply_t dshot_reply_decode(const uint32_t *samples, size_t words,
+                                 uint8_t oversample, bool edt,
+                                 dshot_telem_t *out);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* RCBENCH_DSHOT_H */

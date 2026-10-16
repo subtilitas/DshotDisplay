@@ -16,8 +16,8 @@
  *
  * RPM is the exception: it is **not** merged. See @ref escMerge.
  *
- * Kept apart from esc_task.cpp, which pulls in the PIO DShot library and the
- * SDK's UART and so cannot be linked into the host suite. This file is pure.
+ * Kept apart from esc_task.cpp, which links the PIO DShot driver and the KISS
+ * receiver and so cannot be linked into the host suite. This file is pure.
  */
 
 #pragma once

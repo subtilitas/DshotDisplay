@@ -300,7 +300,7 @@ static void core1Main() {
  * Order matters, in two directions.
  *
  * Core1 is launched only after core0 has brought up the display, because
- * escTaskBegin() claims a PIO state machine and st7789Init() claims a DMA
+ * core1 claims PIO state machines and st7789Init() claims a DMA
  * channel; starting them concurrently makes which one wins a matter of timing.
  *
  * But core0 must not *use* anything core1 initialises before core1 has run, and

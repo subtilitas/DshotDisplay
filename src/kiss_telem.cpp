@@ -76,8 +76,9 @@ bool kissFeed(KissDecoder *d, uint8_t b, KissFrame *out) {
 uint16_t kissBuildDshotPayload(uint16_t throttle0to2000, bool requestTelemetry) {
 	if (throttle0to2000 > 2000) throttle0to2000 = 2000;
 
-	// Mirrors BidirDShotX1::sendThrottle(): the 47-command offset applies only
-	// to non-zero throttle, so that zero stays the motor-stop command.
+	// The 47-command offset applies only to a non-zero throttle, so that zero
+	// stays the motor-stop command: values 1 to 47 are commands, 48 to 2047
+	// throttle.
 	uint16_t raw = throttle0to2000 ? (uint16_t)(throttle0to2000 + 47) : 0;
 
 	return (uint16_t)((raw << 1) | (requestTelemetry ? 1u : 0u));

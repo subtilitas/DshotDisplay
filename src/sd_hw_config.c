@@ -57,10 +57,12 @@ static sd_spi_if_t spiIfs[] = {
 /**
  * @brief The SDIO-attached card interface.
  *
- * PIO: the DShot driver claims a state machine on pio0, so the SD driver is put
- * on pio1 to keep them out of each other's way. Both would otherwise compete
- * for free state machines on the same block, and whichever initialised second
- * would fail depending on timing.
+ * PIO: pio1, and nothing else uses it. The SDIO programs take 2 state machines
+ * and all 32 instruction slots of the block. The DShot driver and the KISS
+ * receiver claim from whichever block has room, and the SDK searches pio2
+ * first, so they land on pio2 and never compete with this driver. A block
+ * shared with this driver would make whichever initialised second fail
+ * depending on timing. @see esc_task.cpp for the budget of that block.
  *
  * The pin constraints the PIO program encodes -- D1..D3 directly following D0,
  * and CLK at `(D0 + 30) % 32` -- are asserted in board_desc_lcd2_8.cpp, where
