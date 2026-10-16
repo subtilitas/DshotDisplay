@@ -37,8 +37,9 @@ static sd_err_t busyWait(const sdh_bus_t *b, uint32_t timeout_us) {
 
 /**
  * @brief One command and its response, checked.
- * @param arg_out The 32-bit field of a 48-bit response, or NULL.
- * @param reg     The register of an R2, or NULL.
+ *
+ * The 32-bit field of a 48-bit response goes to arg_out and the register of
+ * an R2 to reg; either may be NULL when the caller does not want it.
  */
 static sd_err_t cmd(const sdh_bus_t *b, uint8_t index, uint32_t arg, sdp_resp_t kind,
                     uint32_t *arg_out, uint8_t *reg) {

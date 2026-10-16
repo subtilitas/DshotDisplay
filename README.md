@@ -275,9 +275,13 @@ Each SHA has its tag in a comment beside it. A tag can be moved; a SHA cannot.
 
 Two constraints on these dependencies:
 
-- The FatFs driver has its `CMakeLists.txt` one directory below the repository
-  root, so it needs `SOURCE_SUBDIR`. Without it `FetchContent` downloads the
-  source, defines no targets, and the build fails later on a missing header.
+- Only part of the SD library is built: FatFs, its glue and the SPI card
+  driver. Its own `CMakeLists.txt` would also compile its SDIO driver, which
+  its README derives from GPL-3.0 (GNU General Public License version 3)
+  code. So `CMakeLists.txt` fetches the source without adding it, and defines
+  the target `sd_fatfs` from a copy of the library's `src/` without the SDIO,
+  ZuluSCSI-firmware and SdFat directories. The SDIO driver is `src/sdio/`, in
+  this tree; its design note is `docs/design/sdio-driver.md`.
 - The SD driver is the **SDIO-SPI** repository, not the older SPI-only one. The
   SPI-only driver's `rtc.c` includes `hardware/rtc.h`. The RP2040 has that RTC
   peripheral; the RP2350 does not (it has powman instead), so that driver fails
@@ -538,8 +542,9 @@ unused number from 00001 to 09999. Existing files are not overwritten.
 ![SD log screen](docs/log-preview.png)
 
 The 2.0" drives the card over hardware SPI at 12 MHz (`SD_LOG_SPI_MHZ`). The
-2.8" uses 4-bit PIO SDIO at 10 MHz (`SD_LOG_SDIO_HZ`). The 2.8" cannot use
-hardware SPI: its SD clock is on GP19, which is SPI0 TX in the pin mux.
+2.8" uses 4-bit PIO SDIO at 10 MHz (`SD_LOG_SDIO_HZ`), with the driver in
+`src/sdio/`, which is not tested on hardware. The 2.8" cannot use hardware
+SPI: its SD clock is on GP19, which is SPI0 TX in the pin mux.
 
 Open the screen with **CFG → SD LOG**. By default arming starts a log and
 disarming stops it (`SD_LOG_AUTO_ON_ARM`). Auto-stop ends only a log that
@@ -825,6 +830,10 @@ src/
   log_ring.{h,cpp}      ring buffer between encoder and card (pure)
   sd_log.{h,cpp}        FatFs writer, lifecycle, drop accounting
   sd_hw_config.c        SD wiring for the FatFs driver
+  sdio/                 SDIO card driver, MIT, written from the SD specification
+    sd_proto.{h,c}, sd_host.{h,c}  wire formats and card protocol (pure C)
+    sd_pio.{h,c}, sd_pio.pio       RP2350 bus: 2 state machines, 32 instructions, 2 DMA channels
+    sd_card_glue.c, compat/SDIO/   the SD library's callbacks and the two headers it includes
   usb_dev.{h,cpp}       USB device: CDC serial plus MSC
   usb_descriptors.c     USB descriptors
   usb_msc.{h,cpp}       the SD card as a read-only USB drive
@@ -842,8 +851,10 @@ wiki/                   the user manual, mirrored to the GitHub wiki
 ```
 
 All firmware source is under `src/`, `main.cpp` included. Files include each
-other as plain siblings, except the DShot driver, which keeps its own folder
-`src/dshot/` so that it can be compared with its rcbench original.
+other as plain siblings, except two drivers with folders of their own: the
+DShot driver in `src/dshot/`, so that it can be compared with its rcbench
+original, and the SDIO card driver in `src/sdio/`, whose `compat/` headers
+have to keep the paths the SD library includes.
 
 Modules marked *pure* have no hardware dependency. They are compiled into the
 host test binary and tested directly, without a board.
@@ -857,8 +868,10 @@ Pico SDK signatures:
 cd test && make
 ```
 
-Needs nothing but a C++17 compiler and a C11 compiler: the DShot core in `src/dshot/` is
-compiled as C, as the firmware compiles it, and linked into the C++ suite. Time is
+Needs nothing but a C++17 compiler and a C11 compiler: the DShot core in `src/dshot/` and
+the SDIO protocol layers in `src/sdio/` are compiled as C, as the firmware compiles them,
+and linked into the C++ suite. The SDIO tests run the card protocol against a simulated
+card. Time is
 virtual — `millis()` advances only when a test says so — which makes hold-to-arm,
 hold-to-write and gesture repeat deterministic rather than dependent on machine speed. The fake ESC serves a real settings blob recovered from
 the reference configurator, so the UI tests operate on values a real ESC would report.
@@ -893,7 +906,7 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 
 | Job | What it catches |
 |---|---|
-| **Firmware** | Real Pico SDK build for both boards and the unified image, pinned by `CMakeLists.txt`, plus UF2 validation |
+| **Firmware** | Real Pico SDK build for both boards and the unified image, pinned by `CMakeLists.txt`, plus UF2 validation and a check that no file of the SD library's SDIO driver is in the image |
 | **Host tests** | Protocol, codec and UI regressions a compile cannot see |
 | **Coverage** | Line coverage below 93% in total or 85% in any file, or a README or STATUS.md coverage figure that no longer matches `tools/coverage.py` |
 | **Blackbox round-trip** | Encodes a log and decodes it with Betaflight's own `blackbox_decode`, comparing every value |
@@ -1002,6 +1015,14 @@ fails the commit that caused it.
   [rcbench](https://github.com/subtilitas/rcbench), `protocols/dshot` at commit 453cf334,
   by the same copyright holder under the same MIT licence. It is written from the
   published protocol descriptions.
+- The SDIO card driver in `src/sdio/` is MIT and written for this project from the
+  SD Association's
+  [Physical Layer Simplified Specification](https://www.sdcard.org/downloads/pls/)
+  v9.10 and the RP2350 datasheet. No other SD host driver was consulted; its design
+  note, `docs/design/sdio-driver.md`, lists the sources with section numbers.
+- FatFs is by ChaN. The SPI card driver and the FatFs glue are from carlk3's
+  [no-OS-FatFS-SD-SDIO-SPI-RPi-Pico](https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico),
+  whose SPI driver builds on Arm Mbed OS's SDBlockDevice.
 - [logwiju](https://subtilitas.github.io/logwiju/): the browser-based blackbox viewer
   for these logs.
 - [DShot — the missing handbook](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/)
@@ -1012,15 +1033,30 @@ fails the commit that caused it.
 ## License
 
 This repository's code is MIT throughout (see `LICENSE`), the DShot driver in
-`src/dshot/` included.
+`src/dshot/` and the SDIO card driver in `src/sdio/` included.
 
-A firmware image also contains the libraries it links, under their own
-licences: the Pico SDK (BSD-3-Clause), TinyUSB (MIT), FatFs (a BSD-style
-licence) and the SD card driver `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`
-(Apache-2.0). The README of that driver states that its 4-bit SDIO driver is
-derived from ZuluSCSI-firmware, which is GPL-3.0, and that code is linked into
-all three images. What that means for a distributed image is not settled
-here.
+A firmware image also contains the libraries it links, each under its own
+licence:
+
+| Code in the image | Licence |
+|---|---|
+| DshotDisplay, `src/` | MIT |
+| Pico SDK 2.1.1 | BSD-3-Clause |
+| TinyUSB, from the Pico SDK | MIT |
+| `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2: SPI card driver, FatFs glue, utilities | Apache-2.0 |
+| FatFs R0.15, from that library | FatFs licence, a one-clause BSD-style licence |
+
+The build compiles nothing from that library's SDIO driver, which its README
+derives from ZuluSCSI-firmware (GPL-3.0), nor from its ZuluSCSI-firmware and
+SdFat directories, and CI checks every image for it. No GPL-licensed code is in
+any of the three images. Each image is therefore a combination of MIT,
+BSD-3-Clause, Apache-2.0 and FatFs-licensed code, all permissive and none
+copyleft: the image as a whole carries no licence of its own, and whoever
+distributes it meets each component's conditions. For a binary those are a
+copy of the Apache License 2.0 (section 4(a); the library has no NOTICE file),
+the BSD-3-Clause copyright notice, conditions and disclaimer of the Pico SDK
+in the accompanying documentation, and the MIT notices of TinyUSB and of this
+repository. The FatFs licence asks nothing of a binary.
 
 ---
 

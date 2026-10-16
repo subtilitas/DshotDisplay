@@ -15,6 +15,7 @@ firmware; the status lines here summarise it per feature.
 |---|---|
 | [kiss-telemetry.md](kiss-telemetry.md) | Implemented on both boards. Working on hardware (owner report). Off by default on the 2.8" board. |
 | [blackbox-logging.md](blackbox-logging.md) | Implemented on both boards. Hardware use recorded in commits on both boards. Buffer sizing unmeasured. |
+| [sdio-driver.md](sdio-driver.md) | Implemented on the 2.8" board, not tested on hardware. MIT SDIO driver written from the SD specification; replaces the SD library's GPL-derived one. Host tests against a simulated card. |
 | [pin-claim.md](pin-claim.md) | Planned. A screen takes the ESC and KISS pins from DShot while it is open; shared hardware facts and the slice plan. |
 | [servo-tester.md](servo-tester.md) | Planned. Servo PWM output, manual position, sweep, two servos. Depends on the pin claim. |
 | [kst-programming.md](kst-programming.md) | Planned. KST and Chaservo servo programming, ported from rcbench. Depends on the pin claim. |
@@ -38,7 +39,9 @@ readout and the 2.8" SDIO (Secure Digital input/output) path on
 Serial Bus) card reader came from `feat/usb-mass-storage` in v2.2.
 
 SD logging runs on both boards: the 2.8" over four-bit PIO SDIO at 10 MHz, the
-2.0" over one-bit hardware SPI (Serial Peripheral Interface) at 12 MHz.
+2.0" over one-bit hardware SPI (Serial Peripheral Interface) at 12 MHz. The
+SDIO path runs on the driver in `src/sdio/` ([sdio-driver.md](sdio-driver.md)),
+which has no hardware record yet.
 
 KISS telemetry is implemented on both boards; a hardware record exists only
 for the 2.0" board. The receiver is a PIO state machine, so

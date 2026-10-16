@@ -6,8 +6,8 @@ RP2350 datasheet; no third-party SD host-driver source was consulted.
 
 # SDIO card driver
 
-Status: planned. This note is written before the code. The 2.8" board will use
-the driver; the 2.0" board uses the library's SPI driver and does not run it.
+Status: implemented, not tested on hardware. The 2.8" board uses it; the 2.0"
+board uses the library's SPI driver and does not run this code.
 
 Terms: SD is Secure Digital. SDIO is Secure Digital input/output, here the SD
 bus in SD mode with four data lines (not the SDIO card standard). SPI is Serial
@@ -18,7 +18,10 @@ redundancy check. SDSC, SDHC and SDXC are the standard, high and extended
 capacity card types. RCA is the relative card address, CID the card
 identification register, CSD the card-specific data register, OCR the
 operation conditions register. FatFs is the FAT file system module the library
-carries. USB MSC is USB (Universal Serial Bus) mass storage.
+carries; FAT is File Allocation Table. USB MSC is USB (Universal Serial Bus)
+mass storage. CMDn is SD command n; ACMDn is application-specific command n,
+sent after CMD55. HCS is host capacity support, CCS card capacity status, SDUC
+an ultra capacity card.
 
 ## Why
 
@@ -172,8 +175,9 @@ last block is ignored (4.3.3).
 **Transfers.** CMD17 reads one block, CMD18 reads blocks until CMD12 (4.3.3).
 CMD24 writes one block, CMD25 writes blocks until CMD12 (4.3.4). The argument
 is the block number on SDHC and SDXC and the byte address on SDSC (4.3.14).
-CMD13 with the RCA returns the card status (R1). ACMD13 returns the 64-byte SD
-Status as a data block (4.10.2).
+CMD13 with the RCA returns the card status (R1); the driver reads it after
+every write, because errors found while programming show in the next status
+(4.10.1). ACMD13 returns the 64-byte SD Status as a data block (4.10.2).
 
 **Timeouts.**
 
@@ -182,10 +186,10 @@ Status as a data block (4.10.2).
 | Response to a command | 5 ms | not in the simplified specification; covers a 136-bit response and 64 clocks of turnaround at 100 kHz (2.0 ms) |
 | ACMD41 until ready | 1100 ms from the first ACMD41 | 4.2.3: more than 1 s |
 | Between ACMD41 polls | 5 ms | 4.4: below 50 ms |
-| Each read block, from the command or the previous block | 250 ms | 4.6.2.1: 100 ms minimum |
+| Each read block, as time without a word arriving | 250 ms | 4.6.2.1: 100 ms minimum |
 | Busy after a written block, after CMD12, after CMD7 | 1000 ms | 4.6.2.2: 250 ms SDHC, 500 ms SDXC, more than 500 ms recommended |
 | Write block on the wire to its CRC status | twice the bus time of 1100 clocks, plus 1 ms | bus time |
-| DMA abort completion | 100 us | RP2350 datasheet 12.6.8.3 |
+| DMA abort completion | 100 µs | RP2350 datasheet 12.6.8.3 |
 
 Every wait in the driver is one of these. A missing card, a card pulled out
 and a dead card all end in a timeout and an error code, never a hang.
@@ -239,8 +243,10 @@ the system clock.
   128 data words, two CRC words and a tail word. The header holds the nibble
   count less one, 1044, in its top 16 bits and the nibbles F, F, F, 0 below:
   three idle clocks with the lines driven high, then the start bit. The tail's
-  first nibble is the end bit. Nibbles change after rising edges, which puts
-  half a period of setup before the card's next rising edge. One rising edge
+  first nibble is the end bit. A nibble changes about four system clocks
+  (27 ns at 150 MHz) after a rising edge reaches the pad, which leaves the
+  card 13 ns of setup before its next rising edge at 25 MHz and 73 ns at
+  10 MHz. One rising edge
   after the end bit the program releases the lines and samples 16 nibbles,
   two words, from which the processor finds the CRC status token on DAT0. The
   processor watches busy on DAT0 itself.
@@ -315,8 +321,10 @@ card in `test/test_sdio.cpp`.
 Errors. A command that gets no response, or a transfer that times out, marks
 the card uninitialised (`STA_NOINIT`), so the next FatFs mount runs the full
 initialisation again. That is how a removed card and a reinserted card are
-told apart without a card-detect line. Reads and writes are retried twice
-after a CRC error or a timeout, three attempts in all.
+told apart without a card-detect line. A read or write of up to 32 blocks is
+tried three times when it fails on the bus: a CRC error, a damaged response,
+a timeout or no response. An error the card reports in its status, and a
+rejected block, are not retried.
 
 ## Pins and clock on DshotDisplay
 
@@ -332,7 +340,7 @@ From `src/sd_hw_config.c`, `src/board_rp2350_touch_lcd_2_8.h` and
 PIO block pio1. Data clock `SD_LOG_SDIO_HZ`, 10 MHz. Initialisation at
 400 kHz or less. The pin constraint is D1 to D3 directly after D0, because one
 IN or OUT moves all four lines; `board_desc_lcd2_8.cpp` asserts it. CLK and
-CMD can be any GPIO. Internal pull-ups are enabled on CMD and DAT0 to DAT3;
+CMD can be any other GPIO below 32. Internal pull-ups are enabled on CMD and DAT0 to DAT3;
 pull-downs are never enabled (RP2350-E9).
 
 `tools/sdtest` sweeps the SDIO clock from 25 MHz down to 1 MHz. Commit 036adfe
