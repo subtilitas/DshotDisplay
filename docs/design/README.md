@@ -12,7 +12,7 @@ firmware; the status lines here summarise it per feature.
 
 | Document | Status |
 |---|---|
-| [kiss-telemetry.md](kiss-telemetry.md) | Implemented on both boards. Reported working by a user in issue #1, on the 2.0" board per the owner; owner confirmation pending. Off by default on the 2.8" board. |
+| [kiss-telemetry.md](kiss-telemetry.md) | Implemented on both boards. Working on hardware (owner report). Off by default on the 2.8" board. |
 | [blackbox-logging.md](blackbox-logging.md) | Implemented on both boards. Hardware use recorded in commits on both boards. Buffer sizing unmeasured. |
 
 ## Shared context

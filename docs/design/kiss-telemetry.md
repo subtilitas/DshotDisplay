@@ -2,10 +2,9 @@
 
 Status: implemented on both boards: decoder, PIO receiver, request and drain on
 core1, merge with EDT, source tags on the main screen, both eRPM sources in the
-log. Reported working by a user in issue #1, on the 2.0" board per the owner,
-in a setup where a receiver drove the ESC and the display only listened; owner
-confirmation pending. The display's own telemetry request on hardware, the 2.8"
-board on hardware and the line voltage have no record.
+log. Working on hardware (owner report). Issue #1 separately reports correct
+values with a receiver driving the ESC and the display only listening. Which
+board each report covers and the line voltage have no record.
 
 Branches: the decoder, the request path and the merge were built on
 `dev/telemetry-logging` and released in v1.1.0. The main-screen readout came

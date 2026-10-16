@@ -502,8 +502,7 @@ mAh, which EDT does not carry.
 The line is transmit-only from the ESC. Requests go out every 20th DShot frame
 (`KISS_REQUEST_EVERY_N`), which is 50 Hz at 1 kHz.
 
-**Status:** reported working by a user on the 2.0" board; not tested by the
-project. It is off by default on the 2.8" (`KISS_ENABLE_LCD_2_8` = 0) because
+**Status:** working on hardware (owner report). It is off by default on the 2.8" (`KISS_ENABLE_LCD_2_8` = 0) because
 that board has two free pins and the ESC uses one.
 
 **Any free GPIO can receive it.** The receiver is a UART (universal

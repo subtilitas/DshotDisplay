@@ -114,7 +114,7 @@ record either way.
 | --- | --- | --- |
 | Bidirectional DShot throttle, eRPM and RPM readout | core1 frame decision, throttle and arming interlocks, RPM smoothing | hardware-tested (owner report); the owner has found no bug since v2.3, and issue #1 is a separate, unreproduced report |
 | EDT telemetry, automatic enable, expiry | merge, expiry, enable rule | hardware-tested (owner report) |
-| KISS telemetry: request, PIO receiver, decode, merge, KISS/EDT tags | CRC, decode, resynchronisation, request payload, merge; the PIO receiver is typechecked only | reported working by a user in issue #1, owner confirmation pending; see below |
+| KISS telemetry: request, PIO receiver, decode, merge, KISS/EDT tags | CRC, decode, resynchronisation, request payload, merge; the PIO receiver is typechecked only | hardware-tested (owner report); see below |
 | Blackbox logging to SD, CFG → SD LOG screen | encoder, ring buffer, round trip through `blackbox_decode`, screen states | hardware use recorded; see below |
 | USB card reader (read-only mass storage) | handover state machine, screen | not recorded |
 | AM32 settings editor over the signal wire (AM32 is an open-source ESC firmware) | init string, CRC-16/ARC, 39-field codec, timing advance encodings, write interlock | hardware use recorded: ab79c67, bd90e17 |
@@ -124,12 +124,10 @@ record either way.
 | Serial telemetry dump | none | not recorded |
 | `tools/sdtest`, SD bring-up firmware | none, not built in CI (continuous integration) | hardware use recorded on both boards: f16a70f, e9c9d9a |
 
-KISS in detail. Issue #1 reports correct KISS values on the display. The owner
-places the report on the 2.0" board; the report itself names no board. In that
-setup a receiver drove the ESC signal and the display only listened on the KISS
-wire, so the receive and display path is covered and the display's own request
-(the telemetry bit in its DShot frames) is not. KISS on the 2.8" board on
-hardware: not recorded.
+KISS in detail. The owner reports KISS telemetry working on hardware, the
+display's own telemetry request included. Issue #1 separately reports correct
+KISS values with a receiver driving the ESC and the display only listening.
+Which board each report covers is not recorded.
 
 SD logging in detail. Commit 036adfe records the 2.8" board mounting a 64 GB
 card over SDIO at 25 MHz and writing a file. Commit 5b9c7bd and the design

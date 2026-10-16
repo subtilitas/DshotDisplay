@@ -113,8 +113,7 @@ Ein ESC mit KISS-Telemetrie sendet auf Anforderung ein 10-Byte-Frame mit
 DShot-Frame eines an, also mit 50 Hz. Das Kabel bringt feinere Spannung und
 Strom sowie die verbrauchten mAh.
 
-**Stand:** Ein Nutzer meldet, dass es auf der 2,0"-Platine funktioniert; vom
-Projekt nicht getestet.
+**Stand:** funktioniert auf der Hardware (laut Projektinhaber).
 
 | | 2,0"-Platine | 2,8"-Platine |
 |---|---|---|

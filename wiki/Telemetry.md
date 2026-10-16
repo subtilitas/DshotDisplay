@@ -107,8 +107,7 @@ An ESC with KISS telemetry sends a 10-byte frame at 115200 baud from its
 telemetry pad when requested. The tester requests one every 20th DShot frame,
 which is 50 Hz. The wire adds finer voltage and current, and consumed mAh.
 
-**Status:** reported working by a user on the 2.0" board; not tested by the
-project.
+**Status:** working on hardware (owner report).
 
 | | 2.0" board | 2.8" board |
 |---|---|---|
