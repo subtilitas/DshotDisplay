@@ -76,6 +76,10 @@ its own wire. AM32 is an open-source ESC firmware.
 - The release notes describe the board probe as it runs: on every boot,
   shown read-only under CFG → SETUP. They give GP28 as the KISS pin of the
   2.8" board, off by default.
+- The manual and README.md list two USB DRIVE refusals. Without a card the
+  button is drawn unavailable, so `NO CARD TO SHARE` cannot appear.
+- The manual gives `vbatLatest` and `amperageLatest` as KISS only, 0 while
+  KISS is not live, as `src/sd_log.cpp` writes them.
 - Three comments in `src/config.h` disagreed with the code: the SD
   preallocation of 16 MiB lasts about 38 min, SETUP shows one note line for
   saved settings or compiled defaults, and the card interface differs per

@@ -3,12 +3,11 @@
 The running record: what exists, how far each part is verified, and what is
 open. Two parts of this file are held to the tree by a checker. Every relative
 link here and in [CHANGELOG.md](CHANGELOG.md) is checked by
-`test/check_docs.py`. The coverage table under "Tests and CI" is written and
-checked by `tools/coverage.py`. Nothing else is checked: the architecture
-figures, pin numbers, suite and job lists and verification states are written
-by hand against commit 82baec4, the branches that add the Coverage job and
-`docs.yml`, and the issue tracker as of 2026-10-16. Read them as a dated
-record, not as an inventory.
+`test/check_docs.py`. The coverage table under "Tests and CI" (continuous
+integration) is written and checked by `tools/coverage.py`. Nothing else is
+checked: the architecture figures, pin numbers, suite and job lists and
+verification states are written by hand, against the code and the issue tracker
+as of 2026-10-16. Read them as a dated record, not as an inventory.
 
 [README.md](README.md) is the technical document, the
 [wiki](https://github.com/subtilitas/DshotDisplay/wiki) is the manual,
@@ -177,8 +176,9 @@ merged.
 5. **Settings flash and the USB card reader on hardware.** Not recorded.
 6. **Design questions left open** in [kiss-telemetry.md](docs/design/kiss-telemetry.md)
    and [blackbox-logging.md](docs/design/blackbox-logging.md): which eRPM source
-   the main readout uses above about 5,000 RPM, whether consumption is shown
-   from ESC power-on or from arming, whether a slow frame type is worth adding.
+   the main readout uses above the crossover (about 5,500 RPM on a 14-pole
+   motor), whether consumption is shown from ESC power-on or from arming,
+   whether a slow frame type is worth adding.
 7. **`tools/sdtest` is built by nothing in CI**, so a change that breaks it
    shows only in a local build.
 
@@ -192,8 +192,9 @@ merged.
 - **Bidirectional DShot only.** An ESC that does not accept the inverted
   bidirectional signal is not driven.
 - **Saved settings outrank `config.h`.** On a board with saved settings, a
-  changed default in `config.h` has no effect after reflashing. SETUP marks
-  each row SAVED or DEFAULT.
+  changed default in `config.h` has no effect after reflashing. SETUP marks the
+  whole block, not each row: while no change is pending, its note line reads
+  `SAVED SETTINGS IN USE` or `COMPILED DEFAULTS IN USE`.
 - **Power loss during a log.** A log is readable up to its last directory
   sync, so pulling power loses up to 2000 ms (`SD_LOG_SYNC_MS`).
 - **Logs past the pre-allocation.** 16 MiB lasts about 38 minutes at

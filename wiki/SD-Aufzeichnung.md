@@ -75,7 +75,7 @@ Problem. Formatiere sie als FAT32.
 
 ### Eine nach dem Start eingesteckte Karte
 
-<img src="img/log-mounted.png" width="240" alt="Karte über RETRY MOUNT gefunden">
+<img src="img/log-mounted.png" width="240" alt="Karte über RETRY gefunden">
 
 Drück `RETRY`. Ohne das wird eine nach dem Einschalten eingesteckte Karte
 nicht eingebunden.
@@ -104,7 +104,9 @@ nicht vermitteln. Bevor das Laufwerk erscheint, leert, schließt und hängt der
 Logger die Karte aus, und er rührt sie bis zum Auswerfen nicht an. Währenddessen
 zeigt der SD-LOG-Bildschirm die Übergabe statt seiner Zähler.
 
-**Die Schaltfläche lehnt in drei Fällen ab und nennt den Grund:**
+Ohne Karte ist `USB DRIVE` als nicht verfügbar gezeichnet und tut nichts.
+
+**Mit Karte lehnt die Schaltfläche in zwei Fällen ab und nennt den Grund:**
 
 <img src="img/log-usb-refused.png" width="240" alt="USB DRIVE während der Aufzeichnung abgelehnt">
 
@@ -112,7 +114,6 @@ zeigt der SD-LOG-Bildschirm die Übergabe statt seiner Zähler.
 |---|---|
 | `DISARM FIRST` | Entschärfen. Die Übergabe hält den Logger an |
 | `STOP RECORDING FIRST` | Die Aufzeichnung beenden |
-| `NO CARD TO SHARE` | Eine Karte einstecken oder einbinden |
 
 **Scharfschalten ist gesperrt, solange der Computer die Karte hat.** `BACK`
 verlässt den Bildschirm, ohne die Übergabe abzubrechen. Der Tester-Bildschirm
@@ -152,8 +153,8 @@ Felder pro Frame:
 | `motor[0]` | Befohlenes Gas |
 | `eRPM[0]` | eRPM (elektrische Drehzahl) aus bidirektionalem DShot |
 | `eRPMkiss[0]` | eRPM aus KISS |
-| `vbatLatest`, `amperageLatest` | Spannung und Strom, KISS wenn aktiv, sonst EDT (Extended DShot Telemetry) |
-| `vbatEdt`, `amperageEdt` | Spannung und Strom aus EDT |
+| `vbatLatest`, `amperageLatest` | Spannung und Strom aus KISS; 0, solange KISS nicht aktiv ist |
+| `vbatEdt`, `amperageEdt` | Spannung und Strom aus EDT (Extended DShot Telemetry) |
 | `escTemperature[0]` | Temperatur des ESC (Electronic Speed Controller, Motorregler) |
 | `escConsumption` | Verbrauchte mAh (nur KISS) |
 | `escStress` | EDT-Stresswert |

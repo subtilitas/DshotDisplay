@@ -558,10 +558,10 @@ The logger drops frames rather than block. The UI never waits for the card.
 the USB host as a read-only removable drive, using MSC (mass storage class) on
 the same USB cable as the serial port. The logger unmounts before the drive
 appears and touches the card again only after eject. The host and the
-firmware never share the FAT volume. The request is refused while armed
-(`DISARM FIRST`), while recording (`STOP RECORDING FIRST`) or with no card
-(`NO CARD TO SHARE`). Arming is blocked while the host holds the card. See
-`src/usb_msc.h`.
+firmware never share the FAT volume. Without a card the button is drawn
+unavailable and does nothing. With a card, the request is refused while armed
+(`DISARM FIRST`) or while recording (`STOP RECORDING FIRST`). Arming is
+blocked while the host holds the card. See `src/usb_msc.h`.
 
 ### Tuning
 
@@ -831,9 +831,10 @@ tools/
 Doxyfile                API doc config -> docs/html/
 docs/                   generated docs + preview images
 docs/design/            design notes, kept in step with the code
+  coverage.py           host-suite line coverage: writes and checks the README and STATUS.md figures
 test/                   host test suites + Pico SDK stubs
 wiki/                   the user manual, mirrored to the GitHub wiki
-.github/workflows/      CI
+.github/workflows/      ci.yml (CI), release.yml (Release), docs.yml (Docs: wiki publishing)
 ```
 
 All firmware source is under `src/`, `main.cpp` included. Files include each
@@ -851,13 +852,23 @@ Pico SDK signatures:
 cd test && make
 ```
 
-Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only when a test
-says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
-than dependent on machine speed. The fake ESC serves a real settings blob recovered from
-the reference configurator, so the UI tests operate on values a real ESC would report.
-The suite renders every screen to PPM (portable pixmap) images as it runs — splash, the main screen live, armed
-and with the ESC gone, the settings screen in each of its states, all three SD log states
-and the four AM32 screens — so a layout change is visible in the frames.
+Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only
+when a test says so — which makes hold-to-arm, hold-to-write and gesture repeat
+deterministic rather than dependent on machine speed. The fake ESC serves a real
+settings blob recovered from the reference configurator, so the UI tests operate
+on values a real ESC would report. The suite renders 26 screens to PPM (portable
+pixmap) images as it runs, so a layout change is visible in the frames:
+
+- the splash;
+- six of the main screen: disarmed, armed, live, stale, with KISS values,
+  high contrast;
+- six of CFG: on arrival, the EDT chip on and off, BEEP accepted and refused,
+  unsaved settings;
+- two of CFG → SETUP: normal and high contrast;
+- six of CFG → SD LOG: ready, recording, no card, a card found by RETRY, USB
+  DRIVE refused, USB DRIVE serving;
+- five of the AM32 editor: list, field edit, scrolled, written, hex view.
+
 Failing tests dump their frame too.
 
 `make previews` restitches the images in `docs/` from those frames. It is a separate
@@ -976,8 +987,9 @@ byte swap. Commands use 8-bit frames. The panel clock is set to 62.5 MHz
 ### The user manual
 
 The [wiki](https://github.com/subtilitas/DshotDisplay/wiki) source is `wiki/`
-in this repository, in English and German. CI mirrors it to GitHub and
-overwrites edits made in the browser. Every page says so in its footer.
+in this repository, in English and German. `docs.yml` mirrors it to GitHub
+after each successful Release run and overwrites edits made in the browser.
+Every page says so in its footer.
 
 Its screenshots are not committed. The host suite renders them, one PNG per
 captured screen, with the same tool that builds the previews above:
@@ -986,8 +998,9 @@ captured screen, with the same tool that builds the previews above:
 cd test && make wiki      # render wiki/img/, then check every link and image
 ```
 
-CI runs this on every push. A renamed page or a dropped `fakeDumpFrame()` call
-fails the commit that caused it.
+The Host tests job in `ci.yml` runs the same render and check on every push to
+`main` or `master` and on every pull request. A renamed page or a dropped
+`fakeDumpFrame()` call fails that run.
 
 ---
 
