@@ -142,26 +142,14 @@ code produced.
 
 The DShot frame is 11 throttle bits, 1 telemetry-request bit and 4 CRC bits.
 The ESC sends a KISS frame on the telemetry wire when it receives a frame with
-that bit set. The DShot library, `bastian2001/pico-bidir-dshot`, does not
-expose that combination:
+that bit set. The DShot driver in `src/dshot/` takes the value and the bit
+separately, `out_dshot_send(pin, value, telemetry)`, and adds the checksum.
+Command frames always go out with the bit set; throttle frames set it only on
+the slots that ask for a KISS reply.
 
-```c
-void BidirDShotX1::sendThrottle(uint16_t throttle) {
-    if (throttle > 2000) throttle = 2000;
-    if (throttle) throttle += 47;
-    throttle <<= 1;          // telemetry bit ends up 0, always
-    this->sendRaw12Bit(throttle);
-}
-
-void BidirDShotX1::sendRaw11Bit(uint16_t data) {
-    data = (data << 1) | 1;  // telemetry bit 1, always
-    this->sendRaw12Bit(data);
-}
-```
-
-`sendThrottle()` never requests telemetry and `sendRaw11Bit()` always does.
-`sendRaw12Bit()` is public, so the firmware builds the 12-bit value itself in
-`kissBuildDshotPayload()` (`src/kiss_telem.cpp`) and needs no library fork:
+The firmware builds the 12-bit value in `kissBuildDshotPayload()`
+(`src/kiss_telem.cpp`), and `esc_task.cpp` splits it into the value and the
+bit for the driver:
 
 ```c
 uint16_t raw = throttle0to2000 ? (uint16_t)(throttle0to2000 + 47) : 0;
@@ -329,7 +317,7 @@ host.
    `KISS_REQUEST_EVERY_N`, `KISS_STALE_MS`, `KISS_REPLY_TIMEOUT_MS`. The pin
    and enable are runtime settings on CFG → SETUP; the macros are their
    defaults. Done. The planned `KISS_UART` does not exist: the receiver is PIO.
-4. `esc_task.cpp`: request bit through `sendRaw12Bit()`, drain in
+4. `esc_task.cpp`: request bit through `out_dshot_send()`, drain in
    `escTaskPoll()`, `EscTelemetry` fields. Done.
 5. Merge policy and source tags in the UI. Done.
 6. Hardware bring-up: measure the line level, confirm frames arrive,
@@ -359,4 +347,4 @@ host.
 - [Betaflight `esc_sensor.c`](https://github.com/betaflight/betaflight/blob/master/src/main/sensors/esc_sensor.c): frame layout and CRC8
 - [DSHOT - the missing Handbook](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/): DShot framing, telemetry bit, EDT types
 - [KISS ESC onewire telemetry protocol](https://www.rcgroups.com/forums/showatt.php?attachmentid=8524039&d=1450424877): original specification
-- [`bastian2001/pico-bidir-dshot`](https://github.com/bastian2001/pico-bidir-dshot): the DShot library this firmware uses
+- [rcbench `protocols/dshot`](https://github.com/subtilitas/rcbench/tree/453cf334/protocols/dshot): the origin of the DShot driver in `src/dshot/`

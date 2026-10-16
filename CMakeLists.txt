@@ -6,13 +6,15 @@
 # Produces build/DshotDisplay.uf2.
 #
 # PICO_PLATFORM selects the core. Only rp2350-arm-s (Cortex-M33) is supported and
-# built: rp2350-riscv would work -- the DShot library supports the Hazard3 cores
-# -- but nothing here is built or tested for it.
+# built: nothing here is built or tested for the Hazard3 RISC-V cores
+# (rp2350-riscv).
 #
 # Dependencies are fetched at configure time rather than vendored, so the tree
 # stays free of third-party source, and pinned to exact tags so a build here
 # matches a build anywhere. That pinning is the whole point: an unpinned
-# FetchContent is a lock file that silently rewrites itself.
+# FetchContent is a lock file that silently rewrites itself. The DShot driver in
+# src/dshot/ is not a dependency in that sense: it comes from rcbench, which has
+# the same copyright holder and licence, and it is part of this tree.
 
 # 3.18, not 3.13: SOURCE_SUBDIR inside FetchContent_Declare is only honoured by
 # FetchContent_MakeAvailable from 3.18 onwards. On 3.13-3.17 it is silently
@@ -114,15 +116,6 @@ endif()
 
 include(FetchContent)
 
-# Bidirectional DShot over PIO. Distributed as an Arduino library, but the code
-# itself is plain Pico SDK -- dshot_common.h keys off ARDUINO being undefined
-# and takes the SDK path. GPL-3.0; see the licence note in README.
-FetchContent_Declare(pico_bidir_dshot
-    GIT_REPOSITORY https://github.com/bastian2001/pico-bidir-dshot.git
-    GIT_TAG        b46f54333abc30712d3ed6d0fd29ed1e686d7165  # 1.0.2
-)
-FetchContent_MakeAvailable(pico_bidir_dshot)
-
 # FatFs over SPI for the microSD slot. Apache-2.0.
 #
 # The SDIO-SPI repo, not the older SPI-only one: that one's rtc.c includes
@@ -170,6 +163,12 @@ add_executable(DshotDisplay
     src/log_ring.cpp
     src/sd_log.cpp
     src/sd_hw_config.c
+    # Bidirectional DShot: the portable core and the RP2350 pin driver, from
+    # rcbench. See the header comment of each file for the commit.
+    src/dshot/dshot_frame.c
+    src/dshot/dshot_telem.c
+    src/dshot/dshot_edt.c
+    src/dshot/out_dshot.c
 )
 
 # The KISS receiver is a PIO program (see pio_uart_rx.h for why it is not one
@@ -177,9 +176,14 @@ add_executable(DshotDisplay
 # also puts that directory on the include path so `#include "pio_uart_rx.pio.h"`
 # resolves.
 pico_generate_pio_header(DshotDisplay ${CMAKE_CURRENT_LIST_DIR}/src/pio_uart_rx.pio)
+# The DShot transmitter and receiver, assembled the same way into dshot.pio.h.
+pico_generate_pio_header(DshotDisplay ${CMAKE_CURRENT_LIST_DIR}/src/dshot/dshot.pio)
 
 target_include_directories(DshotDisplay PRIVATE src)
 target_compile_definitions(DshotDisplay PRIVATE BOARD=${BOARD})
+# One ESC, so one driver slot. A pin change releases the old pin before it binds
+# the new one, so it never needs two.
+target_compile_definitions(DshotDisplay PRIVATE OUT_DSHOT_MAX_PINS=1u)
 # STREQUAL against the empty string, not if(${pinopt}): CMake's if() tests the
 # *value*, and "0" is one of its false constants -- so -DDSHOT_PIN=0 took the
 # else branch and silently built for the board default instead. GP0 is a real
@@ -206,7 +210,6 @@ target_link_libraries(DshotDisplay
     hardware_flash
     hardware_sync
     hardware_watchdog
-    Pico_Bidir_DShot
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
     tinyusb_device
     pico_unique_id

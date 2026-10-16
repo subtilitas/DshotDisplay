@@ -121,19 +121,20 @@ bool kissFeed(KissDecoder *d, uint8_t b, KissFrame *out);
 bool kissDecodeFrame(const uint8_t *buf, KissFrame *out);
 
 /**
- * @brief Build the 12-bit DShot payload for `BidirDShotX1::sendRaw12Bit()`.
+ * @brief Build the 12-bit DShot payload: the 11-bit value, then the
+ *        telemetry-request bit.
  *
- * The DShot library cannot express "throttle, and please send telemetry":
- * `sendThrottle()` always clears the request bit and `sendRaw11Bit()` always
- * sets it. `sendRaw12Bit()` is public though, so the 12-bit value is assembled
- * here instead and no fork of the library is needed.
+ * A throttle frame carries the request bit only on the slots that ask for a
+ * KISS reply, so the bit is part of the payload rather than fixed per frame
+ * type. esc_task.cpp splits the result into the value and the bit that
+ * out_dshot_send() takes, and the driver adds the checksum.
  *
  * @param throttle0to2000 Throttle. Clamped to 2000.
  * @param requestTelemetry Sets the telemetry-request bit.
  * @return The 12-bit value: 11 bits of throttle, then the request bit.
  *
- * @warning Zero must stay zero. `sendThrottle()` adds the 47-command offset
- *          only for non-zero throttles so that 0 means motor stop, and skipping
- *          that special case would turn "stop" into a small forward command.
+ * @warning Zero must stay zero. The 47-command offset applies only to a
+ *          non-zero throttle, so that 0 means motor stop. Applying it to zero
+ *          would turn "stop" into a small forward command.
  */
 uint16_t kissBuildDshotPayload(uint16_t throttle0to2000, bool requestTelemetry);

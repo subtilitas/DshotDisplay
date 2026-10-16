@@ -271,6 +271,7 @@ void escTaskConfigure(uint8_t pin, uint16_t kbaud, bool, uint8_t) {
 	g_configures++;
 }
 uint8_t escTaskDshotPin() { return g_dshotPin; }
+uint16_t escTaskDshotKbaud() { return g_dshotKbaud; }
 
 // ---------------------------------------------------------------------------
 // Settings storage

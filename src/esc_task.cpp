@@ -5,9 +5,10 @@
 #include "pio_uart_rx.h"
 #include "settings.h"
 
+#include "dshot/out_dshot.h"
+
 #include "plat.h"
 #include <string.h>
-#include <PIO_DShot.h>
 #include <pico/critical_section.h>
 #include <hardware/gpio.h>
 
@@ -16,7 +17,37 @@
  * @brief Core1 DShot frame pump, telemetry decode and cross-core state.
  */
 
-static BidirDShotX1 *s_esc = nullptr; /**< Owned by core1. */
+#if PICO_ON_DEVICE
+#include <hardware/pio.h>
+#include "dshot.pio.h"
+#include "pio_uart_rx.pio.h"
+
+/*
+ * The PIO budget. Core1 runs two PIO users: bidirectional DShot, a transmitter
+ * and a receiver on adjacent state machines of one block, and the KISS
+ * receiver on one more. Both claim from whichever block has room, and the SDK
+ * searches pio2 first. pio1 carries the SDIO card driver on the 2.8" board and
+ * nothing else uses pio0 or pio2, so the DShot bind always finds a block with
+ * no other user. These two checks are what makes the KISS receiver fit beside
+ * it in that block, on every board and in every configuration. Checked in the
+ * firmware build only: the host stubs carry no PIO programs.
+ */
+static_assert(2 + 1 <= NUM_PIO_STATE_MACHINES,
+              "DShot and the KISS receiver need 3 state machines in one PIO block");
+static_assert(sizeof(dshot_bidir_tx_program_instructions) / sizeof(uint16_t) +
+              sizeof(dshot_rx_program_instructions) / sizeof(uint16_t) +
+              sizeof(pio_uart_rx_program_instructions) / sizeof(uint16_t) <=
+              PIO_INSTRUCTION_COUNT,
+              "DShot and the KISS receiver do not fit one PIO block's instruction memory");
+#endif
+
+/**
+ * @defgroup esc_pump Pin driver state (core1 only)
+ * @{
+ */
+static bool    s_pumpUp  = false; /**< Bound since the last teardown, or refused. */
+static uint8_t s_pumpPin = 0;     /**< GPIO the driver was bound to. */
+/** @} */
 
 /** @brief Guards @ref s_tel against concurrent access from core0. */
 static critical_section_t s_cs;
@@ -113,7 +144,7 @@ static bool s_kissRx = false;
  * and the effect is the same as an unplugged telemetry wire: no KISS frames,
  * the merged reading falls back to EDT, and the tiles say so. That is the right
  * failure for something that cannot happen on a board this firmware builds for
- * (two programs resident, twelve state machines) and must still not fault.
+ * (see the PIO budget at the top of this file) and must still not fault.
  *
  * @param pin GPIO to receive on. Any of them.
  */
@@ -278,6 +309,8 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 
 uint8_t escTaskDshotPin() { return s_dshotPin; }
 
+uint16_t escTaskDshotKbaud() { return s_dshotKbaud; }
+
 void escTaskBegin() {
 	// Nothing is claimed here. The driver and the UART are built by the first
 	// escTaskPoll(), which is also the path a suspend or a reconfigure returns
@@ -287,83 +320,37 @@ void escTaskBegin() {
 }
 
 /**
- * @brief Fold one decoded telemetry frame into @ref s_tel.
- *
- * Unit conversions follow the library's documented encodings: voltage arrives
- * in 250 mV steps, current in 1 A steps, temperature in whole degrees Celsius.
- *
- * @param type  Frame type reported by the library.
- * @param value Decoded payload, meaningless for the error types.
+ * @brief Fold one poll of the driver into @ref s_tel, under the lock.
+ * @param reply What out_dshot_poll() returned.
+ * @param t     The decoded frame. @see escFoldReply()
  */
-static void applyTelemetry(BidirDshotTelemetryType type, uint32_t value) {
-	uint8_t poles = s_poles;
+static void applyTelemetry(dshot_reply_t reply, const dshot_telem_t *t) {
+	uint8_t  poles = s_poles;
+	uint32_t now   = millis();
 
 	critical_section_enter_blocking(&s_cs);
-	switch (type) {
-		case BidirDshotTelemetryType::ERPM:
-			s_tel.erpm = value;
-			s_tel.rpm  = (poles >= 2) ? (value / (poles / 2)) : value;
-			s_tel.lastRpmMs = millis();
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::VOLTAGE:
-			s_tel.volts = value * 0.25f;
-			s_tel.edtVoltsMs = millis();
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::CURRENT:
-			s_tel.amps = (float)value;
-			s_tel.edtAmpsMs = millis();
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::TEMPERATURE:
-			s_tel.tempC = (int16_t)value;
-			s_tel.edtTempMs = millis();
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::STRESS:
-			s_tel.stress = (uint8_t)value;
-			s_tel.edtStressMs = millis();
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::STATUS:
-			s_tel.statusRaw = (uint8_t)value;
-			s_tel.maxStress = (uint8_t)(value & ESC_STATUS_MAX_STRESS_MASK);
-			s_tel.error     = (value & ESC_STATUS_ERROR_MASK)   != 0;
-			s_tel.warning   = (value & ESC_STATUS_WARNING_MASK) != 0;
-			s_tel.alert     = (value & ESC_STATUS_ALERT_MASK)   != 0;
-			s_tel.edtStatusMs = millis();
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::DEBUG_FRAME_1:
-		case BidirDshotTelemetryType::DEBUG_FRAME_2:
-		case BidirDshotTelemetryType::OTHER_VALUE:
-			s_tel.goodPackets++;
-			break;
-		case BidirDshotTelemetryType::CHECKSUM_ERROR:
-			s_tel.badPackets++;
-			break;
-		case BidirDshotTelemetryType::NO_PACKET:
-			s_tel.noPackets++;
-			break;
-	}
+	escFoldReply(&s_tel, reply, t, poles, now);
 	critical_section_exit(&s_cs);
 }
 
 void escTaskPoll() {
 	// Handle a handover or a reconfigure before anything touches the driver.
-	// Teardown and rebuild both happen here so the PIO state machine is released
-	// and re-claimed by the core that owns it.
+	// Release and bind both happen here so the PIO state machines are released
+	// and re-claimed by the core that owns them.
 	//
-	// The teardown runs on the *request* rather than on `s_esc` being non-null.
-	// Gating it on the driver existing left a hole: a suspend arriving before
-	// core1 had ever built one satisfied neither branch, so `s_suspended` never
-	// became true and the AM32 screen waited on a handover that could not
+	// The teardown runs on the *request* rather than on the pump being up. A
+	// suspend arriving before core1 has ever bound the pin must still set
+	// `s_suspended`, or the AM32 screen waits on a handover that cannot
 	// complete.
 	if (s_suspendReq || s_rebuildReq) {
-		if (s_esc) {
-			delete s_esc;
-			s_esc = nullptr;
+		if (s_pumpUp) {
+			// The driver hands the pad back with no pull. The pull-up goes back
+			// on, so the line holds the bidirectional idle level until its next
+			// owner takes it: the AM32 bootloader transport, or nothing after a
+			// pin change.
+			out_dshot_release(s_pumpPin);
+			gpio_pull_up(s_pumpPin);
+			s_pumpUp = false;
 		}
 #if KISS_TELEM_ENABLE
 		// Whoever owns the pin next, it is not us. A UART left running would
@@ -376,12 +363,18 @@ void escTaskPoll() {
 			return;
 		}
 	}
-	if (!s_suspendReq && !s_esc) {
+	if (!s_suspendReq && !s_pumpUp) {
 		// Latch the wiring once, here, so a pin change cannot be observed
 		// half-applied. @see esc_wiring
 		uint8_t  pin   = s_dshotPin;
 		uint16_t kbaud = s_dshotKbaud;
-		s_esc = new BidirDShotX1(pin, kbaud);
+		// Bidirectional, and refused rather than degraded: a bind that cannot
+		// get two adjacent state machines in one block fails here, and
+		// `initError` puts DSERR in the status bar. The pump still runs its
+		// slots, so the link counters show an ESC that never answers.
+		bool bound = out_dshot_bind(pin, kbaud, true);
+		s_pumpPin = pin;
+		s_pumpUp  = true;
 		s_armed = false;
 		s_throttle = 0;
 		// A rebuild is a new ESC as far as this pump is concerned: nothing has
@@ -397,11 +390,11 @@ void escTaskPoll() {
 		if (s_kissEnable && s_kissPin != pin) kissUartBegin(s_kissPin);
 #endif
 		critical_section_enter_blocking(&s_cs);
-		s_tel.initError = s_esc->initError();
+		s_tel.initError = !bound;
 		critical_section_exit(&s_cs);
 		s_suspended = false;
 	}
-	if (!s_esc) return;
+	if (!s_pumpUp) return;
 
 #if KISS_TELEM_ENABLE
 	// Ahead of the frame deadline, not after it: this loop runs far faster than
@@ -419,9 +412,12 @@ void escTaskPoll() {
 	}
 
 	// 1. Drain the reply to the *previous* frame before sending the next one.
-	uint32_t value = 0;
-	BidirDshotTelemetryType type = s_esc->getTelemetryPacket(&value);
-	applyTelemetry(type, value);
+	// Extended frames are read as such once an enable has gone out: the type
+	// nibble of an EDT frame is an ordinary exponent in an eRPM one, and only
+	// the end that asked knows which this ESC sends. @see out_dshot_poll()
+	dshot_telem_t t;
+	memset(&t, 0, sizeof(t));
+	applyTelemetry(out_dshot_poll(s_pumpPin, s_edtRequested, &t), &t);
 
 	// 2. Decide what to send.
 	uint32_t ms = millis();
@@ -500,19 +496,18 @@ void escTaskPoll() {
 	// the one the user cannot re-request, and a beep deferred by ten frames is
 	// a beep nobody notices was deferred.
 	if (!s_edtReps && !s_beepReps && s_beepReq) {
-		s_beepCmd  = (uint8_t)(DSHOT_CMD_BEACON1 + (s_beepReq - 1));
+		s_beepCmd  = (uint8_t)(DSHOT_CMD_BEEP1 + (s_beepReq - 1));
 		s_beepReps = BEEP_REPEATS;
 		s_beepReq  = 0;
 	}
 
-	uint8_t pendingCmd  = s_edtReps ? (uint8_t)DSHOT_CMD_EXTENDED_TELEMETRY_ENABLE
-	                                : s_beepCmd;
+	uint8_t pendingCmd  = s_edtReps ? (uint8_t)DSHOT_CMD_EDT_ENABLE : s_beepCmd;
 	uint8_t pendingReps = s_edtReps ? s_edtReps : s_beepReps;
 
 #if KISS_TELEM_ENABLE
-	// Commands own the frame when they are queued -- sendRaw11Bit() forces the
-	// telemetry bit set anyway, and a reply arriving mid-command sequence would
-	// just be noise.
+	// Commands own the frame when they are queued -- a command frame goes out
+	// with the telemetry bit set anyway, and a reply arriving mid-command
+	// sequence would just be noise.
 	bool wantKiss = false;
 	if (s_kissRx && pendingReps == 0) {
 		if (s_kissCountdown) {
@@ -533,7 +528,10 @@ void escTaskPoll() {
 	EscFrame f = escFrameAction(s_armed, uiAlive, s_throttle,
 	                            pendingCmd, pendingReps, wantKiss);
 	if (f.sendCommand) {
-		s_esc->sendRaw11Bit(f.command);
+		// With the telemetry bit set. The BLHeli_S family (Bluejay) discards a
+		// command frame whose bit is clear, so a command sent without it never
+		// reaches the ESC's repeat count; AM32 acts on either.
+		out_dshot_send(s_pumpPin, f.command, true);
 		if (s_edtReps) {
 			// The attempt is stamped by its *last* frame. Stamping the first one
 			// is what let a burst that never completed -- truncated by a beacon
@@ -547,9 +545,11 @@ void escTaskPoll() {
 			s_beepReps--;
 		}
 	} else {
-		// Built by hand rather than via sendThrottle(), which cannot set the
-		// telemetry-request bit. @see kissBuildDshotPayload()
-		s_esc->sendRaw12Bit(kissBuildDshotPayload(f.throttle, f.requestKiss));
+		// The 12-bit payload carries the throttle offset past the command range
+		// and the telemetry-request bit; the driver takes the two halves
+		// apart. @see kissBuildDshotPayload()
+		uint16_t payload = kissBuildDshotPayload(f.throttle, f.requestKiss);
+		out_dshot_send(s_pumpPin, (uint16_t)(payload >> 1), (payload & 1u) != 0);
 	}
 	wantKiss = f.requestKiss;
 

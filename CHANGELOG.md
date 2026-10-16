@@ -39,9 +39,28 @@ its own wire. AM32 is an open-source ESC firmware.
 - `test/check_docs.py` checks that every relative link in STATUS.md,
   CHANGELOG.md and `docs/design/*.md` points at a file that exists, and
   that an anchor into a Markdown file points at a heading that exists.
+- `DSERR` in amber in the status bar when the DShot driver cannot claim its
+  two PIO state machines. Nothing is sent to the ESC then.
+- Host tests for the DShot core: the 36 cases of rcbench for the frame, the
+  reply and the EDT enable schedule, and new cases for the three-state poll
+  and the counters it feeds. The suite compiles the core as C11.
 
 ### Changed
 
+- Bidirectional DShot runs on the MIT driver from rcbench, `protocols/dshot`
+  at commit 453cf334, kept in `src/dshot/`, instead of `pico-bidir-dshot`
+  1.0.2, which is GPL-3.0. No GPL code is fetched or linked for DShot.
+- The DShot poll tells a good reply, no reply and a damaged reply (line code,
+  group code or checksum) apart. The good, bad and missing packet counts and
+  the error percentage keep their meaning.
+- The DShot transmitter and receiver take two adjacent state machines and 16
+  instructions on pio2, beside the KISS receiver; DShot was on pio0. pio1
+  stays the SDIO driver's.
+- eRPM is 60,000,000 divided by the reported period in µs.
+  `pico-bidir-dshot` added 50 eRPM to every reading, about 7 RPM on a
+  14-pole motor.
+- EDT frames are decoded as EDT once an enable has gone out. Before that,
+  every reply reads as eRPM.
 - The design notes in `docs/design/` describe the code as it is: KISS
   reception through a PIO receiver on any free GPIO, KISS on the 2.8" board
   off by default rather than impossible, the SD interface chosen per board at
@@ -51,6 +70,8 @@ its own wire. AM32 is an open-source ESC firmware.
 
 ### Fixed
 
+- The status bar's DShot label showed the compiled default, `DS600`, at any
+  bitrate set under SETUP. It shows the bitrate the pump runs at.
 - `test/check_docs.py` run from any directory other than the repository root
   checked no files and reported success. It now resolves its paths from its
   own location and fails when it finds no files.

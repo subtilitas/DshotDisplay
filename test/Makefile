@@ -11,8 +11,9 @@
 #   make coverage line coverage of src/ from an instrumented build in cov/
 #   make clean
 #
-# Needs nothing but a C++17 compiler: the firmware is compiled against the
-# stubs in test/stubs/, which mirror the Pico SDK signatures.
+# Needs nothing but a C++17 compiler and the C compiler beside it: the firmware
+# is compiled against the stubs in test/stubs/, which mirror the Pico SDK
+# signatures.
 #
 # ui_am32.cpp is deliberately absent from SRCS -- test_ui.cpp #includes it so
 # the tests can reach its file-static state. Compiling it here as well would
@@ -20,6 +21,7 @@
 
 CXX      ?= g++
 CXXFLAGS ?= -std=gnu++17 -O1 -g
+CFLAGS   ?= -std=c11 -O1 -g
 WARN     := -Wall -Wextra -Wshadow -Wno-unused-parameter
 INCLUDES := -Istubs -I../src -I.
 
@@ -38,7 +40,8 @@ DEFINES := -DBOARD=$(BOARD) $(EXTRA_DEFINES)
 
 SRCS := test_main.cpp test_am32.cpp test_ui.cpp test_gfx.cpp test_kiss.cpp \
         test_blackbox.cpp test_log_ring.cpp test_settings.cpp \
-        test_usb_msc.cpp fakes.cpp \
+        test_usb_msc.cpp test_dshot_frame.cpp test_dshot_telem.cpp \
+        test_dshot_edt.cpp fakes.cpp \
         ../src/gfx.cpp ../src/ui.cpp ../src/ui_setup.cpp ../src/theme.cpp \
         ../src/ui_input.cpp ../src/ui_widgets.cpp ../src/board_desc.cpp \
         ../src/board_desc_lcd2.cpp ../src/board_desc_lcd2_8.cpp \
@@ -62,6 +65,17 @@ DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
                ../src/pio_uart_rx.cpp \
                ../src/settings_flash.cpp ../src/main.cpp
 
+# The DShot core in src/dshot/ is C11, and is compiled here as C, by $(CC),
+# into objects the suite links. The firmware compiles it as C, so the suite
+# tests the same language: C and C++ differ in the implicit conversions this
+# code leans on (integer to enum, int to bool), and a C++ build could pass code
+# the C build reads differently. dshot.h carries extern "C", so the C++ tests
+# call it as the C++ firmware does.
+CSRCS := ../src/dshot/dshot_frame.c ../src/dshot/dshot_telem.c \
+         ../src/dshot/dshot_edt.c
+OBJ_DIR := obj
+COBJS := $(patsubst ../src/dshot/%.c,$(OBJ_DIR)/%.o,$(CSRCS))
+
 BIN := dshot_tests
 
 .PHONY: all build run both syntax bbcheck previews wiki coverage clean
@@ -74,8 +88,12 @@ build: $(BIN)
 # unconditionally costs a couple of seconds and removes a whole class of "the
 # tests passed for the other board" confusion.
 .PHONY: $(BIN)
-$(BIN): $(SRCS) $(wildcard ../src/*.h) $(wildcard *.h)
-	$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) $(DEFINES) -o $@ $(SRCS)
+$(BIN): $(SRCS) $(COBJS) $(wildcard ../src/*.h) $(wildcard *.h)
+	$(CXX) $(CXXFLAGS) $(WARN) $(INCLUDES) $(DEFINES) -o $@ $(SRCS) $(COBJS)
+
+$(OBJ_DIR)/%.o: ../src/dshot/%.c ../src/dshot/dshot.h
+	@mkdir -p $(OBJ_DIR)
+	$(CC) $(CFLAGS) $(WARN) -Werror -c -o $@ $<
 
 run: $(BIN)
 	./$(BIN)
@@ -156,11 +174,15 @@ COV_DIR := cov
 
 coverage:
 	rm -rf $(COV_DIR) && mkdir -p $(COV_DIR)
+	for f in $(CSRCS); do \
+		$(CC) -std=c11 -O0 -g --coverage $(WARN) \
+			-c -o $(COV_DIR)/$$(basename $$f .c).o $$f || exit 1; \
+	done
 	$(CXX) -std=gnu++17 -O0 -g --coverage $(WARN) $(INCLUDES) $(DEFINES) \
-		-o $(COV_DIR)/$(BIN) $(SRCS)
+		-o $(COV_DIR)/$(BIN) $(SRCS) $(patsubst ../src/dshot/%.c,$(COV_DIR)/%.o,$(CSRCS))
 	./$(COV_DIR)/$(BIN)
 	python3 ../tools/coverage.py --print
 
 clean:
 	rm -f $(BIN) gen_blackbox_log *.ppm *.BFL
-	rm -rf $(COV_DIR)
+	rm -rf $(COV_DIR) $(OBJ_DIR)

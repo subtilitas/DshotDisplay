@@ -2,9 +2,10 @@
  * @file esc_task.h
  * @brief Bidirectional DShot driver task. Runs on core1.
  *
- * Core1 owns the `BidirDShotX1` instance and does nothing but push frames at a
- * steady @ref DSHOT_PERIOD_US and drain telemetry. That keeps DShot timing
- * immune to the multi-millisecond SPI DMA bursts the display does on core0.
+ * Core1 owns the DShot pin driver (`dshot/out_dshot.h`) and does nothing but
+ * push frames at a steady @ref DSHOT_PERIOD_US and drain telemetry. That keeps
+ * DShot timing immune to the multi-millisecond SPI DMA bursts the display does
+ * on core0.
  *
  * The ESC's answer to a frame lands 30 us after that frame ends (fixed by the
  * bidirectional-DShot spec, independent of speed), so each slot first drains
@@ -21,6 +22,8 @@
 #pragma once
 
 #include <stdint.h>
+
+#include "dshot/dshot.h"
 
 /**
  * @brief Everything core1 has decoded from the ESC.
@@ -73,7 +76,13 @@ struct EscTelemetry {
 	uint32_t edtStatusMs;   /**< Last EDT status frame. */
 	/** @} */
 
-	bool     initError;     /**< PIO state machine setup failed. */
+	/**
+	 * The DShot driver refused the pin: no PIO block had two adjacent free
+	 * state machines and 16 free instructions, or the pad did not take the
+	 * output inversion. Nothing is sent while it is set, and the status bar
+	 * shows `DSERR` in place of the bitrate.
+	 */
+	bool     initError;
 
 	/**
 	 * @name KISS telemetry
@@ -119,12 +128,11 @@ void escTaskInit();
 /**
  * @brief Start the frame pump. Call from core1.
  *
- * Does not itself claim the PIO state machine: the driver is constructed on the
+ * Does not itself claim the PIO state machines: the driver is bound on the
  * first escTaskPoll(), from whatever configuration escTaskConfigure() last
- * supplied, and that same path rebuilds it after a suspend or a pin change. One
- * construction site rather than two is the point — the version of this function
- * that also built a driver read `initError` off a pointer that was still null,
- * which on RP2350 reads low flash and reports whatever happens to be there.
+ * supplied, and that same path binds it again after a suspend or a pin change.
+ * One construction site rather than two is the point: two sites can disagree
+ * about the order of the bind and the `initError` it reports.
  *
  * @pre escTaskInit() has been called on core0.
  */
@@ -225,8 +233,8 @@ enum class EdtAutoAction : uint8_t {
  * interval then governs genuine attempts rather than counting discarded ones.
  * @see EDT_RETRY_MS
  *
- * Split out as a pure function so the rule is testable — esc_task.cpp pulls in
- * the PIO library and cannot be linked into the host suite.
+ * Split out as a pure function so the rule is testable — esc_task.cpp links
+ * the PIO driver and cannot be linked into the host suite.
  *
  * @param linkUp     True if an eRPM frame arrived within @ref ESC_LINK_STALE_MS.
  * @param edtFresh   True if any EDT frame arrived within @ref EDT_STALE_MS.
@@ -264,8 +272,8 @@ struct EscFrame {
 /**
  * @brief Decide what one DShot frame carries. Pure; host-testable.
  *
- * Extracted for the same reason edtAutoAction() was: esc_task.cpp pulls in the
- * PIO library and the SDK's UART and cannot be linked into the host suite, so
+ * Extracted for the same reason edtAutoAction() was: esc_task.cpp links the
+ * PIO driver and the KISS receiver and cannot be linked into the host suite, so
  * any rule left inside it is a rule no test can reach. Three of the rules here
  * are safety interlocks, and all three were untested — a mutation deleting the
  * heartbeat check, the disarm-zeroing, or the refusal to send commands while
@@ -301,11 +309,94 @@ static inline EscFrame escFrameAction(bool armed, bool uiAlive, uint16_t throttl
 		return f;
 	}
 	f.throttle = (!armed || !uiAlive) ? 0 : throttle;
-	// Never alongside a command: sendRaw11Bit() forces the request bit set
+	// Never alongside a command: a command frame carries the request bit set
 	// anyway, and a reply arriving mid-sequence is noise the decoder cannot
 	// distinguish from a real one.
 	f.requestKiss = kissWanted && pendingReps == 0;
 	return f;
+}
+
+/** @brief EDT status frame, bits 3..0: the highest stress level seen. */
+#define ESC_STATUS_MAX_STRESS_MASK 0x0Fu
+/** @brief EDT status frame, bit 5: error. */
+#define ESC_STATUS_ERROR_MASK      0x20u
+/** @brief EDT status frame, bit 6: warning. */
+#define ESC_STATUS_WARNING_MASK    0x40u
+/** @brief EDT status frame, bit 7: alert. */
+#define ESC_STATUS_ALERT_MASK      0x80u
+
+/**
+ * @brief Fold one poll of the DShot driver into a telemetry block. Pure;
+ *        host-testable.
+ *
+ * Split out of esc_task.cpp for the same reason as escFrameAction(): the
+ * counters behind the link-quality figure are only as good as this mapping,
+ * and the file that calls it links the PIO driver.
+ *
+ * - No reply counts in `noPackets`. An ESC that is not connected, or does not
+ *   speak bidirectional DShot, produces nothing else.
+ * - A damaged reply (line code, group code or checksum) counts in
+ *   `badPackets`, and so does an eRPM frame with a period of zero. A period of
+ *   zero has no speed. An ESC reports a stopped motor with its own code,
+ *   which decodes to an eRPM of 0 with a non-zero period.
+ * - Every other decoded frame counts in `goodPackets` and stamps its arrival
+ *   time. The two debug types are counted and not shown.
+ *
+ * Voltage arrives in 250 mV steps, current in 1 A steps and temperature in
+ * whole degrees Celsius, per the EDT specification.
+ *
+ * @param tel   Block to update.
+ * @param reply What out_dshot_poll() returned.
+ * @param t     The decoded frame. Read only when @p reply is DSHOT_REPLY_GOOD.
+ * @param poles Motor magnet count, for the eRPM to RPM conversion.
+ * @param nowMs millis() to stamp an arrival with.
+ */
+static inline void escFoldReply(EscTelemetry *tel, dshot_reply_t reply,
+                                const dshot_telem_t *t, uint8_t poles,
+                                uint32_t nowMs) {
+	if (reply == DSHOT_REPLY_NONE) {
+		tel->noPackets++;
+		return;
+	}
+	if (reply != DSHOT_REPLY_GOOD ||
+	    (t->kind == DSHOT_TELEM_ERPM && t->period_us == 0)) {
+		tel->badPackets++;
+		return;
+	}
+	switch (t->kind) {
+		case DSHOT_TELEM_ERPM:
+			tel->erpm = t->erpm;
+			tel->rpm  = (poles >= 2) ? (t->erpm / (poles / 2)) : t->erpm;
+			tel->lastRpmMs = nowMs;
+			break;
+		case DSHOT_TELEM_VOLTAGE:
+			tel->volts = t->value * 0.25f;
+			tel->edtVoltsMs = nowMs;
+			break;
+		case DSHOT_TELEM_CURRENT:
+			tel->amps = (float)t->value;
+			tel->edtAmpsMs = nowMs;
+			break;
+		case DSHOT_TELEM_TEMPERATURE:
+			tel->tempC = (int16_t)t->value;
+			tel->edtTempMs = nowMs;
+			break;
+		case DSHOT_TELEM_STRESS:
+			tel->stress = t->value;
+			tel->edtStressMs = nowMs;
+			break;
+		case DSHOT_TELEM_STATUS:
+			tel->statusRaw = t->value;
+			tel->maxStress = (uint8_t)(t->value & ESC_STATUS_MAX_STRESS_MASK);
+			tel->error     = (t->value & ESC_STATUS_ERROR_MASK)   != 0;
+			tel->warning   = (t->value & ESC_STATUS_WARNING_MASK) != 0;
+			tel->alert     = (t->value & ESC_STATUS_ALERT_MASK)   != 0;
+			tel->edtStatusMs = nowMs;
+			break;
+		default:
+			break;
+	}
+	tel->goodPackets++;
 }
 
 /**
@@ -322,8 +413,8 @@ bool escEdtRequested();
  *
  * Needed before the AM32 bootloader transport can use the same pin. Forces a
  * disarm first. Poll escTaskSuspended() until it reports true; the teardown
- * happens on core1 so that the PIO state machine is freed by the core that
- * claimed it.
+ * happens on core1 so that the PIO state machines are freed by the core that
+ * claimed them.
  */
 void escTaskSuspend();
 
@@ -341,8 +432,8 @@ bool escTaskSuspended();
  * setup screen is open, so core1 reading it would see half-applied
  * combinations — a new pin against an old bitrate, for one frame.
  *
- * Takes effect on the next escTaskPoll(): the driver is destroyed and rebuilt,
- * which releases the old pin and claims the new one. Forces a disarm, because
+ * Takes effect on the next escTaskPoll(): the driver releases the old pin and
+ * binds the new one. Forces a disarm, because
  * the ESC on the old pin stops hearing frames the moment it is released.
  *
  * Safe to call with unchanged values; it is a no-op if nothing differs, so the
@@ -358,5 +449,12 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 
 /** @brief GPIO the pump is currently driving. @return The live ESC pin. */
 uint8_t escTaskDshotPin();
+
+/**
+ * @brief DShot bitrate the pump is currently using.
+ * @return 150, 300, 600 or 1200, in kbit/s: the value escTaskConfigure() last
+ *         set, which the pump binds at on its next escTaskPoll().
+ */
+uint16_t escTaskDshotKbaud();
 
 /** @} */

@@ -578,7 +578,7 @@
 /**
  * @brief How long the splash screen stays up, in milliseconds.
  *
- * This also covers core1 claiming its PIO state machine and the ESC finishing
+ * This also covers core1 claiming its PIO state machines and the ESC finishing
  * its own boot, so shortening it much below a second is not advisable.
  */
 #define SPLASH_MS              3000

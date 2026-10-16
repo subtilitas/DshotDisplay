@@ -243,9 +243,8 @@ onto the USB drive that appears.
 off by default, so a toolchain update that adds a warning does not stop a
 local build.
 
-Only the Cortex-M33 build (`rp2350-arm-s`) is supported. The DShot library
-also supports the RP2350's Hazard3 RISC-V cores, but this project does not
-build or test for them.
+Only the Cortex-M33 build (`rp2350-arm-s`) is supported. This project does not
+build or test for the RP2350's Hazard3 RISC-V cores.
 
 ### Prebuilt images
 
@@ -262,12 +261,14 @@ firmware.
 ### Reproducible builds
 
 `CMakeLists.txt` pins each dependency and fetches it at configure time. The
-tree contains no third-party source.
+tree contains no third-party source. The DShot driver in `src/dshot/` is part
+of the tree: it comes from [rcbench](https://github.com/subtilitas/rcbench),
+which has the same copyright holder and the same MIT licence, and each of its
+files names the rcbench commit it was taken from.
 
 | Dependency | Version | Pinned by |
 |---|---|---|
 | pico-sdk | 2.1.1 | commit SHA (hash) |
-| Pico_Bidir_DShot | 1.0.2 | commit SHA |
 | no-OS-FatFS-SD-SDIO-SPI-RPi-Pico | v3.6.2 | commit SHA |
 
 Each SHA has its tag in a comment beside it. A tag can be moved; a SHA cannot.
@@ -449,9 +450,10 @@ that drops from KISS to EDT means the telemetry wire has stopped, and the
 reading is 25 times coarser. Consumption in mAh appears on the temperature
 tile with KISS only. EDT does not carry it.
 
-The tester's top row shows `DS` plus the bitrate, cyan once an EDT enable has
-been sent. **Current limitation:** this label shows the compiled default
-(`DSHOT_SPEED_KBAUD`, `DS600`), not the rate set under SETUP.
+The tester's top row shows `DS` plus the bitrate the DShot driver runs at,
+as set under SETUP, cyan once an EDT enable has been sent. `DSERR` in amber
+replaces it when the driver could not claim its two PIO state machines;
+nothing is sent to the ESC then.
 
 ---
 
@@ -799,6 +801,9 @@ src/
   board_probe.{h,cpp}   I2C identification of the board at boot
   touch.cpp             dispatches to whichever touch driver the board names
   esc_task.{h,cpp}      core1 DShot pump, EDT decode, cross-core state
+  dshot/                bidirectional DShot, from rcbench
+    dshot.h, dshot_{frame,telem,edt}.c  frame, reply decode, EDT schedule (pure C)
+    out_dshot.{h,c}, dshot.pio          RP2350 pin driver: 2 state machines, 16 instructions
   ui.{h,cpp}            screens, touch handling, arm/throttle state machine
   ui_widgets.{h,cpp}    shared header, buttons, rows and chips
   ui_am32.{h,cpp}       AM32 config screen: connect, edit, verified write
@@ -837,7 +842,8 @@ wiki/                   the user manual, mirrored to the GitHub wiki
 ```
 
 All firmware source is under `src/`, `main.cpp` included. Files include each
-other as plain siblings.
+other as plain siblings, except the DShot driver, which keeps its own folder
+`src/dshot/` so that it can be compared with its rcbench original.
 
 Modules marked *pure* have no hardware dependency. They are compiled into the
 host test binary and tested directly, without a board.
@@ -851,9 +857,10 @@ Pico SDK signatures:
 cd test && make
 ```
 
-Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only when a test
-says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
-than dependent on machine speed. The fake ESC serves a real settings blob recovered from
+Needs nothing but a C++17 compiler and a C11 compiler: the DShot core in `src/dshot/` is
+compiled as C, as the firmware compiles it, and linked into the C++ suite. Time is
+virtual — `millis()` advances only when a test says so — which makes hold-to-arm,
+hold-to-write and gesture repeat deterministic rather than dependent on machine speed. The fake ESC serves a real settings blob recovered from
 the reference configurator, so the UI tests operate on values a real ESC would report.
 The suite renders every screen to PPM (portable pixmap) images as it runs — splash, the main screen live, armed
 and with the ESC gone, the settings screen in each of its states, all three SD log states
@@ -867,7 +874,7 @@ target so a test run does not leave the working tree dirty.
 `python3 tools/coverage.py` writes the figure below from its gcov counters.
 
 <!-- coverage:start -->
-Host-suite line coverage of `src/` is **96.3%**: 1,880 of 1,952 lines in 20 files. CI fails below 93% in total or below 85% in any file.
+Host-suite line coverage of `src/` is **96.7%**: 2,129 of 2,201 lines in 23 files. CI fails below 93% in total or below 85% in any file.
 <!-- coverage:end -->
 
 `sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the
@@ -991,8 +998,10 @@ fails the commit that caused it.
 
 ## Credits
 
-- [pico-bidir-dshot](https://github.com/bastian2001/pico-bidir-dshot) by bastian2001: the
-  PIO DShot implementation.
+- The DShot implementation in `src/dshot/` comes from
+  [rcbench](https://github.com/subtilitas/rcbench), `protocols/dshot` at commit 453cf334,
+  by the same copyright holder under the same MIT licence. It is written from the
+  published protocol descriptions.
 - [logwiju](https://subtilitas.github.io/logwiju/): the browser-based blackbox viewer
   for these logs.
 - [DShot — the missing handbook](https://brushlesswhoop.com/dshot-and-bidirectional-dshot/)
@@ -1002,11 +1011,16 @@ fails the commit that caused it.
 
 ## License
 
-This repository's own code is MIT (see `LICENSE`).
+This repository's code is MIT throughout (see `LICENSE`), the DShot driver in
+`src/dshot/` included.
 
-`pico-bidir-dshot` is **GPL-3.0**. A compiled firmware image links GPL-3.0
-code. Distributing firmware images or a derived product requires meeting
-GPL-3.0 for the combined work.
+A firmware image also contains the libraries it links, under their own
+licences: the Pico SDK (BSD-3-Clause), TinyUSB (MIT), FatFs (a BSD-style
+licence) and the SD card driver `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`
+(Apache-2.0). The README of that driver states that its 4-bit SDIO driver is
+derived from ZuluSCSI-firmware, which is GPL-3.0, and that code is linked into
+all three images. What that means for a distributed image is not settled
+here.
 
 ---
 

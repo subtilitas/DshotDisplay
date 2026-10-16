@@ -85,10 +85,12 @@ there at 25 MHz; the firmware ships at 10 MHz, because SDIO is more sensitive
 to signal integrity than one-bit SPI, and a card that enumerates and then
 corrupts is worse than one that refuses.
 
-SDIO runs on **pio1** because the DShot driver has pio0. Left to themselves
-both would claim state machines on the same block, and whichever initialised
-second would fail depending on timing. The KISS receiver claims whatever state
-machine is free after both.
+SDIO runs on **pio1**, and nothing else does: its programs take 2 state
+machines and all 32 instruction slots. The DShot driver (2 state machines, 16
+instructions) and the KISS receiver (1 state machine, 9 instructions) claim
+from whichever block has room, and the SDK searches pio2 first, so both land
+on pio2. Two drivers sharing one block would make whichever initialised
+second fail depending on timing.
 
 Library: FatFs, via carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`, pinned at
 v3.6.2. `f_expand()` reserves a contiguous cluster run of

@@ -7,7 +7,8 @@ link here and in [CHANGELOG.md](CHANGELOG.md) is checked by
 checked by `tools/coverage.py`. Nothing else is checked: the architecture
 figures, pin numbers, suite and job lists and verification states are written
 by hand against commit 82baec4, the branches that add the Coverage job and
-`docs.yml`, and the issue tracker as of 2026-10-16. Read them as a dated
+`docs.yml`, the branch that replaces the DShot driver (`feat/dshot-mit`), and
+the issue tracker as of 2026-10-16. Read them as a dated
 record, not as an inventory.
 
 [README.md](README.md) is the technical document, the
@@ -64,9 +65,23 @@ Rates and defaults, from `src/config.h` and `src/main.cpp`:
   ceiling starts at 400 of 2000 (20 %). Idle disarm after 30 s. Entering the
   settings screens disarms.
 
-PIO (programmable input/output) blocks: the DShot driver sits on pio0 and the
-SDIO (Secure Digital input/output) card driver on pio1, per
-`src/sd_hw_config.c`. The KISS receiver claims whichever state machine is free.
+PIO (programmable input/output) blocks: three, each with 4 state machines and
+32 instruction slots.
+
+| Block | 2.0" board | 2.8" board |
+| --- | --- | --- |
+| pio0 | free | free |
+| pio1 | free | SDIO (Secure Digital input/output) card driver: 2 state machines, 32 of 32 instructions (`src/sd_hw_config.c`) |
+| pio2 | DShot transmitter and receiver on adjacent state machines, 16 instructions; KISS receiver when KISS is on, 1 state machine, 9 instructions | the same |
+
+The unified image uses the column of the board it detects. DShot and KISS
+claim from whichever block has room, and the Pico SDK (software development
+kit) searches pio2 first. DShot binds first after every release, so it always
+finds a block with no other user. A `static_assert` in `src/esc_task.cpp`
+checks at build time that DShot and KISS together fit one block: 3 state
+machines and 25 of 32 instructions. A bind that
+cannot get two adjacent state machines is refused, and the status bar then
+shows `DSERR`.
 
 Board detection. One image can carry both boards (`BOARD_UNIFIED`). Each boot
 it asks for I2C (Inter-Integrated Circuit) acknowledges from devices that are
@@ -76,9 +91,11 @@ apart. Exactly one answering bus selects the board. Otherwise the firmware
 holds a safe state: power latch held, no display, no DShot. The board is never
 stored and never chosen by the user.
 
-Build: native Pico SDK (software development kit) 2.1.1 with CMake, ARM cores
-only. Dependencies are pinned by commit: `pico-bidir-dshot` 1.0.2 (GPL-3.0)
-and `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2. A release carries three UF2
+Build: native Pico SDK 2.1.1 with CMake, ARM cores
+only. The one dependency besides the SDK is pinned by commit:
+`no-OS-FatFS-SD-SDIO-SPI-RPi-Pico` v3.6.2. The DShot driver in `src/dshot/` is
+part of the tree, from rcbench `protocols/dshot` at commit 453cf334 (MIT, same
+copyright holder). A release carries three UF2
 (USB Flashing Format) images: `touch-lcd-2`, `touch-lcd-2.8` and `unified`.
 
 ## Boards
@@ -112,9 +129,11 @@ record either way.
 
 | Part | Host tests | Hardware |
 | --- | --- | --- |
-| Bidirectional DShot throttle, eRPM and RPM readout | core1 frame decision, throttle and arming interlocks, RPM smoothing | hardware-tested (owner report); the owner has found no bug since v2.3, and issue #1 is a separate, unreproduced report |
-| EDT telemetry, automatic enable, expiry | merge, expiry, enable rule | hardware-tested (owner report) |
-| KISS telemetry: request, PIO receiver, decode, merge, KISS/EDT tags | CRC, decode, resynchronisation, request payload, merge; the PIO receiver is typechecked only | hardware-tested (owner report); see below |
+| DShot driver in `src/dshot/` (from rcbench 453cf334): frame, reply decode, three-state poll, RP2350 pin driver | frame and checksum, throttle map, line and group code, sampler against clock error, extended telemetry schedule against an AM32 model, three-state poll and the counters it feeds; the pin driver is compiled only | not tested on hardware in DshotDisplay. rcbench ran it at bidirectional DShot600 on one AM32 2.21 ESC (Skystars 35A); other rates and ESC firmwares are untested |
+| Bidirectional DShot throttle, eRPM and RPM readout | core1 frame decision, throttle and arming interlocks, RPM smoothing | hardware-tested (owner report) with `pico-bidir-dshot`, the driver before `src/dshot/`; the owner has found no bug since v2.3, and issue #1 is a separate, unreproduced report |
+| EDT telemetry, automatic enable, expiry | merge, expiry, enable rule, decode of each frame type | hardware-tested (owner report) with `pico-bidir-dshot` |
+| KISS telemetry: request, PIO receiver, decode, merge, KISS/EDT tags | CRC, decode, resynchronisation, request payload, merge; the PIO receiver is typechecked only | hardware-tested (owner report) with `pico-bidir-dshot`; see below |
+| DShot bitrate label in the status bar, `DSERR` | label at each bitrate, colour, `DSERR` | not recorded |
 | Blackbox logging to SD, CFG → SD LOG screen | encoder, ring buffer, round trip through `blackbox_decode`, screen states | hardware use recorded; see below |
 | USB card reader (read-only mass storage) | handover state machine, screen | not recorded |
 | AM32 settings editor over the signal wire (AM32 is an open-source ESC firmware) | init string, CRC-16/ARC, 39-field codec, timing advance encodings, write interlock | hardware use recorded: ab79c67, bd90e17 |
@@ -181,6 +200,17 @@ merged.
    from ESC power-on or from arming, whether a slow frame type is worth adding.
 7. **`tools/sdtest` is built by nothing in CI**, so a change that breaks it
    shows only in a local build.
+8. **Licence of a distributed image.** The repository's code is MIT, the
+   DShot driver included. The README of `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`
+   states that its 4-bit SDIO driver is derived from ZuluSCSI-firmware, which
+   is GPL-3.0 (GNU General Public License version 3). That code is linked into
+   all three images, the 2.0" one included. Its effect on a distributed image
+   is not settled.
+9. **Extended frames before the first enable.** The DShot decoder reads EDT
+   frames as such only once an enable has gone out. An ESC that kept EDT on
+   across a board restart or a SETUP pin change sends EDT frames that read as
+   eRPM until the next enable, which goes out 300 ms after eRPM arrives with
+   the motor stopped. Not observed on hardware.
 
 ## Known limitations
 
@@ -212,15 +242,13 @@ merged.
 - **Board probe failure.** When neither or both buses answer, the screen stays
   dark and nothing is driven. Recovery is a reflash over USB.
 - **Landscape.** `LCD_ROTATION` 1 fails the build.
-- **Licence.** `pico-bidir-dshot` is GPL-3.0 (GNU General Public License
-  version 3), so a distributed firmware image falls under GPL-3.0 for the
-  combined work. The repository's own code is MIT.
 
 ## Tests and CI
 
 **Host suite.** `make -C test run` compiles the firmware sources with a C++17
-compiler against the stubs in `test/stubs/` and runs one binary,
-`dshot_tests`. `test/test_main.cpp` runs eight suites:
+compiler against the stubs in `test/stubs/`, and the DShot core in
+`src/dshot/` as C11, and runs one binary, `dshot_tests`. `test/test_main.cpp`
+runs eleven suites:
 
 | Suite | File | Covers |
 | --- | --- | --- |
@@ -232,6 +260,9 @@ compiler against the stubs in `test/stubs/` and runs one binary,
 | `runLogRingTests` | `test_log_ring.cpp` | ring buffer, all-or-nothing writes, wraparound, high-water mark |
 | `runSettingsTests` | `test_settings.cpp` | settings block, validation, board selection, pin defaults |
 | `runUsbMscTests` | `test_usb_msc.cpp` | card handover state machine, RPM smoothing |
+| `runDshotFrameTests` | `test_dshot_frame.cpp` | DShot frame layout, checksum, inverted checksum, EDT enable word, throttle map (from rcbench) |
+| `runDshotTelemTests` | `test_dshot_telem.cpp` | line and group code, eRPM and EDT decode, checksum against single-bit errors, sampler (from rcbench); three-state poll, counters |
+| `runDshotEdtTests` | `test_dshot_edt.cpp` | extended telemetry schedule against an AM32 model (from rcbench) |
 
 Other targets in `test/Makefile`: `both` runs the suite for the 2.0", 2.8" and
 unified configurations; `syntax` typechecks the device-only sources on all
@@ -275,8 +306,11 @@ programs beyond compilation.
 | `src/am32_eeprom.h` | 11 | 11 | 100.0% |
 | `src/blackbox_encode.cpp` | 113 | 113 | 100.0% |
 | `src/board_desc.cpp` | 13 | 12 | 92.3% |
+| `src/dshot/dshot_edt.c` | 33 | 33 | 100.0% |
+| `src/dshot/dshot_frame.c` | 25 | 25 | 100.0% |
+| `src/dshot/dshot_telem.c` | 143 | 143 | 100.0% |
 | `src/esc_merge.cpp` | 44 | 44 | 100.0% |
-| `src/esc_task.h` | 15 | 15 | 100.0% |
+| `src/esc_task.h` | 56 | 56 | 100.0% |
 | `src/gfx.cpp` | 201 | 186 | 92.5% |
 | `src/kiss_telem.cpp` | 37 | 35 | 94.6% |
 | `src/log_ring.cpp` | 43 | 39 | 90.7% |
@@ -285,13 +319,13 @@ programs beyond compilation.
 | `src/sd_log.h` | 4 | 4 | 100.0% |
 | `src/settings.cpp` | 128 | 126 | 98.4% |
 | `src/theme.cpp` | 11 | 11 | 100.0% |
-| `src/ui.cpp` | 601 | 595 | 99.0% |
+| `src/ui.cpp` | 608 | 602 | 99.0% |
 | `src/ui_am32.cpp` | 347 | 316 | 91.1% |
 | `src/ui_input.cpp` | 25 | 25 | 100.0% |
 | `src/ui_setup.cpp` | 188 | 181 | 96.3% |
 | `src/ui_widgets.cpp` | 43 | 43 | 100.0% |
 | `src/usb_msc.h` | 37 | 35 | 94.6% |
-| **Total** | **1952** | **1880** | **96.3%** |
+| **Total** | **2201** | **2129** | **96.7%** |
 
 Generated by `tools/coverage.py`. CI runs it with `--check` and fails on drift.
 <!-- coverage-table:end -->

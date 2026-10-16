@@ -21,7 +21,7 @@
  *
  * @warning This drives the same pin as the DShot output. escTaskSuspend() must
  *          be in effect before any call here, or the two will fight over the
- *          pin and the PIO state machine.
+ *          pin and the PIO state machines.
  */
 
 #pragma once
