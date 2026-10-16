@@ -889,6 +889,9 @@ hand. `check_docs.py` enforces documentation precisely — public API documented
 names matching signatures, no dangling `@ref` — where Doxygen's `WARN_IF_UNDOCUMENTED`
 would also demand a comment on every file-static `s_scroll`.
 
+`docs.yml` publishes `wiki/` to the GitHub wiki after a successful tag release, so the wiki
+describes firmware that can be downloaded. It renders the screenshots, runs `tools/check_wiki.py`, and can be run by hand for any `v*` tag.
+
 ### Releases
 
 ```sh
