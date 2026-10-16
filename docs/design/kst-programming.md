@@ -51,7 +51,7 @@ run, supply control. DshotDisplay does not switch the servo's supply.
 | Clock tolerance | the open is refused beyond 0.2 % | 149.7 MHz to 150.3 MHz; nothing in DshotDisplay changes `clk_sys` |
 | Servo half-cell | 25.575 µs, accepted 24.3 µs to 26.9 µs | decoder in `kst_wire.c` |
 | Edge stamp | 4 cycles, 26.7 ns at 150 MHz | |
-| PIO | 1 SM, 24 of 32 words | pio0 once DShot and KISS are released; [budget](pin-claim.md#pio-and-dma-budget) |
+| PIO | 1 SM, 24 of 32 words | pio2 once DShot and KISS are released; [budget](pin-claim.md#pio-and-dma-budget) |
 | DMA | 2 channels | 5 of 16 in use during a KST claim on either board |
 | Reply level | at most 5 V, typically 3.3 V, not measured (rcbench README) | SIG is held to 3.6 V; see below |
 

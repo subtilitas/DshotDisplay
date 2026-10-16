@@ -351,20 +351,20 @@ v3.6.2.
 | KST line (`kst_line`) | 24 | 1 | 2 | both, during a KST claim |
 | Servo PWM | 0 | 0 | 0 | both, PWM slices only |
 
-Placement, with DShot built before KISS as `escTaskPoll()` does:
+Placement, with DShot built before KISS as `escTaskPoll()` does. The SDK's
+free-block search starts at pio2, and `src/esc_task.cpp` asserts at build
+time that DShot and KISS fit one block (3 state machines, 25 of 32 words):
 
 | Block | 2.0", ESC running | 2.0", KST claim | 2.8", ESC running | 2.8", KST claim |
 |---|---|---|---|---|
-| pio0 | DShot 16 + KISS 9 = 25 words, SM0 to SM2 | KST 24 words, SM0 | DShot + KISS, 25 words | KST 24 words |
+| pio0 | free | free | free | free |
 | pio1 | free | free | SDIO, 32 of 32 words, 2 SMs | SDIO, full |
-| pio2 | free | free | free | free |
+| pio2 | DShot 16 + KISS 9 = 25 words, SM0 to SM2 | KST 24 words, SM0 | DShot + KISS, 25 words | KST 24 words |
 | DMA | 3 of 16 | 5 of 16 | 3 of 16 | 5 of 16 |
 
 Nothing needs the claim for resources. If the KST line opened beside a
-running DShot and KISS, it would not fit in pio0 (7 words left), would not fit
-in pio1 on the 2.8" (full), and would land in pio2 on either board. The claim
-exists for the pin, not for the PIO block. The current `pico-bidir-dshot`
-program size is not counted; the table is for the rcbench driver.
+running DShot and KISS, it would not fit in pio2 (7 words left) and would land
+in pio0 on either board. The claim exists for the pin, not for the PIO block.
 
 ### System clock
 
