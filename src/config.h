@@ -17,8 +17,8 @@
  *
  * The practical consequence: editing one of those values and reflashing will
  * appear to do nothing on a board that has saved settings, because the stored
- * value wins. The SETUP screen marks each row `SAVED` or `DEFAULT` so it is
- * visible which one you are looking at.
+ * value wins. The SETUP screen shows one note line, `SAVED SETTINGS IN USE` or
+ * `COMPILED DEFAULTS IN USE`, naming which of the two is in effect.
  */
 
 #pragma once
@@ -364,8 +364,9 @@
  * @defgroup cfg_log SD card logging
  * @brief Betaflight blackbox logs on the microSD slot.
  *
- * The card is on SPI1 with its own pins, so it does not contend with the
- * display on SPI0 for a peripheral — only for core0's time.
+ * On the 2.0" board the card is on SPI1 with its own pins and the display on
+ * SPI0. On the 2.8" board the card is on 4-bit SDIO driven by pio1. Neither
+ * shares a peripheral with the display; both share core0's time.
  * See docs/design/blackbox-logging.md.
  * @{
  */
@@ -435,8 +436,8 @@
  * @brief Contiguous space reserved per log file, in bytes.
  *
  * Pre-allocating means the FAT is not updated mid-log, which is where a long
- * unpredictable stall would otherwise come from. 16 MB is about ten minutes at
- * the default rate. Unused space is released when the file is closed.
+ * unpredictable stall would otherwise come from. 16 MiB lasts about 38 min at
+ * the default 7.3 kB/s. Unused space is released when the file is closed.
  */
 #define SD_LOG_PREALLOC_BYTES  (16u * 1024u * 1024u)
 

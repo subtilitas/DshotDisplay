@@ -856,7 +856,7 @@ Needs nothing but a C++17 compiler. Time is virtual — `millis()` advances only
 says so — which makes hold-to-arm, hold-to-write and gesture repeat deterministic rather
 than dependent on machine speed. The fake ESC serves a real settings blob recovered from
 the reference configurator, so the UI tests operate on values a real ESC would report.
-The suite renders every screen to PPM as it runs — splash, the main screen live, armed
+The suite renders every screen to PPM (portable pixmap) images as it runs — splash, the main screen live, armed
 and with the ESC gone, the settings screen in each of its states, all three SD log states
 and the four AM32 screens — so a layout change is visible in the frames.
 Failing tests dump their frame too.
@@ -889,9 +889,10 @@ Makefile does not list `ui_am32.cpp` in `SRCS`.
 |---|---|
 | **Firmware** | Real Pico SDK build for both boards and the unified image, pinned by `CMakeLists.txt`, plus UF2 validation |
 | **Host tests** | Protocol, codec and UI regressions a compile cannot see |
+| **Coverage** | Line coverage below 93% in total or 85% in any file, or a README or STATUS.md coverage figure that no longer matches `tools/coverage.py` |
 | **Blackbox round-trip** | Encodes a log and decodes it with Betaflight's own `blackbox_decode`, comparing every value |
 | **Config permutations** | All 64 combinations of board, `AM32_PUSH_PULL_TX`, `AM32_FORCE_LOW_JUMP`, `LCD_ROTATION`, `KISS_TELEM_ENABLE` and `SD_LOG_ENABLE`, warnings fatal |
-| **Doxygen** | Undocumented additions |
+| **Docs** | Undocumented additions, through Doxygen and `test/check_docs.py` |
 | **Workflow lint** | `actionlint`, plus a duplicate-key check that PyYAML would otherwise let through and GitHub would not |
 
 The firmware job also asserts the image belongs to the board it claims: which
