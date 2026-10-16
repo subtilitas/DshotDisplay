@@ -409,6 +409,7 @@ static struct {
 	uint32_t rpm, erpm;
 	int  linkAlive, rpmArmed;
 	int  volts100, amps100, tempC, stress, status, rate, errPct, edt;
+	int  kbaud, pumpErr;
 	int  voltsSrc, ampsSrc, mah;
 	int  throttleRaw, maxPct, thrArmed, thrHold;
 	int  config, poles;
@@ -535,11 +536,19 @@ static void drawStatusBar() {
 	}
 #endif
 
+	// The bitrate the pump is running at, not the compiled default: SETUP
+	// changes it, and the label is the one place that rate shows outside SETUP.
+	int kbaud = (int)escTaskDshotKbaud();
+	int pumpErr = s_tel.initError ? 1 : 0;
+
 	if (s_shown.armed == (int)s_armed && s_shown.armProgress == progress &&
 	    s_shown.battMv == battMv && s_shown.edt == (int)escEdtRequested() &&
-	    s_shown.logState == (int)log.state && s_shown.idleLeft == idleLeft)
+	    s_shown.logState == (int)log.state && s_shown.idleLeft == idleLeft &&
+	    s_shown.kbaud == kbaud && s_shown.pumpErr == pumpErr)
 		return;
 
+	s_shown.kbaud = kbaud;
+	s_shown.pumpErr = pumpErr;
 	s_shown.idleLeft = idleLeft;
 	s_shown.armed = s_armed;
 	s_shown.armProgress = progress;
@@ -558,9 +567,15 @@ static void drawStatusBar() {
 		gfxRect(4, 21, 92 * progress / 100, 2, C_LIME);
 	}
 
+	// DSERR when the driver refused the pin: no PIO block could take it, so
+	// nothing is on the wire at any rate. @see EscTelemetry::initError
 	char buf[24];
-	snprintf(buf, sizeof(buf), "DS%d", DSHOT_SPEED_KBAUD);
-	gfxText(104, 3, buf, escEdtRequested() ? C_CYAN : C_DIM, 1);
+	if (pumpErr) {
+		gfxText(104, 3, "DSERR", C_AMBER, 1);
+	} else {
+		snprintf(buf, sizeof(buf), "DS%d", kbaud);
+		gfxText(104, 3, buf, escEdtRequested() ? C_CYAN : C_DIM, 1);
+	}
 
 	// Recording state, under the DShot rate. Only worth a glance -- the detail
 	// lives on the LOG screen -- but "am I actually recording?" is the one

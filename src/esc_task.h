@@ -79,7 +79,8 @@ struct EscTelemetry {
 	/**
 	 * The DShot driver refused the pin: no PIO block had two adjacent free
 	 * state machines and 16 free instructions, or the pad did not take the
-	 * output inversion. Nothing is sent while it is set.
+	 * output inversion. Nothing is sent while it is set, and the status bar
+	 * shows `DSERR` in place of the bitrate.
 	 */
 	bool     initError;
 
@@ -448,5 +449,12 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 
 /** @brief GPIO the pump is currently driving. @return The live ESC pin. */
 uint8_t escTaskDshotPin();
+
+/**
+ * @brief DShot bitrate the pump is currently using.
+ * @return 150, 300, 600 or 1200, in kbit/s: the value escTaskConfigure() last
+ *         set, which the pump binds at on its next escTaskPoll().
+ */
+uint16_t escTaskDshotKbaud();
 
 /** @} */

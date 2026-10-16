@@ -309,6 +309,8 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 
 uint8_t escTaskDshotPin() { return s_dshotPin; }
 
+uint16_t escTaskDshotKbaud() { return s_dshotKbaud; }
+
 void escTaskBegin() {
 	// Nothing is claimed here. The driver and the UART are built by the first
 	// escTaskPoll(), which is also the path a suspend or a reconfigure returns
@@ -367,9 +369,9 @@ void escTaskPoll() {
 		uint8_t  pin   = s_dshotPin;
 		uint16_t kbaud = s_dshotKbaud;
 		// Bidirectional, and refused rather than degraded: a bind that cannot
-		// get two adjacent state machines in one block fails here and sets
-		// `initError`. The pump still runs its slots, so the link counters
-		// show an ESC that never answers.
+		// get two adjacent state machines in one block fails here, and
+		// `initError` puts DSERR in the status bar. The pump still runs its
+		// slots, so the link counters show an ESC that never answers.
 		bool bound = out_dshot_bind(pin, kbaud, true);
 		s_pumpPin = pin;
 		s_pumpUp  = true;

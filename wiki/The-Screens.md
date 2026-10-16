@@ -24,9 +24,10 @@ tester. The tester is the root and has no header.
 **Top row.** From left to right:
 
 - the arm badge: `SAFE` (green) or `ARMED` (red);
-- `DS` and the DShot bitrate in kbit/s, cyan once an EDT (Extended DShot
-  Telemetry) enable has been sent. **Current limitation:** this label shows
-  the compiled default, `DS600`, not the bitrate set under SETUP;
+- `DS` and the DShot bitrate in kbit/s, as set under SETUP, cyan once an EDT
+  (Extended DShot Telemetry) enable has been sent. `DSERR` in amber replaces
+  it when the display could not set up its DShot output; nothing is sent to
+  the ESC then;
 - the recording state: `REC`, `SD`, `SDERR` or `NOSD`
   (see [SD Logging](SD-Logging));
 - the board's own battery voltage, read through its 200k/100k divider. With

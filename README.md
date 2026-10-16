@@ -449,9 +449,10 @@ that drops from KISS to EDT means the telemetry wire has stopped, and the
 reading is 25 times coarser. Consumption in mAh appears on the temperature
 tile with KISS only. EDT does not carry it.
 
-The tester's top row shows `DS` plus the bitrate, cyan once an EDT enable has
-been sent. **Current limitation:** this label shows the compiled default
-(`DSHOT_SPEED_KBAUD`, `DS600`), not the rate set under SETUP.
+The tester's top row shows `DS` plus the bitrate the DShot driver runs at,
+as set under SETUP, cyan once an EDT enable has been sent. `DSERR` in amber
+replaces it when the driver could not claim its two PIO state machines;
+nothing is sent to the ESC then.
 
 ---
 
@@ -867,7 +868,7 @@ target so a test run does not leave the working tree dirty.
 `python3 tools/coverage.py` writes the figure below from its gcov counters.
 
 <!-- coverage:start -->
-Host-suite line coverage of `src/` is **96.7%**: 2,122 of 2,194 lines in 23 files. CI fails below 93% in total or below 85% in any file.
+Host-suite line coverage of `src/` is **96.7%**: 2,129 of 2,201 lines in 23 files. CI fails below 93% in total or below 85% in any file.
 <!-- coverage:end -->
 
 `sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the
