@@ -873,6 +873,7 @@ static void testSetupKiss() {
 /** @brief Contrast and backlight take effect immediately and persist. */
 static void testSetupDisplay() {
 	section("SETUP: high contrast");
+	const uint16_t darkLime = C_LIME;   // the theme is dark here
 
 	fakeFlashClear();
 	settingsLoad();
@@ -908,6 +909,20 @@ static void testSetupDisplay() {
 	feedLiveTelemetry();
 	frames(3);
 	fakeDumpFrame("shot_tester_contrast.ppm");
+	{
+		// Every colour on the tester follows the theme: no pixel keeps a
+		// dark-theme colour that the high-contrast palette does not also
+		// hold. A function-level static colour table, filled on the first
+		// draw, would keep the ESC STATUS tile in dark lime here.
+		const uint16_t *hc = g_theme;
+		bool inHc = false;
+		for (int i = 0; i < TC_COUNT; i++) inHc = inHc || hc[i] == darkLime;
+		int stale = 0;
+		const uint16_t *fb = gfxBuffer();
+		for (int i = 0; i < GFX_W * GFX_H; i++) stale += fb[i] == darkLime;
+		checkTrue("dark lime is not a high-contrast colour", !inHc);
+		checkInt("no pixel keeps the dark theme's lime", stale, 0);
+	}
 	tap(BTN_CFG_X, BTN_ARM_Y);
 	tap(BTN_SETUP_X, BTN_AM32_Y);
 	frames(2);

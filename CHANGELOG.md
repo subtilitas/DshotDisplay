@@ -64,6 +64,11 @@ its own wire. AM32 is an open-source ESC firmware.
 
 ### Fixed
 
+- The ESC STATUS tile on the tester follows the theme. Its colour table was a
+  function-level static filled on the first draw, so after a switch to high
+  contrast under SETUP the tile kept the dark theme's colours. A host test
+  counts dark-theme lime pixels on the high-contrast tester: 152 before, 0
+  after. `docs/contrast-preview.png` shows the corrected tile.
 - `tools/sdtest` links on both boards. It carries the six mass-storage
   callbacks that the firmware's TinyUSB configuration requires, and its 2.0"
   build declares `spi_get_by_num()`. On both boards the link failed with
