@@ -11,8 +11,8 @@
  * class) driver. That driver needs these callbacks at link time. sdtest's
  * USB descriptors come from pico_stdio_usb and offer no MSC interface, so a
  * host never reaches them. In case one does, test_unit_ready answers not
- * ready, and read10, write10 and every other SCSI command answer with an
- * error.
+ * ready, the capacity is 0 blocks, and read10, write10 and every SCSI
+ * command outside TinyUSB's built-in set answer with an error.
  */
 
 #include <string.h>
