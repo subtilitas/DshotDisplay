@@ -873,7 +873,6 @@ static void testSetupKiss() {
 /** @brief Contrast and backlight take effect immediately and persist. */
 static void testSetupDisplay() {
 	section("SETUP: high contrast");
-	const uint16_t darkLime = C_LIME;   // the theme is dark here
 
 	fakeFlashClear();
 	settingsLoad();
@@ -883,6 +882,7 @@ static void testSetupDisplay() {
 
 	checkTrue("starts in the dark theme", themeGet() == Theme::Dark);
 	uint16_t darkBg = C_BG;
+	const uint16_t darkLime = C_LIME;
 
 	tap(SET_TOGGLE_X, SET_R_CONTRAST);
 	checkTrue("toggle switches the theme", themeGet() == Theme::HighContrast);
