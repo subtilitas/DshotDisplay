@@ -238,7 +238,7 @@ jobs:
           path: |
             build/DshotDisplay-${{ matrix.board.slug }}.uf2
             build/DshotDisplay-${{ matrix.board.slug }}.elf
-            build/DshotDisplay-${{ matrix.board.slug }}.map
+            build/DshotDisplay-${{ matrix.board.slug }}.elf.map
           if-no-files-found: error
 
   # Runs the firmware's own logic on the host, against stubs. Catches the

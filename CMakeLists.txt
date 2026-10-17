@@ -280,6 +280,7 @@ if(NOT BOARD STREQUAL "BOARD_UNIFIED")
 add_executable(sdtest
     tools/sdtest/main.c
     tools/sdtest/touch_stubs.cpp
+    tools/sdtest/msc_stubs.c
     src/sd_hw_config.c
     src/board_desc.cpp
     src/board_desc_lcd2.cpp

@@ -64,6 +64,17 @@ its own wire. AM32 is an open-source ESC firmware.
 
 ### Fixed
 
+- `tools/sdtest` links on both boards. It carries the six mass-storage
+  callbacks that the firmware's TinyUSB configuration requires, and its 2.0"
+  build declares `spi_get_by_num()`. On both boards the link failed with
+  undefined references to `tud_msc_*_cb`; the 2.0" build also warned of an
+  implicit declaration of `spi_get_by_num()`.
+- The CI firmware artifact holds the linker map. The upload listed
+  `DshotDisplay-<board>.map`; the build writes `DshotDisplay-<board>.elf.map`.
+- The tester's top row shows the DShot bitrate the pump runs at, as set
+  under SETUP; it read `DS600`, the compiled default, at every rate. `DSERR`
+  in amber replaces it when the DShot driver fails to set up its PIO state
+  machine.
 - `test/check_docs.py` run from any directory other than the repository root
   checked no files and reported success. It now resolves its paths from its
   own location and fails when it finds no files.

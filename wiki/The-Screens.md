@@ -24,9 +24,10 @@ tester. The tester is the root and has no header.
 **Top row.** From left to right:
 
 - the arm badge: `SAFE` (green) or `ARMED` (red);
-- `DS` and the DShot bitrate in kbit/s, cyan once an EDT (Extended DShot
-  Telemetry) enable has been sent. **Current limitation:** this label shows
-  the compiled default, `DS600`, not the bitrate set under SETUP;
+- `DS` and the DShot bitrate in kbit/s, as set under SETUP, cyan once an EDT
+  (Extended DShot Telemetry) enable has been sent. `DSERR` in amber replaces
+  it when the display could not set up its DShot output; nothing is sent to
+  the ESC (electronic speed controller) then;
 - the recording state: `REC`, `SD`, `SDERR` or `NOSD`
   (see [SD Logging](SD-Logging));
 - the board's own battery voltage, read through its 200k/100k divider. With
@@ -35,7 +36,7 @@ tester. The tester is the root and has no header.
   in amber replaces the voltage.
 
 **RPM.** Mechanical RPM (revolutions per minute), computed from the eRPM
-(electrical RPM) the ESC (electronic speed controller) reports and the pole
+(electrical RPM) the ESC reports and the pole
 count. The `ERPM` value and the pole count are shown below it. Green digits:
 eRPM arrived within the last 500 ms. Dark red zero: it did not, and the line
 reads `NO TELEMETRY`.
