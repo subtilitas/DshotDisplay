@@ -8,6 +8,7 @@
 #   make bbcheck  round-trip a log through the upstream blackbox_decode
 #   make previews rebuild the screenshots in docs/ from this run's frames
 #   make wiki     rebuild the wiki's screenshots and check its links
+#   make coverage line coverage of src/ from an instrumented build in cov/
 #   make clean
 #
 # Needs nothing but a C++17 compiler: the firmware is compiled against the
@@ -63,7 +64,7 @@ DEVICE_SRCS := ../src/esc_task.cpp ../src/st7789.cpp ../src/cst816.cpp \
 
 BIN := dshot_tests
 
-.PHONY: all build run both syntax bbcheck previews wiki clean
+.PHONY: all build run both syntax bbcheck previews wiki coverage clean
 
 all: syntax run bbcheck
 
@@ -145,5 +146,21 @@ wiki: run
 	python3 ../tools/make_previews.py --wiki
 	python3 ../tools/check_wiki.py
 
+# Line coverage of the src/ files the suite compiles. The instrumented copy
+# builds in cov/ at -O0, so each counter maps to one source line, and leaves
+# $(BIN) and `make run` unchanged. The run starts from an empty cov/: counters
+# from an earlier run or a removed source would otherwise add to this one.
+# `python3 ../tools/coverage.py` writes the figure into README.md; --check is
+# what CI runs. The published figure is the default BOARD's.
+COV_DIR := cov
+
+coverage:
+	rm -rf $(COV_DIR) && mkdir -p $(COV_DIR)
+	$(CXX) -std=gnu++17 -O0 -g --coverage $(WARN) $(INCLUDES) $(DEFINES) \
+		-o $(COV_DIR)/$(BIN) $(SRCS)
+	./$(COV_DIR)/$(BIN)
+	python3 ../tools/coverage.py --print
+
 clean:
 	rm -f $(BIN) gen_blackbox_log *.ppm *.BFL
+	rm -rf $(COV_DIR)

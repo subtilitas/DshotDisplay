@@ -2,25 +2,25 @@
 
 # Fehlersuche
 
-Erst das Symptom.
+Erst das Symptom, dann die Ursache. ESC steht für Electronic Speed Controller
+(Motorregler).
 
 ---
 
 ## Der Bildschirm bleibt dunkel
 
-Die Platine hat die falsche Pin-Belegung erwischt, oder die Start-Erkennung hat
-sich geweigert zu raten.
+Zwei Ursachen: Das Abbild treibt die falschen Pins, oder die Start-Erkennung
+konnte die Platine nicht bestimmen.
 
-Hast du ein **einzelplatinen**-Abbild auf die jeweils andere Platine geflasht,
-ist das die Ursache: geflasht sind die beiden nicht mehr zu unterscheiden, und
-ihre Display-Pins unterscheiden sich. Flashe stattdessen das **unified**-Abbild
-aus den [Releases](https://github.com/subtilitas/DshotDisplay/releases) — es
-erkennt die Platine bei jedem Start.
+Ein **Einzelplatinen**-Abbild auf der jeweils anderen Platine treibt die
+falschen Display-Pins. Flashe stattdessen das **unified**-Abbild aus den
+[Releases](https://github.com/subtilitas/DshotDisplay/releases). Es erkennt
+die Platine bei jedem Start.
 
-Hast du das unified-Abbild bereits, heißt ein dunkler Bildschirm, dass die
-Erkennung dreimal hintereinander nicht feststellen konnte, auf welcher Platine
-sie läuft, und bewusst angehalten hat, statt Pins für womöglich gar nicht
-vorhandene Hardware zu treiben. Über USB ist die Platine weiterhin erreichbar.
+Mit dem unified-Abbild heißt ein dunkler Bildschirm, dass die Erkennung
+3-mal gescheitert ist: Keine Platine hat geantwortet, oder beide. Die Firmware
+hält dann die Selbsthaltung der Stromversorgung (Power-Latch), lässt das Display aus und sendet kein DShot. Über
+USB (Universal Serial Bus) bleibt die Platine zum Neu-Flashen erreichbar.
 
 ---
 
@@ -28,85 +28,91 @@ vorhandene Hardware zu treiben. Über USB ist die Platine weiterhin erreichbar.
 
 <img src="img/tester-disarmed.png" width="240" alt="Keine Telemetrie">
 
-Auf dem Signalkabel antwortet nichts. Grob nach Wahrscheinlichkeit:
+Auf dem Signalkabel antwortet nichts. Prüfe in dieser Reihenfolge:
 
 1. **Falscher Pin.** Vergleiche **CFG → SETUP → ESC PIN** damit, wo das Kabel
-   tatsächlich steckt. Die `LINK`-Zeile auf demselben Bildschirm ist live, du
-   kannst sie also beim Umstellen beobachten — jede Paketrate über null heißt,
-   du hast ihn gefunden.
-2. **Keine Masse.** Die Masse des ESC und die der Platine müssen verbunden sein.
-   Das ist der Fall, der wie ein toter ESC aussieht.
+   steckt. Die `LINK`-Zeile auf diesem Bildschirm ist live. Eine Paketrate
+   über null heißt, der Pin stimmt.
+2. **Keine gemeinsame Masse.** Die Masse des ESC und die der Platine müssen
+   verbunden sein.
 3. **Der ESC hat keinen Strom.** Er läuft an seinem eigenen Akku, nicht an der
    Platine.
-4. **Der ESC kann kein bidirektionales DShot**, oder es ist in seinen eigenen
-   Einstellungen abgeschaltet. Einfaches DShot sendet nichts zurück.
-5. **Das Kabel ist zu lang oder zu störanfällig.** Stelle **DSHOT KBAUD** auf
-   300 und sieh nach, ob `LINK` erwacht.
+4. **Der ESC beherrscht kein bidirektionales DShot**, oder es ist in seinen
+   Einstellungen abgeschaltet. Unidirektionales DShot sendet nichts zurück.
+5. **Das Kabel ist zu lang oder fängt Störungen ein.** Stelle **DSHOT KBAUD**
+   auf 300 und beobachte `LINK`.
 
 ---
 
 ## Drehzahl läuft, jede Kachel zeigt `--`
 
-Das ist ein ESC, der eRPM liefert und keine Extended DShot Telemetry sendet.
-Entweder beherrscht er kein EDT, oder EDT ist noch nicht eingeschaltet.
+Der ESC sendet eRPM (elektrische Drehzahl) und kein EDT (Extended DShot
+Telemetry). Entweder beherrscht er kein EDT, oder EDT ist noch nicht
+freigegeben.
 
 Sieh auf das Feld unter dem Titel des Einstellungsbildschirms. Steht dort
-`EDT OFF`, lies den nächsten Abschnitt. Führt das Datenblatt oder die Firmware
-des ESC keine EDT-Unterstützung, ist die Drehzahl alles, was zwei Kabel
-hergeben — ein
-[KISS-Telemetriekabel](Telemetrie#das-optionale-dritte-kabel) ist dann der Weg
-zum Rest.
+`EDT OFF`, lies den nächsten Abschnitt. Beherrscht die ESC-Firmware kein EDT,
+liefern zwei Kabel nur die Drehzahl. Ein
+[KISS-Telemetriekabel](Telemetrie#das-optionale-dritte-kabel) liefert
+Spannung, Strom, Temperatur und mAh.
 
 ---
 
 ## EDT bleibt aus
 
-Die Firmware fragt von sich aus und wiederholt das, ein Feld, das länger als ein
-paar Sekunden rot bleibt, heißt also, dass die Versuche nicht angenommen werden.
+Die Firmware sendet die Freigabe jede Sekunde, solange eRPM eintrifft und EDT
+nicht. Bleibt das Feld über mehrere Versuche rot, nimmt der ESC sie nicht an.
 
-- **Steht der Motor still?** DShot-Befehle werden nur bei stehendem Motor
-  ausgeführt, und nach dem Entschärfen läuft ein Propeller mehrere Sekunden aus.
-  Warte, bis er wirklich steht.
-- **Ist der Tester entschärft?** Im scharfen Zustand gehen keine Befehle hinaus.
-- **Kann der ESC überhaupt EDT?** BLHeli_S ohne EDT-fähigen Build und einige
-  ältere AM32-Versionen ignorieren die Freigabe dauerhaft und sehen genau so aus.
-- **Starte den ESC neu.** Der Abbruch der Verbindung setzt den Zustand der
-  Firmware zurück, der Ersatz — auch wenn es derselbe ESC ist — wird also von
-  vorn gefragt.
+- **Steht der Motor?** Die Freigabe geht nur bei eRPM null hinaus. Nach dem
+  Entschärfen läuft ein Motor sekundenlang aus.
+- **Ist der Tester entschärft?** Im scharfen Zustand geht keine Freigabe
+  hinaus.
+- **Beherrscht die ESC-Firmware EDT?** ESC-Firmware ohne EDT ignoriert die
+  Freigabe und sieht so aus.
+- **Starte den ESC neu.** Nach 500 ms ohne eRPM setzt die Firmware ihren
+  EDT-Zustand zurück und beginnt neu.
 
-Hat es früher funktioniert und tut es jetzt nicht mehr, ist das eine Meldung
-wert: vor der aktuellen Firmware gab es drei Wege, auf denen eine Freigabe
-verworfen werden konnte, und Entschärfen und erneutes Scharfschalten war der
-bekannte Behelf. Mit der aktuellen Firmware sollte er nicht nötig sein.
+Bleibt EDT bei einem ESC aus, dessen Firmware EDT beherrscht, öffne ein Issue
+(siehe [Immer noch nicht weiter](#immer-noch-nicht-weiter)).
+
+---
+
+## Bekannte Einschränkung: BLHeli_32 32.6 auf RAZOR32 und EXUAV 70A
+
+Von einem Nutzer gemeldet in
+[Issue #1](https://github.com/subtilitas/DshotDisplay/issues/1), offen, vom
+Projekt nicht nachgestellt. Mit den ESCs RAZOR32 und EXUAV 70A unter
+BLHeli_32 32.6 schließt der ESC seine Initialisierung nicht ab, und der Piepton
+bei Gas null fehlt. Die Ursache ist unbekannt. Ein Behelf ist nicht bekannt.
 
 ---
 
 ## Der Motor bleibt von selbst stehen
 
-Drei Dinge halten einen Motor absichtlich an, und jedes meldet sich:
+Drei Sperren halten den Motor an, und jede zeigt sich auf dem Bildschirm:
 
-- **Die Leerlaufsperre.** Dreißig Sekunden ohne Bildschirmberührung im scharfen
-  Zustand, dann entschärft sie und zählt die letzten fünf Sekunden oben rechts
-  herunter. Das Display dunkelt dabei ab.
-- **`CFG` öffnen.** Der Einstellungsbildschirm entschärft jedes Mal zwangsweise.
-- **Die Herzschlag-Sicherung.** Reagiert die Anzeige-Firmware nicht mehr, stellt
-  der zweite Kern binnen einer Viertelsekunde auf null. Das würde dir als
-  eingefrorener Bildschirm auffallen, nicht nur als stehender Motor.
+- **Leerlaufsperre.** 30 s ohne Berührung im scharfen Zustand entschärfen den
+  Tester. `IDLE ns` zählt in den letzten 5 s oben rechts herunter. Beim
+  Entschärfen dunkelt die Hintergrundbeleuchtung kurz ab.
+- **`CFG` öffnen.** Der Einstellungsbildschirm entschärft immer.
+- **Herzschlag-Sicherung.** Hält die Anzeige-Firmware an, setzt der zweite
+  Kern das Gas nach 250 ms auf null. Der Bildschirm wäre dann ebenfalls
+  eingefroren.
 
-Bleibt er ohne eines davon stehen, verdächtige die Schutzfunktionen des ESC —
-Unterspannungsabschaltung, Temperatur, Desync — und sieh dir `ESC STATUS` und
+Bleibt der Motor ohne eines davon stehen, prüfe die Schutzfunktionen des ESC
+(Unterspannungsabschaltung, Temperatur, Desync) und sieh dir `ESC STATUS` und
 `ESC TEMP` an.
 
 ---
 
 ## `LINK` zeigt eine hohe Fehlerrate
 
-Bernsteinfarben oberhalb von 5 %. Es liegt fast immer am Signalkabel: Länge,
-Verlegung oder eine fehlende Masse. Kürzen, von den Motorphasen fernhalten, dann
-**DSHOT KBAUD** herunterstellen.
+Die Fehlerrate ist oberhalb von 5 % bernsteinfarben. Die übliche Ursache ist
+das Signalkabel: Länge, Verlegung oder eine fehlende Masse. Kürzen, von den
+Motorphasen fernhalten, dann **DSHOT KBAUD** herunterstellen.
 
-Eine hohe Fehlerrate bei funktionierender Drehzahlanzeige ist nicht harmlos —
-die fehlgeschlagenen Frames sind Frames, auf die der ESC nicht reagiert hat.
+Fehlgeschlagene Pakete sind Frames, auf die der ESC nicht reagiert hat, auch
+wenn die Drehzahlanzeige funktioniert.
 
 ---
 
@@ -114,78 +120,68 @@ die fehlgeschlagenen Frames sind Frames, auf die der ESC nicht reagiert hat.
 
 <img src="img/log-nocard.png" width="240" alt="Keine Karte">
 
-Sieh auf die `MOUNT`-Zeile des SD-LOG-Bildschirms; sie unterscheidet Fälle, die
-sonst gleich aussehen.
+Sieh auf die `MOUNT`-Zeile des SD-LOG-Bildschirms.
 
-- **`3 NOT READY`** — auf dem Bus hat nichts geantwortet. Keine Karte, oder
-  nicht richtig eingesteckt.
-- **`13 NO FILESYSTEM`** mit einer Größe unter `CARD` — die Karte ist da und
-  spricht, und das Dateisystem ist das Problem. Als FAT32 formatieren.
-- **Karte nach dem Start eingesteckt** — `RETRY MOUNT` drücken. Die Karte wird
-  nur einmal beim Einschalten eingebunden, und keine der Platinen hat einen
+- **`3 NOT READY`**: Auf dem Bus hat nichts geantwortet. Keine Karte, oder sie
+  sitzt nicht richtig.
+- **`13 NO FILESYSTEM`** mit einer Größe unter `CARD`: Die Karte antwortet,
+  das Dateisystem ist das Problem. Als FAT32 formatieren.
+- **Karte nach dem Start eingesteckt**: `RETRY` drücken. Die Karte wird nur
+  einmal beim Start eingebunden, und keine der Platinen hat einen
   Karten-Erkennungspin.
 
 ---
 
 ## Verlorene Frames in einer Aufzeichnung
 
-`DROPPED FRAMES` über null heißt, dass die Aufzeichnung Lücken hat. Sieh dir
-`BUF PEAK` und `WORST FLUSH` an: nähert sich der Höchststand der Puffergröße,
-oder dauert ein Schreibvorgang länger, als der Puffer überbrücken kann, kommt
-die Karte nicht mit.
+`DROPPED FRAMES` über null heißt, die Aufzeichnung hat Lücken. Sieh dir
+`BUF PEAK` und `WORST FLUSH` an. Ein Höchststand nahe der Puffergröße
+(8192 Byte) oder ein Schreibvorgang, der länger dauert, als der Puffer
+überbrückt (etwa 1,1 s), heißt, die Karte ist zu langsam.
 
-Probiere zuerst eine andere Karte. Es ist fast immer die Karte.
+Probiere zuerst eine andere Karte.
 
 ---
 
 ## AM32 verbindet nicht
 
-Der Bootloader lauscht nur kurz beim Einschalten. **Zieh den ESC-Akku ab und
-steck ihn wieder an, während der AM32-Bildschirm angezeigt wird.** Vorher
-funktioniert nicht.
+Der Bootloader lauscht nur kurz nach dem Einschalten. **Zieh den ESC-Akku ab
+und steck ihn wieder an, während der AM32-Bildschirm offen ist.** Ein Neustart
+vor dem Öffnen des Bildschirms funktioniert nicht.
 
-- **`REPLY NOT UNDERSTOOD`** — die Verbindung lebt, die Rahmenbildung stimmt
-  nicht. Meist kein AM32-ESC.
-- **`NO VALID SETTINGS`** — es hat etwas geantwortet, aber der
-  Einstellungsblock war nicht plausibel. Schreibe nichts.
+- **`REPLY NOT UNDERSTOOD`**: Die Verbindung funktioniert, die Rahmenbildung
+  nicht. Mögliche Ursache: Der ESC läuft nicht mit AM32.
+- **`NO VALID SETTINGS`**: Der ESC hat geantwortet, und der Einstellungsblock
+  hat die Plausibilitätsprüfung nicht bestanden. Schreibe nichts.
 
 ---
 
 ## Meine Einstellungen setzen sich zurück
 
-Sie wurden nie gespeichert. Polzahl und Gasobergrenze werden auf dem
-Einstellungsbildschirm geändert, aber die Schaltfläche, die sie ins Flash
-schreibt, ist `HOLD TO SAVE` im **SETUP**. `UNSAVED` unter dem Titel ist der
-Hinweis darauf.
+Sie wurden nicht gespeichert. Polzahl und Gasobergrenze werden auf dem
+Einstellungsbildschirm geändert, und `HOLD TO SAVE` im **SETUP** schreibt sie
+ins Flash. `UNSAVED` unter dem Titel zeigt ungespeicherte Änderungen.
 
 ---
 
 ## KISS-Telemetrie ist auf meiner 2,8"-Platine aus
 
-So wird sie ausgeliefert. Ein Tippen schaltet sie ein:
-**CFG → SETUP → KISS TELEM**.
+Das ist die Voreinstellung. Einschalten unter **CFG → SETUP → KISS TELEM**.
 
-Die 2,8"-Platine führt genau zwei freie GPIOs heraus, und das ESC-Signal liegt
-anfangs auf einem davon — KISS standardmäßig einzuschalten würde also den
-einzigen übrigen Pin für ein Kabel verbrauchen, das die meisten gar nicht
-angelötet haben. Die 2,0"-Platine hat eine ganze Kameraleiste voll freier Pins
-und ist aus demselben Grund umgekehrt standardmäßig an.
+Die 2,8" hat zwei freie GPIOs (General Purpose Input/Output, frei verwendbare
+Pins), GP28 und GP29, und das ESC-Signal liegt anfangs auf GP29. KISS ist
+voreingestellt aus, damit der übrige Pin nicht für ein Kabel belegt ist, das
+vielleicht nicht angeschlossen ist. Die 2,0" hat 15 freie GPIOs und ist
+voreingestellt an.
 
-Beim Einschalten wandert KISS von selbst auf den freien Pin; du musst nichts
-auswählen. Der Pin-Schrittschalter weigert sich außerdem, auf dem Pin des
-ESC-Signals zu landen, sodass beide nicht kollidieren können.
+Beim Einschalten von KISS wird der KISS-Pin auf den anderen freien Pin
+verschoben, falls er mit dem ESC-Pin zusammenfällt. Der Pin-Schrittschalter
+überspringt den ESC-Pin. Der Empfänger ist eine PIO-Zustandsmaschine (PIO:
+programmierbare Ein-/Ausgabe) und funktioniert auf beiden Pins.
 
-> **Auf der 2,8" war das einmal wirklich unmöglich, und ist es nicht mehr.**
-> Solange der Empfänger ein Hardware-UART war, brauchte er einen Pin mit
-> UART-RX-Funktion, und der einzige freie auf dieser Platine war GP29 — der Pin,
-> auf dem das ESC bereits lag. KISS einzuschalten fand überhaupt keinen Pin, und
-> die Prüfung schaltete es sofort wieder ab. Der Empfänger ist inzwischen eine
-> PIO-Zustandsmaschine und tastet jeden GPIO ab. Wenn du irgendwo gelesen hast,
-> dass KISS auf der 2,8" nicht funktioniert: darum ging es.
-
-Schaltet es sich tatsächlich mit `KISS OFF: NEEDS A PIN OF ITS OWN` selbst ab,
-sind wirklich beide Pins vergeben: verschiebe zuerst das ESC-Signal auf den
-anderen und schalte dann KISS ein.
+Schaltet sich KISS mit `KISS OFF: NEEDS A PIN OF ITS OWN` selbst ab, war der
+gespeicherte KISS-Pin nicht frei oder gleich dem ESC-Pin. Verschiebe zuerst
+das ESC-Signal auf den anderen Pin und schalte dann KISS ein.
 
 ---
 
@@ -193,5 +189,5 @@ anderen und schalte dann KISS ein.
 
 Öffne ein Issue unter
 [github.com/subtilitas/DshotDisplay/issues](https://github.com/subtilitas/DshotDisplay/issues).
-Nützlich sind: welche Platine, welches Abbild (unified oder einzelplatinen), was
-die `LINK`-Zeile zeigt, und um welchen ESC es sich handelt.
+Nützlich sind: welche Platine, welches Abbild (unified oder Einzelplatine), was
+die `LINK`-Zeile zeigt, und welcher ESC mit welcher ESC-Firmware.

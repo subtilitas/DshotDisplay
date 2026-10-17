@@ -47,7 +47,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - name: Cache the SDK and fetched dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/pico-sdk
@@ -283,6 +283,22 @@ jobs:
           name: failed-frames
           path: test/*.ppm
 
+  # Line coverage of src/ by the host suite. README.md carries the figure and
+  # STATUS.md the table per file, both written by tools/coverage.py. --check
+  # fails when either is out of date or when coverage falls below a floor, so
+  # drift fails the build instead of being committed by a bot.
+  coverage:
+    name: Coverage
+    # A fixed image, not ubuntu-latest: gcov's line counts follow the GCC
+    # (GNU Compiler Collection) version, and the checked-in figure has to match.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and run the instrumented suite
+        run: make -C test coverage
+      - name: Coverage figures are current
+        run: python3 tools/coverage.py --check
+
   # Round-trips a generated log through Betaflight's own decoder. Separate job
   # because it needs blackbox-tools built from source, and because a format
   # regression is a different kind of failure from a logic regression.
@@ -402,7 +418,7 @@ jobs:
       - name: Reject duplicate keys
         run: |
           python3 - <<'EOF'
-          import sys, yaml
+          import glob, sys, yaml
           # PyYAML accepts duplicate mapping keys and silently keeps the last.
           # GitHub does not. This is the check that would have caught it.
           class Strict(yaml.SafeLoader): pass
@@ -417,7 +433,7 @@ jobs:
               return out
           Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_dupes)
           bad = 0
-          for f in (".github/workflows/ci.yml", ".github/workflows/release.yml"):
+          for f in sorted(glob.glob(".github/workflows/*.yml")):
               try:
                   yaml.load(open(f), Strict)
                   print(f"{f}: ok")

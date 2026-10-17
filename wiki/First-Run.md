@@ -2,72 +2,68 @@
 
 # First Run
 
-Two wires, one battery, and about five minutes.
+This page covers wiring an ESC (electronic speed controller), powering up, and
+the first arm. You need two wires and a battery for the ESC.
 
 ---
 
 ## Safety first
 
-This board's whole job is to make a motor spin. Everything below assumes you
-have already done these three things.
+The board makes a motor spin. Do these three things before anything else:
 
-- **Take the propeller off.** Not "point it away". Off.
-- **Secure the motor.** A motor that is not bolted to something becomes a
-  thrown object at about 30 % throttle.
-- **Keep the ESC on its own battery.** Do not try to power a motor from the
+- **Remove the propeller.**
+- **Secure the motor.** An unsecured motor can move or jump when it spins up.
+- **Power the ESC from its own battery.** Do not power a motor from the
   board's 5 V pin.
 
-The firmware helps, but it cannot help with any of the above:
+The firmware has these interlocks. They do not replace the steps above:
 
-- The throttle ceiling defaults to **20 %**, so the first thing you do cannot be
-  full throttle. Raise it once you know what is spinning.
-- Arming takes a deliberate **one-second hold**, and the throttle must have been
-  at zero throughout.
-- Disarming is **instant on press** — the one control that does not wait for you
-  to lift your finger.
-- If nothing touches the screen for **30 seconds** while armed, it disarms
-  itself, counting down out loud for the last five.
-- If the display firmware ever hangs, the second core stops believing the last
-  throttle it was given within a quarter of a second and commands zero.
+- The throttle ceiling defaults to **20 %** of the DShot range.
+- Arming needs a **1 s hold**, with the throttle at zero for at least 250 ms.
+- `DISARM` acts **on touch**. Every other control acts on release.
+- While armed, **30 s** without a touch disarms the tester. The last 5 s count
+  down on screen.
+- If the display firmware stops, the second core sets the throttle to zero
+  after **250 ms** without a heartbeat.
 
 ---
 
 ## Wiring the ESC
 
-Two wires. Signal and ground.
+Two wires: signal and ground.
 
 | | 2.0" board | 2.8" board |
 |---|---|---|
-| **Signal** | GP4 — P2 header, pin 11 | GP29 — J4 pin 12 |
-| **Ground** | GND — P2 header, pin 13 | GND on J4 |
+| **Signal** | GP4, P2 header pin 11 | GP29, J4 pin 12 |
+| **Ground** | GND, P2 header pin 13 | GND, J4 pin 1 or 5 |
 
-Both are changeable later from **CFG → SETUP** on the board itself, and the
-choice is remembered.
+GP means GPIO (general-purpose input/output pin). The ESC pin can be changed
+later under **CFG → SETUP**, and the setting is stored in flash.
 
 > **Cut or de-pin the middle wire of the ESC lead first.**
-> The middle conductor of a standard three-wire servo plug is the ESC's **+5 V
-> BEC output**. The RP2350's pins are **not** 5 V tolerant — anything above
-> about 3.6 V is over absolute-maximum and damages the chip. The tester needs
-> signal and ground and nothing else.
+> The middle conductor of a 3-wire servo plug is the ESC's **+5 V BEC
+> (battery eliminator circuit) output**. RP2350 pins are **not** 5 V tolerant.
+> More than about 3.6 V exceeds the absolute maximum rating and damages the
+> chip. The tester needs signal and ground only.
 
-On the 2.0" you can solder a 3-pin male header onto **P2 pins 11–13** and a
-servo plug drops straight on: signal on GP4, the (removed) middle wire over
-GP10, ground on pin 13.
+On the 2.0", a 3-pin male header soldered onto **P2 pins 11–13** takes a servo
+plug directly: signal on GP4, the removed middle wire over GP10, ground on
+pin 13.
 
-Keep the signal wire short. Bidirectional DShot at 600 kBaud does not enjoy
-30 cm of unshielded flapping servo lead — if telemetry is unreliable, drop the
-bitrate to 300 in SETUP before suspecting anything else.
+Keep the signal wire short. The maximum working length is not measured. If the
+`LINK` error rate rises, set **DSHOT KBAUD** to 300 in SETUP.
 
 ---
 
 ## Powering up
 
-Power the board over USB-C, and the ESC from its own battery. Order does not
-matter: the firmware keeps asking a newly-arrived ESC for telemetry, so
-connecting or power-cycling the ESC at any point is fine.
+Power the board over USB-C (USB: Universal Serial Bus) and the ESC from its
+own battery. The order does not matter. The firmware sends the telemetry
+enable to every ESC that starts answering, so the ESC can be connected or
+power-cycled at any time.
 
-You will see the splash screen name the board it detected, then the tester
-screen.
+The splash screen names the detected board for 3 s, then the tester screen
+appears.
 
 <img src="img/splash.png" width="240" alt="Splash screen">
 
@@ -77,70 +73,69 @@ screen.
 
 <img src="img/tester-disarmed.png" width="240" alt="The tester screen with no ESC connected">
 
-`NO TELEMETRY` under the RPM readout and `--` in every tile is the correct
-display for "nothing is answering". The RPM digits sit dark rather than showing
-a confident zero, because a zero would be a claim.
+With no ESC answering, the screen shows `NO TELEMETRY` under the RPM
+(revolutions per minute) readout, `--` in every tile, and a dark red zero for
+RPM.
 
-If the ESC is powered and wired and this does not change within a second or
-two, go to [Troubleshooting](Troubleshooting#no-telemetry).
+If the ESC is powered and wired and this does not change, see
+[Troubleshooting](Troubleshooting#no-telemetry).
 
 ---
 
 ## Your first arm
 
-1. Check the propeller is off. Yes, again.
-2. Press and **hold** `HOLD TO ARM` for one second. A green bar fills across the
-   badge as you hold.
-3. The badge turns red and reads `ARMED`, and the whole panel dips briefly —
-   that flash is deliberate, so that arming registers in the corner of your eye
-   while you are looking at the motor rather than the screen.
+1. Check that the propeller is off.
+2. Press and **hold** `HOLD TO ARM` for 1 s. A green bar fills along the bottom of
+   the badge while you hold.
+3. The badge turns red and reads `ARMED`. The backlight dims to a quarter for
+   120 ms, so the event is visible while you watch the motor.
 
 <img src="img/tester-armed.png" width="240" alt="Armed, with telemetry arriving">
 
-To stop: press `DISARM`. It acts the moment you touch it.
+To stop, press `DISARM`. It acts on touch.
 
 ---
 
 ## Giving it throttle
 
-Two surfaces, and they feed the same value.
+Two surfaces set the same throttle value.
 
-**The bar at the bottom** is a spring-loaded trigger. Where your finger is along
-the track is the throttle, and it snaps back to zero the instant you let go.
-The full width of the track is the *ceiling*, not full throttle — so at the
-default 20 % ceiling, dragging to the far right commands 20 %.
+**The bar at the bottom.** With `HOLD` off, the finger position along the
+track is the throttle, and the throttle returns to zero on release. The full
+track width is the *ceiling*: at the default 20 % ceiling, the right end
+commands 20 %.
 
-**The big number area** is a large relative throttle pad. Swipe **up** for more,
-**down** for less. It is relative, so a tap does nothing and swipes accumulate:
-you can build throttle over several short swipes without looking at the screen.
-`SWIPE ACTIVE` appears once a swipe has passed the small dead zone and is
-actually moving the motor.
+**The number area** above the bar is a relative throttle pad. Swipe **up** for
+more, **down** for less. A tap does nothing, and swipes add up, so the
+throttle can be raised over several short swipes without looking. After 6 px
+of travel the hint under the RPM readout changes to `SWIPE ACTIVE` and the
+swipe moves the throttle.
 
-`HOLD` changes the bar from spring-loaded to latching, so the throttle stays
-where you put it instead of returning to zero. The bar grows a grab handle to
-say so. Turning `HOLD` back off zeroes the throttle.
+`HOLD` makes the bar relative and latching: the throttle stays where you leave
+it. The bar shows a grab handle. Turning `HOLD` off sets the throttle to zero.
 
 ---
 
 ## Raising the ceiling
 
-`CFG` opens the settings screen — and force-disarms on the way in, every time.
+`CFG` opens the settings screen. Opening it always disarms.
 
 <img src="img/settings.png" width="240" alt="The settings screen">
 
-- **MOTOR POLES** — how the eRPM the ESC reports becomes the RPM shown. Almost
-  every quadcopter motor is **14**. Get this wrong and the RPM number is wrong
-  by a fixed ratio while everything else stays correct.
-- **THROTTLE CEILING** — raise it when you know what is spinning. Hold `-` or `+`
-  to repeat, and it accelerates.
+- **MOTOR POLES**: converts the reported eRPM (electrical RPM) to RPM with
+  `RPM = eRPM / (poles / 2)`. Range 2–28, even values only. Default 14. A
+  wrong value scales the RPM reading by a fixed factor; other readings are
+  unaffected.
+- **THROTTLE CEILING**: 5–100 % in 5 % steps. Hold `-` or `+` to repeat; the
+  repeat speeds up the longer you hold.
 
-Both are remembered only once you save them, and the button that saves is on
-**SETUP**. `UNSAVED` under the title says so.
+Both values are stored only when saved, with `HOLD TO SAVE` on **SETUP**.
+`UNSAVED` under the title shows unsaved changes.
 
 ---
 
 ## Next
 
-- [The Screens](The-Screens) — the rest of the interface
-- [Telemetry](Telemetry) — what the tiles are telling you
-- [SD Logging](SD-Logging) — recording a run and plotting it
+- [The Screens](The-Screens): the rest of the interface
+- [Telemetry](Telemetry): what the tiles show
+- [SD Logging](SD-Logging): recording a run and plotting it

@@ -1,37 +1,57 @@
 # SD logging in Betaflight blackbox format
 
-Status: **working on hardware, both boards.** See "Bring-up" below.
-Branch: `dev/telemetry-logging`, then `dev/multiboard-sdio`; ported to the native Pico SDK on
-`dev/pico-sdk-native`.
+Terms: SD is Secure Digital, SPI is Serial Peripheral Interface, SDIO is
+Secure Digital input/output, PIO is the RP2350's programmable input/output,
+FAT is File Allocation Table, CSV is comma-separated values, ESC is electronic
+speed controller, DShot is the digital ESC protocol the tester drives, EDT is
+Extended DShot Telemetry, eRPM is electrical revolutions per minute, RPM is
+revolutions per minute, KISS telemetry is the serial protocol of the KISS ESC
+line on its own wire, UI is user interface, USB is Universal Serial Bus, CI is
+continuous integration, VB is variable-byte, SDK is software development kit,
+GPIO is general-purpose input/output. In the pin tables, MISO is master in,
+slave out, MOSI master out, slave in, SCK and CLK the serial clock, CS and CSn
+chip select (n: active low), CMD the SDIO command line, RX receive and TX
+transmit.
+
+Status: implemented on both boards. Hardware use is recorded in commits: the
+2.8" board mounted a card over SDIO at 25 MHz in `tools/sdtest` and wrote a
+file (036adfe); a replacement 2.0" board works over SPI (5b9c7bd). A run at the
+shipped SDIO clock of 10 MHz is not recorded separately. BUF PEAK and WORST
+FLUSH under sustained logging are not recorded, so the buffer size is
+unmeasured. See "Bring-up" below.
 
 ## Why blackbox format rather than CSV
 
 A CSV would be less work. The reason not to is tooling:
-[logwiju](https://subtilitas.github.io/logwiju/) — the intended viewer here, a
-browser-based plotter that takes a `.BFL` off the card with nothing to install —
+[logwiju](https://subtilitas.github.io/logwiju/), the intended viewer, a
+browser-based plotter that takes a `.BFL` off the card with nothing to install,
 along with Blackbox Explorer, `blackbox_decode`, PIDtoolbox and Plasmatree, all
-read this format already. A log
-that opens in Blackbox Explorer can be scrubbed, zoomed and overlaid against
-flight logs from the same ESC on a real craft, which is exactly the comparison a
-bench tester exists to make.
+read this format. A log that opens in Blackbox Explorer can be scrubbed, zoomed
+and overlaid against flight logs from the same ESC on a real craft, which is
+the comparison a bench tester exists to make.
 
-The cost is that the format is a real binary format with predictors and
-variable-length encodings, and a decoder is unforgiving of small mistakes. That
-is a good argument for building the encoder as a pure, host-tested unit and
-validating its output with the actual `blackbox_decode` binary in CI.
+The cost is that the format is a binary format with predictors and
+variable-length encodings, and a decoder is unforgiving of small mistakes. So
+the encoder is a pure, host-tested unit, and CI checks its output with the
+real `blackbox_decode`.
 
 ## Scope
 
-Both boards, by two different interfaces. This started as 2.0"-only and the 2.8"
-was added later, when the 2.0" board in hand turned out to have a hardware fault
-and the question became which board could read a card at all.
+Both boards, by two different interfaces: hardware SPI on the 2.0", PIO SDIO
+on the 2.8". The board descriptor selects the interface at run time.
 
 ## Hardware
 
-The pins live in the per-board headers. The interface is chosen at compile time
-from `SD_IFACE_SPI` / `SD_IFACE_SDIO`, which `sd_hw_config.c` keys off.
+The pins live in the per-board headers and reach the driver through the board
+descriptor. The interface is chosen at run time: `sdHwConfigApply()` in
+`src/sd_hw_config.c` fills both the SPI and the SDIO configuration from
+`g_board` before the card is mounted, and the descriptor's `sdIface` field sets
+which one the library uses. That is what lets one unified image drive either
+board. `SD_IFACE_SPI` and `SD_IFACE_SDIO` in the board headers remain only for
+`tools/sdtest`.
 
-**RP2350-Touch-LCD-2 (2.0") — hardware SPI1, one bit wide:**
+**RP2350-Touch-LCD-2 (2.0"): hardware SPI1, one bit wide, 12 MHz
+(`SD_LOG_SPI_MHZ`):**
 
 | Signal | GPIO | SPI1 function |
 |---|---|---|
@@ -40,10 +60,12 @@ from `SD_IFACE_SPI` / `SD_IFACE_SDIO`, which `sd_hw_config.c` keys off.
 | `PIN_SD_SCK` | 26 | SPI1 SCK |
 | `PIN_SD_MOSI` | 27 | SPI1 TX |
 
-The display is on SPI0, so SD writes and the display's multi-millisecond DMA
-bursts do not contend for a peripheral. They still contend for core0 time.
+The display is on SPI0 on this board, so card writes and the display's
+multi-millisecond DMA (direct memory access) bursts do not contend for a
+peripheral. They still contend for core0 time.
 
-**RP2350-Touch-LCD-2.8 — PIO SDIO, four bits wide:**
+**RP2350-Touch-LCD-2.8: PIO SDIO, four bits wide, 10 MHz
+(`SD_LOG_SDIO_HZ`):**
 
 | Signal | GPIO |
 |---|---|
@@ -51,255 +73,278 @@ bursts do not contend for a peripheral. They still contend for core0 time.
 | `PIN_SD_CMD` | 20 |
 | `PIN_SD_D0`..`D3` | 21, 22, 23, 24 |
 
-Hardware SPI is impossible there — `SD_SCK` is GP19, which is SPI0 **TX** in the
-pin mux, not SCK. SDIO is not a workaround though: the pins satisfy every
-constraint the PIO program imposes (D1..D3 directly follow D0, and CLK is
-`(D0 + 30) % 32`), so the board was laid out for it. Four bits is also faster
-than one. `sdtest` mounted a card there at 25 MHz, but the firmware ships at
-`SD_LOG_SDIO_HZ`, 10 MHz: SDIO is far more sensitive to signal integrity than
-one-bit SPI, and a card that enumerates and then corrupts is worse than one that
-refuses. Raise it once there is a reason to.
+Hardware SPI is impossible there: `SD_SCK` is GP19, which is SPI0 **TX** in
+the pin mux, not SCK. The pins satisfy every constraint the PIO program
+imposes (D1..D3 directly follow D0, and CLK is `(D0 + 30) % 32`), and
+`board_desc_lcd2_8.cpp` asserts both at compile time. `sdtest` mounted a card
+there at 25 MHz; the firmware ships at 10 MHz, because SDIO is more sensitive
+to signal integrity than one-bit SPI, and a card that enumerates and then
+corrupts is worse than one that refuses.
 
-SDIO runs on **pio1** because the DShot driver has pio0. Left to themselves both
-would claim state machines on the same block, and whichever initialised second
-would fail depending on timing.
+SDIO runs on **pio1** because the DShot driver has pio0. Left to themselves
+both would claim state machines on the same block, and whichever initialised
+second would fail depending on timing. The KISS receiver claims whatever state
+machine is free after both.
 
-Library: FatFs, via carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`. `f_expand()`
-reserves a contiguous cluster run up front so writes do not stall on FAT
-allocation mid-log.
+Library: FatFs, via carlk3's `no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`, pinned at
+v3.6.2. `f_expand()` reserves a contiguous cluster run of
+`SD_LOG_PREALLOC_BYTES`, 16 MiB, when a log opens, so writes do not stall on
+FAT allocation mid-log. A failed reservation is not reported; the log then
+allocates as it grows.
 
-(The original plan named SdFat. That was written while this was still an Arduino
-project; SdFat is Arduino-bound and did not survive the move to the native Pico
-SDK.)
+SdFat is not used: it depends on Arduino, and the firmware builds on the
+native Pico SDK.
 
 ## File format
 
-Confirmed against `betaflight/blackbox-tools` (`src/parser.c`,
+Checked against `betaflight/blackbox-tools` (`src/parser.c`,
 `src/blackbox_fielddefs.h`).
 
 ### Header
 
-ASCII `H <name>:<value>\n` lines. The first must be exactly the start marker —
+ASCII (American Standard Code for Information Interchange) `H <name>:<value>\n`
+lines. The first must be exactly the start marker;
 the parser uses it to find log boundaries in a file that may hold several.
+`bbBegin()` in `src/blackbox_encode.cpp` writes, among others:
 
 ```
 H Product:Blackbox flight data recorder by Nicholas Sherlock
 H Data version:2
 H Firmware type:Cleanflight
 H Firmware revision:Betaflight 4.5.0 (DshotDisplay)
+H Craft name:DshotDisplay
 H I interval:32
 H P interval:1/1
 H Field I name:loopIteration,time,...
 H Field I signed:0,0,...
 H Field I predictor:0,0,...
 H Field I encoding:1,1,...
-H Field P name:...
-H Field P signed:...
 H Field P predictor:...
 H Field P encoding:...
 ```
 
-If the `P` name/signed lines are absent the parser copies them from `I`, but
-predictor and encoding must be given for both.
+If the `P` name and signed lines are absent the parser copies them from `I`,
+but predictor and encoding must be given for both.
 
-Field 0 must be `loopIteration` and field 1 must be `time` (µs) —
+Field 0 must be `loopIteration` and field 1 must be `time` (µs):
 `FLIGHT_LOG_FIELD_INDEX_ITERATION` and `_TIME` are hardcoded to 0 and 1.
 
 ### Frames
 
 | Marker | Meaning |
 |---|---|
-| `I` | Intra — every field absolute. The keyframe. |
-| `P` | Inter — every field predicted from history. |
+| `I` | Intra: every field absolute. The keyframe. |
+| `P` | Inter: every field predicted from history. |
 | `E` | Event, including `LOG_END` (255). |
-| `S` | Slow — infrequently changing fields. |
-| `G`, `H` | GPS. Not applicable here. |
+| `S` | Slow: infrequently changing fields. Not written. |
+| `G`, `H` | GPS (Global Positioning System). Not applicable here. |
 
 ### Predictors and encodings
 
-Predictors: `0` none, `1` previous, `2` straight line, `3` average of 2,
-`4` minthrottle, `5` motor 0, `6` increment, `8` 1500, `9` vbatref,
-`10` last main frame time, `11` min motor.
+Predictors in the format: `0` none, `1` previous, `2` straight line, `3`
+average of 2, `4` minthrottle, `5` motor 0, `6` increment, `8` 1500, `9`
+vbatref, `10` last main frame time, `11` min motor.
 
-Encodings: `0` signed VB, `1` unsigned VB, `3` neg 14-bit, `6` TAG8_8SVB,
-`7` TAG2_3S32, `8` TAG8_4S16, `9` null (nothing written, read as zero).
+Encodings in the format: `0` signed VB, `1` unsigned VB, `3` neg 14-bit, `6`
+TAG8_8SVB, `7` TAG2_3S32, `8` TAG8_4S16, `9` null (nothing written, read as
+zero).
 
-The standard treatment of the first two fields, which we should copy verbatim
-rather than invent:
+The encoder uses predictors 0, 1, 2 and 6 and encodings 0, 1 and 9. The first
+two fields follow Betaflight:
 
 | Field | I predictor | I encoding | P predictor | P encoding |
 |---|---|---|---|---|
 | `loopIteration` | 0 (none) | 1 (unsigned VB) | 6 (increment) | 9 (null) |
 | `time` | 0 (none) | 1 (unsigned VB) | 2 (straight line) | 0 (signed VB) |
 
-`loopIteration` in P frames therefore costs zero bytes.
+Every other field is predictor 0 and unsigned VB in I frames (signed VB for
+temperature), predictor 1 (previous) and signed VB in P frames.
+`loopIteration` in P frames costs zero bytes.
 
 ## Field set
 
-Betaflight names where one fits, so existing tools label the axes correctly.
-Invented names still decode — `blackbox_decode` emits them as CSV columns — but
-Blackbox Explorer only draws graphs it recognises.
+Betaflight names where one fits, so existing tools label the axes. Invented
+names still decode (`blackbox_decode` emits them as CSV columns), but Blackbox
+Explorer draws only fields it recognises.
 
 | Field | Source | Units | Notes |
 |---|---|---|---|
 | `loopIteration` | counter | — | required at index 0 |
 | `time` | `micros()` | µs | required at index 1 |
-| `motor[0]` | commanded throttle | 0..2000 | `rcCommand[3]` is the other candidate |
-| `eRPM[0]` | bidir DShot | eRPM | 1 kHz; relative resolution ~0.2–0.4% |
-| `eRPMkiss[0]` | KISS | eRPM | ~50 Hz; flat 100 eRPM steps |
-| `vbatLatest` | KISS, else EDT | 0.01 V | `vbatscale`/`vbatref` in the header |
-| `amperageLatest` | KISS, else EDT | 0.01 A | |
-| `vbatEdt` | EDT | 0.01 V | non-standard name |
-| `amperageEdt` | EDT | 0.01 A | non-standard name |
-| `escTemperature[0]` | KISS, else EDT | °C | slow-moving; candidate for an S frame |
+| `motor[0]` | commanded throttle | 0..2000 | what the operator asked for, not what the interlocks sent |
+| `eRPM[0]` | bidirectional DShot | eRPM | every DShot frame; relative resolution ~0.2–0.4 % |
+| `eRPMkiss[0]` | KISS | eRPM | ~50 Hz; 100 eRPM steps; 0 while KISS is stale |
+| `vbatLatest` | KISS only | 0.01 V | 0 while KISS is not the voltage source |
+| `amperageLatest` | KISS only | 0.01 A | 0 while KISS is not the current source |
+| `vbatEdt` | EDT | 0.01 V | non-standard name; 0 once EDT voltage is stale |
+| `amperageEdt` | EDT | 0.01 A | non-standard name; 0 once EDT current is stale |
+| `escTemperature[0]` | KISS, else EDT | °C | the one signed field |
 | `escConsumption` | KISS only | mAh | non-standard name |
 | `escStress` | EDT | 0..255 | non-standard name |
 
-`vbatLatest` and `amperageLatest` are certain — `parser.c` looks them up by name.
-`eRPM[0]` and `escTemperature[0]` follow Betaflight's own naming but are *not* in
-the parser's well-known list, so they decode as ordinary columns. Confirm against
-a real Betaflight log before settling on them; matching the exact spelling is the
-whole reason to prefer these names over invented ones.
+`vbatLatest` and `amperageLatest` are looked up by name in `parser.c`.
+`eRPM[0]` and `escTemperature[0]` follow Betaflight's own naming but are not
+in the parser's well-known list, so they decode as ordinary columns; a real
+Betaflight log to compare spellings against has not been checked.
 
-Voltage and current units are chosen to match `escSensorData_t`, so KISS values
-go in unscaled and the lossy step is only on the EDT fallback path.
+Every field but temperature is declared unsigned, and a negative value in an
+unsigned field wraps to about 4.29e9 instead of failing, so values are clamped
+non-negative before encoding.
 
-Both eRPM sources are logged. Neither dominates the other: bidirectional DShot
-wins on rate, KISS wins on resolution above roughly 5,000 RPM on a 12–16 pole
-motor. See [kiss-telemetry.md](kiss-telemetry.md#erpm-which-source-is-actually-finer).
-`eRPMkiss[0]` updates at ~50 Hz, so under a `PREVIOUS` predictor it costs one
-byte per P frame for the ~19 frames in 20 where it has not changed.
-
-Settled: both sources are logged separately. It costs about two bytes a frame
-and it means the KISS decoder can be checked against EDT from the log itself
-rather than trusted. The UI shows the merged value with a source tag; the log
-keeps them apart.
+Both eRPM sources are logged. Neither dominates: bidirectional DShot wins on
+rate, KISS wins on resolution above about 6,500 mechanical RPM on a 12-pole
+motor, 5,500 on 14 poles and 4,800 on 16.
+See [kiss-telemetry.md](kiss-telemetry.md#erpm-which-source-is-finer).
+Voltage and current are also logged per source rather than merged. It costs
+about two bytes a frame, and it means the KISS decoder can be checked against
+EDT from the log itself. The UI shows the merged value with a source tag; the
+log keeps the sources apart.
 
 ## Rate and volume
 
-Sizing before building, because SD write throughput is the constraint that
-decides whether this works at all.
+DShot runs at 1 kHz, but eRPM is the only signal here that changes at that
+rate. KISS arrives at 50 Hz and the display repaints at 40 Hz.
 
-At 1 kHz with ~9 fields, P frames dominate and run roughly 10–20 bytes once the
-predictors are doing their job. Call it 20 kB/s, ~72 MB/hour. Comfortable for
-any card.
-
-But 1 kHz is the DShot rate, not a rate anything here changes at. KISS arrives
-at 50 Hz, the display refreshes far slower, and eRPM is the only genuinely
-1 kHz signal. Proposal: default 500 Hz, configurable, with an I frame every 32
-P frames (Betaflight's `I interval` is typically 32).
+The log writes 500 Hz frames (`SD_LOG_RATE_HZ`) with an I frame every 32
+(`SD_LOG_I_INTERVAL`, Betaflight's usual value). Both are compile-time
+settings. With 12 fields `config.h` gives about 14.5 bytes a frame, 7.3 kB/s or
+26 MB an hour.
 
 ## Buffering and where it runs
 
-The failure mode to design against: an SD card stalls for tens of milliseconds
-during an internal erase, and any code that blocks on it for that long breaks
+The failure to design against: an SD card stalls for tens of milliseconds
+during an internal erase, and code that blocks on it for that long breaks
 whatever else it was doing.
 
-- Encode into a ring buffer; flush in 512-byte sector-aligned chunks.
-- Never write from core1. Core1's job is DShot timing and a 30 ms SD stall
-  would destroy it.
-- Core0 owns the card. Core0 already tolerates multi-millisecond display DMA,
-  and the UI is not real-time critical.
-- Pre-allocate the file with `f_expand()` so FAT updates do not land
-  mid-flight.
-- Drop-and-count on buffer overrun rather than blocking. A gap in the log is
-  recoverable; a stalled UI with a live motor is not. Surface the drop count —
-  a silently lossy log is worse than an obviously lossy one.
-- Ring buffer sized for the worst observed stall. Needs measuring; 8–16 kB is
-  the starting guess.
+In `src/sd_log.cpp` and `src/log_ring.cpp`:
+
+- `sdLogTick()` encodes into a RAM (random-access memory) ring buffer of
+  `SD_LOG_BUFFER_BYTES`, 8192 bytes. `sdLogFlush()` writes it out in
+  `SD_LOG_CHUNK_BYTES`, 512-byte, chunks and waits for a full chunk except
+  while a log is being stopped.
+- Nothing on core1 touches the card. Core1's job is DShot timing, and a 30 ms
+  card stall would destroy it.
+- Core0 owns the card and calls both functions on every pass of its loop,
+  after the UI frame.
+- A frame that does not fit in the ring is dropped whole and counted, never
+  half-written and never waited for. A gap in the log is recoverable; a stalled
+  UI with a live motor is not. The SD LOG screen shows the dropped-frame count.
+- The ring tracks its high-water mark (BUF PEAK) and the log tracks its
+  slowest single write or sync (WORST FLUSH). The SD LOG screen shows BUF PEAK
+  against the buffer size, amber above half and red above three quarters.
+- 8192 bytes holds about 1.1 s at 7.3 kB/s. It is not sized from a measured
+  stall; see "Bring-up".
 
 ## Lifecycle
 
-- Card detected at boot; absent card is not an error, logging is just
-  unavailable and the UI says so.
-- Files `LOG00001.BFL` … , first free number. Betaflight uses `.BFL` for
-  single logs and `.BBL` for concatenated; single-log files are simpler.
-- Start/stop from the UI. Auto-start on arm is a candidate once manual works.
-- On stop: `E` frame with `LOG_END` (255), flush, close. An unclosed file from a
-  power cut should still be parseable up to the last complete frame — worth an
-  explicit test, since yanking power mid-write is the normal way a bench session
-  ends.
+- The card is mounted at boot. An absent card is not an error: logging is
+  unavailable and the screen says so. RETRY mounts a card inserted
+  later. A failed mount shows the FatFs result and the card type.
+- Files are `LOG00001.BFL` onwards, at the first free number. Betaflight uses
+  `.BFL` for single logs and `.BBL` for concatenated ones.
+- Logging starts on arming and stops on disarming (`SD_LOG_AUTO_ON_ARM`).
+  START and STOP on CFG → SD LOG work by hand, and a log started by hand
+  survives the disarm that entering the settings screens performs.
+- On stop: an `E` frame with `LOG_END` (255), the ring drained, the unused
+  pre-allocation released with `f_truncate()`, then sync and close.
+- The directory entry is synced every `SD_LOG_SYNC_MS`, 2000 ms, right after a
+  chunk goes out, so a log cut by a power loss is readable up to its last sync.
+- USB DRIVE on CFG → SD LOG hands the card to a USB host as a read-only drive.
+  The logger flushes, closes and unmounts first, and every logging entry point
+  is inert until the host ejects. The handover is refused while armed or
+  recording, and arming is refused while a host holds the card.
 
 ## Testing
 
-The encoder is pure and belongs under host test. The strong test is not a
-hand-written expectation of the bytes — it is whether the real decoder accepts
+The encoder is pure and runs under the host suite. The strong test is not a
+hand-written expectation of the bytes but whether the real decoder accepts
 them.
 
-1. Unit tests for the primitives: unsigned VB, signed VB zig-zag, TAG8_8SVB,
-   boundary values (0, 1, 127, 128, 16383, 16384, INT32_MIN/MAX).
-2. Predictors: increment, straight line, previous.
-3. A generated log written to a temp file, then run through `blackbox_decode`
-   in CI, asserting zero corrupt frames and that decoded values round-trip to
-   the inputs. This is the test that catches the mistakes that matter.
-4. Truncated file: cut the last frame in half, assert the decoder still reads
-   everything before it.
-5. SD layer behind a small interface so the host build writes to a file and the
-   device writes to a card, keeping the encoder hardware-free.
+1. Primitives (`test/test_blackbox.cpp`): unsigned VB, signed VB zig-zag,
+   boundary values. TAG8_8SVB and the other tag encodings are not used and
+   not implemented.
+2. Header and frames, and the straight-line time prediction across I frames.
+3. `make -C test bbcheck`, run by CI's Blackbox round-trip job: 2000 generated
+   frames go through Betaflight's `blackbox_decode`, built from source, and
+   all 24,000 values must round-trip with no corrupt frames. A unit test
+   checks the bytes against the same reading of the format the encoder was
+   written from; the round trip checks them against the reference decoder.
+4. A truncated file (the last frame cut in half) decoding up to the cut: not
+   implemented.
+5. The encoder writes to a `BlackboxSink` the caller supplies, so the host
+   suite writes to memory or a file and the device to the ring.
+6. The ring buffer (`test/test_log_ring.cpp`): all-or-nothing writes,
+   wraparound, high-water mark, zero size.
+7. The SD LOG screen, manual logging against auto-on-arm, and the USB DRIVE
+   handover rules, through `test/test_ui.cpp` and `test/test_usb_msc.cpp`.
 
-`blackbox_decode` in CI means either building `blackbox-tools` from source in
-the workflow or vendoring a binary. Building from source is slower but honest.
+## Where the code is
 
-## Work breakdown
-
-1. `src/blackbox_encode.h` / `.cpp` — VB/zig-zag/tag primitives, header
-   emission, I and P frame assembly, predictor state. No hardware.
-2. Host tests for the primitives.
-3. CI step: build `blackbox-tools`, generate a log, decode it, assert clean.
-4. `src/log_ring.h` — the buffer the encoder writes into; drained to the card
-   by `sd_log.cpp`, or to a file in the host tests.
-5. `src/sd_log.cpp` — card init, pre-allocation, ring buffer, chunked flush,
-   overrun counting.
-6. Field table wired to `EscTelemetry` + throttle.
-7. UI: card status, start/stop, bytes written, drops. *Done: CFG -> SD LOG,
-   plus a REC indicator in the status bar.*
-8. `config.h`: log rate, I interval, buffer size, field selection.
-9. Hardware bring-up: measure real throughput and worst-case stall; size the
-   buffer from that rather than the guess above.
-10. README section.
+- `src/blackbox_encode.h` and `.cpp`: primitives, header, I and P frames,
+  predictor state.
+- `src/log_ring.h` and `.cpp`: the buffer the encoder writes into.
+- `src/sd_log.cpp`: mount, pre-allocation, ring, chunked flush, overrun
+  counting, periodic sync, and the field table filled from `EscTelemetry` and
+  the commanded throttle.
+- `src/ui.cpp`: CFG → SD LOG, with card state, start and stop, bytes written
+  and drops, and the REC (recording) indicator in the status bar.
+- `src/config.h`: log rate, I interval, buffer size, chunk size,
+  pre-allocation, sync interval, auto-on-arm. Field selection is not
+  configurable.
+- `.github/workflows/ci.yml`, job Blackbox round-trip: builds
+  `blackbox-tools`, generates a log, decodes it.
+- README.md, section "Blackbox logging to microSD".
 
 ## Bring-up
 
-Both boards mount a card and write logs. The 2.8" did it first, over SDIO at
-25 MHz in `sdtest`; the 2.0" followed once its board was replaced.
+Recorded on hardware: the 2.8" board mounts a card over SDIO at 25 MHz in
+`tools/sdtest` and writes a file (036adfe). A replacement 2.0" board mounts a
+card and writes over SPI (5b9c7bd).
 
-The first attempt on the 2.0" never reached the code at all. Every card reported
-FatFs `FR_NOT_READY` at every clock rate from 12 MHz down to 200 kHz, and
-`tools/sdtest` found why: **GPIO27, the CMD line, was shorted to ground on that
-particular board.** It could not be driven high push-pull with the slot empty,
-so the card could never receive a command. A replacement board works over the
-same SPI path, so it was a unit fault rather than anything in the design.
+One 2.0" board has GPIO27, the card's CMD line (SPI MOSI), shorted to ground.
+On that board every card reports FatFs `FR_NOT_READY` at every clock rate from
+12 MHz down to 200 kHz, because the card never receives a command.
+`tools/sdtest` shows the short: the pin does not go high when driven
+push-pull with the slot empty. The replacement board works over the same SPI
+path, so the fault is in that unit, not in the design. That record excludes
+these causes of `FR_NOT_READY`:
 
-Ruled out along the way, none of it worth repeating: the pin map (confirmed
-against the schematic netlist), the SPI clock (all five rates failed
-identically), exFAT (enabled), SDXC (HCS/CCS handled), the driver's init
-sequence (correct 74-clock preamble), and the integration (`tools/sdtest` shares
-only sd_hw_config.c with the firmware and failed the same way).
+- the pin map, checked against the schematic netlist;
+- the SPI clock: all five rates fail identically;
+- exFAT (Extended File Allocation Table) support, which is enabled;
+- SDXC (Secure Digital eXtended Capacity) cards, whose HCS (Host Capacity
+  Support) and CCS (Card Capacity Status) bits the driver handles;
+- the driver's init sequence, which sends the 74-clock preamble;
+- the firmware integration: `tools/sdtest` shares only `sd_hw_config.c` with
+  the firmware and fails the same way.
 
-Two of my own mistakes are worth recording, because both produced confident
-wrong answers:
+Two properties of `tools/sdtest` keep its answers correct:
 
-- The pin test used an internal pull-down, which triggers **RP2350-E9** — a pad
-  so configured latches at ~2.1 V and reads high from then on. It duly reported
-  six perfectly good SDIO lines as "held high". The test now drives the pad and
-  reads back instead, which the erratum does not affect.
-- "Retry at a lower clock" retried nothing: the driver caches both the SPI setup
-  and the card state and revisits neither, so every attempt used the first
-  speed.
+- The pin test drives each pad and reads it back. It does not use the
+  internal pull-down: on the RP2350 that triggers erratum **RP2350-E9**, where
+  a pad so configured latches at about 2.1 V and reads high from then on, and
+  a good line reports as "held high".
+- Each attempt at a lower clock forces a full re-initialisation. The driver
+  caches both the SPI setup and the card state and revisits neither, so a
+  plain retry runs at the first speed.
 
-Still unmeasured: BUF PEAK and WORST FLUSH under sustained logging, which are
-what should size `SD_LOG_BUFFER_BYTES`. 8 kB remains a guess.
+Unmeasured: BUF PEAK and WORST FLUSH under sustained logging, which are what
+should size `SD_LOG_BUFFER_BYTES`. 8192 bytes is unmeasured.
 
 ## Open questions
 
-- Is a `S` (slow) frame worth it for temperature and status, or is the saving
-  too small to justify the extra frame type? Still open, and minor.
-- Does anything downstream care that `Firmware type` claims Cleanflight? That is
-  what Betaflight itself writes, so probably not, but it is a lie worth knowing
-  we are telling.
+- Is an `S` (slow) frame worth it for temperature and status, or is the saving
+  too small to justify the extra frame type? Open, and minor.
+- Does anything downstream care that `Firmware type` claims Cleanflight? That
+  is what Betaflight itself writes, and the parser recognises only that and
+  "Betaflight".
+- What does a log cut by a power loss look like after its last sync? The
+  pre-allocation is released only by `sdLogStop()`, so the file's recorded
+  size after a power loss, and whether every viewer stops cleanly at the end of
+  the written data, are not tested.
 
 ## Sources
 
-- [`betaflight/blackbox-tools`](https://github.com/betaflight/blackbox-tools) — `src/parser.c` and `src/blackbox_fielddefs.h`, the definitive reader
-- [Betaflight blackbox source](https://github.com/betaflight/betaflight/tree/master/src/main/blackbox) — the reference writer
-- [`carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`](https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico) — FatFs over SPI, RP2350-capable
+- [`betaflight/blackbox-tools`](https://github.com/betaflight/blackbox-tools): `src/parser.c` and `src/blackbox_fielddefs.h`, the reference reader
+- [Betaflight blackbox source](https://github.com/betaflight/betaflight/tree/master/src/main/blackbox): the reference writer
+- [`carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico`](https://github.com/carlk3/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico): FatFs over SPI and SDIO, RP2350-capable

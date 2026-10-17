@@ -2,24 +2,24 @@
 
 # Troubleshooting
 
-Symptom first.
+Symptom first, then cause. ESC means electronic speed controller.
 
 ---
 
 ## The screen stays dark
 
-The board took the wrong pin map, or the boot probe refused to guess.
+Two causes: the image drives the wrong pins, or the boot probe could not
+identify the board.
 
-If you flashed a **single-board** image onto the other board, that is the cause:
-the two are indistinguishable once flashed and their display pins differ. Flash
-the **unified** image from
-[Releases](https://github.com/subtilitas/DshotDisplay/releases) instead — it
-detects the board at every boot.
+A **single-board** image flashed onto the other board drives the wrong display
+pins. Flash the **unified** image from
+[Releases](https://github.com/subtilitas/DshotDisplay/releases) instead. It
+identifies the board at every boot.
 
-If you already have the unified image, a dark screen means the probe could not
-tell which board it was on, three times over, and stopped deliberately rather
-than driving pins for hardware that might not be there. The board is still
-reachable over USB.
+With the unified image, a dark screen means the probe failed 3 times: no
+board answered, or both did. The firmware then holds the power latch, keeps
+the display off and sends no DShot. The board stays reachable over USB
+(Universal Serial Bus) for reflashing.
 
 ---
 
@@ -27,80 +27,86 @@ reachable over USB.
 
 <img src="img/tester-disarmed.png" width="240" alt="No telemetry">
 
-Nothing is answering on the signal wire. In rough order of likelihood:
+Nothing answers on the signal wire. Check in this order:
 
-1. **Wrong pin.** Check **CFG → SETUP → ESC PIN** against where the wire
-   actually is. The `LINK` row on that same screen is live, so you can watch it
-   as you change the pin — any non-zero packet rate means you found it.
-2. **No ground.** The ESC's ground and the board's ground have to be tied
-   together. This is the one that looks like a dead ESC.
-3. **The ESC is not powered.** It runs from its own battery, not from the board.
-4. **The ESC does not do bidirectional DShot**, or it is disabled in the ESC's
-   own settings. Plain DShot sends nothing back.
-5. **The wire is too long or too noisy.** Drop **DSHOT KBAUD** to 300 and see if
-   `LINK` comes alive.
+1. **Wrong pin.** Compare **CFG → SETUP → ESC PIN** with where the wire is.
+   The `LINK` row on that screen is live. A packet rate above zero means the
+   pin is correct.
+2. **No common ground.** The ESC ground and the board ground must be
+   connected.
+3. **The ESC has no power.** It runs from its own battery, not from the board.
+4. **The ESC does not support bidirectional DShot**, or it is disabled in the
+   ESC's settings. Unidirectional DShot sends nothing back.
+5. **The wire is too long or picks up noise.** Set **DSHOT KBAUD** to 300 and
+   watch `LINK`.
 
 ---
 
 ## RPM works, every tile reads `--`
 
-That is an ESC answering eRPM and sending no Extended DShot Telemetry. Either it
-does not support EDT, or EDT has not been switched on yet.
+The ESC sends eRPM (electrical RPM) and no EDT (Extended DShot Telemetry).
+Either it does not support EDT, or EDT is not enabled yet.
 
-Check the chip under the title on the settings screen. If it says `EDT OFF`,
-read the next section. If the ESC's datasheet or firmware does not list EDT
-support, RPM is all you get on two wires — a
-[KISS telemetry wire](Telemetry#the-optional-third-wire) is the way to get the
-rest.
+Check the chip under the title on the settings screen. If it reads `EDT OFF`,
+see the next section. If the ESC firmware does not support EDT, two wires give
+RPM only. A [KISS telemetry wire](Telemetry#the-optional-third-wire) provides
+voltage, current, temperature and mAh.
 
 ---
 
 ## EDT stays off
 
-The firmware asks repeatedly and by itself, so a chip that stays red for more
-than a few seconds means the attempts are not being accepted.
+The firmware sends the enable every 1 s while eRPM arrives and EDT does not.
+A chip that stays red for more than a few attempts means the ESC does not
+accept them.
 
-- **Is the motor stopped?** DShot commands are only executed with the motor
-  stopped, and a disarm leaves a propeller coasting for several seconds. Wait
-  for it to actually stop.
-- **Is the tester disarmed?** Commands do not go out while armed.
-- **Is the ESC actually EDT-capable?** BLHeli_S without an EDT-capable build, and
-  some older AM32 versions, will ignore the enable forever and look exactly like
-  this.
-- **Power-cycle the ESC.** The link dropping resets the firmware's state, so the
-  replacement — even if it is the same ESC — is asked again from scratch.
+- **Is the motor stopped?** The enable is sent only while eRPM is zero. A motor
+  coasts for seconds after a disarm.
+- **Is the tester disarmed?** The enable is not sent while armed.
+- **Does the ESC firmware support EDT?** ESC firmware without EDT ignores the
+  enable and looks like this.
+- **Power-cycle the ESC.** After 500 ms without eRPM the firmware resets its
+  EDT state and starts again.
 
-If it used to work and stopped, that is worth reporting: prior to the current
-firmware there were three ways an enable could be thrown away, and a disarm and
-re-arm was the known workaround. On current firmware it should not be needed.
+If EDT stays off with an ESC whose firmware supports EDT, open an issue (see
+[Still stuck](#still-stuck)).
+
+---
+
+## Known limitation: BLHeli_32 32.6 on RAZOR32 and EXUAV 70A
+
+Reported by a user in
+[issue #1](https://github.com/subtilitas/DshotDisplay/issues/1), open, not
+reproduced by the project. With RAZOR32 and EXUAV 70A ESCs running BLHeli_32
+32.6, the ESC does not finish initialising, and the zero-throttle beep is
+missing. The cause is unknown. No workaround is known.
 
 ---
 
 ## The motor stops on its own
 
-Three things stop a motor deliberately, and each announces itself:
+Three interlocks stop the motor, and each one shows on screen:
 
-- **The idle interlock.** Thirty seconds without touching the screen while armed
-  and it disarms, counting down in the top right for the last five seconds. The
-  panel dips as it happens.
-- **Entering `CFG`.** The settings screen force-disarms every time.
-- **The heartbeat backstop.** If the display firmware stops responding, the
-  second core commands zero throttle within a quarter second. You would notice
-  this as a frozen screen, not just a stopped motor.
+- **Idle interlock.** 30 s without a touch while armed disarms the tester.
+  `IDLE ns` counts down in the top right during the last 5 s. The backlight
+  dims briefly when it disarms.
+- **Opening `CFG`.** The settings screen always disarms.
+- **Heartbeat backstop.** If the display firmware stops, the second core sets
+  the throttle to zero after 250 ms. The screen would also be frozen.
 
-If it stops with none of those, suspect the ESC's own protections — low voltage
-cutoff, temperature, desync — and look at `ESC STATUS` and `ESC TEMP`.
+If the motor stops without any of these, check the ESC's own protections (low
+voltage cutoff, temperature, desync), and look at `ESC STATUS` and `ESC TEMP`.
 
 ---
 
 ## `LINK` shows a high error rate
 
-Amber above 5 %. It is nearly always the signal wire: length, routing, or a
-missing ground. Shorten it, keep it away from the motor phases, then drop
-**DSHOT KBAUD**.
+The error rate is amber above 5 %. The usual cause is the signal wire: length,
+routing, or a missing ground. Shorten it, route it away from the motor phase
+wires, then lower **DSHOT KBAUD**.
 
-A high error rate with a working RPM readout is not harmless — the frames that
-fail are frames the ESC did not act on.
+Failed packets are frames the ESC did not act on, even while the RPM readout
+works.
 
 ---
 
@@ -108,70 +114,63 @@ fail are frames the ESC did not act on.
 
 <img src="img/log-nocard.png" width="240" alt="No card">
 
-Look at the `MOUNT` row on the SD LOG screen; it distinguishes cases that
-otherwise look identical.
+Check the `MOUNT` row on the SD LOG screen.
 
-- **`3 NOT READY`** — nothing answered on the bus. No card, or not seated.
-- **`13 NO FILESYSTEM`** with a size under `CARD` — the card is present and
-  talking, and the filesystem is the problem. Reformat as FAT32.
-- **Card inserted after boot** — press `RETRY MOUNT`. The card is only mounted
-  once at power-up and neither board has a card-detect pin.
+- **`3 NOT READY`**: nothing answered on the bus. No card, or not seated.
+- **`13 NO FILESYSTEM`** with a size under `CARD`: the card answers and the
+  filesystem is the problem. Format it as FAT32.
+- **Card inserted after boot**: press `RETRY`. The card is mounted only once,
+  at boot, and neither board has a card-detect pin.
 
 ---
 
 ## Dropped frames in a log
 
-`DROPPED FRAMES` above zero means the log has holes. Look at `BUF PEAK` and
-`WORST FLUSH`: a peak approaching the buffer size, or a flush longer than the
-buffer can cover, means the card cannot keep up.
+`DROPPED FRAMES` above zero means the log has gaps. Check `BUF PEAK` and
+`WORST FLUSH`. A peak near the buffer size (8192 bytes), or a flush longer than
+the buffer covers (about 1.1 s), means the card is too slow.
 
-Try a different card first. This is almost always the card.
+Try a different card first.
 
 ---
 
 ## AM32 will not connect
 
-The bootloader listens only briefly at power-up. **Unplug and replug the ESC
-battery while the AM32 screen is showing.** Doing it beforehand does not work.
+The bootloader listens only briefly after power-up. **Unplug and replug the
+ESC battery while the AM32 screen is open.** A power-cycle before opening the
+screen does not work.
 
-- **`REPLY NOT UNDERSTOOD`** — the link is alive and the framing is wrong.
-  Usually not an AM32 ESC.
-- **`NO VALID SETTINGS`** — something answered but the settings block was not
-  plausible. Do not write anything.
+- **`REPLY NOT UNDERSTOOD`**: the link works and the framing does not. Possible
+  cause: the ESC does not run AM32.
+- **`NO VALID SETTINGS`**: the ESC answered, and the settings block failed the
+  plausibility check. Do not write anything.
 
 ---
 
 ## My settings reset themselves
 
-They were never saved. Pole count and throttle ceiling are edited on the
-settings screen, but the button that writes them to flash is `HOLD TO SAVE` on
-**SETUP**. `UNSAVED` under the title is the warning.
+They were not saved. Pole count and throttle ceiling are edited on the
+settings screen, and `HOLD TO SAVE` on **SETUP** writes them to flash.
+`UNSAVED` under the title shows unsaved changes.
 
 ---
 
 ## KISS telemetry is off on my 2.8" board
 
-It ships that way. It is one tap to turn on: **CFG → SETUP → KISS TELEM**.
+That is the default. Turn it on under **CFG → SETUP → KISS TELEM**.
 
-The 2.8" brings out exactly two free GPIOs, and the ESC signal starts on one of
-them — so defaulting KISS to on would spend the only spare pin on a wire most
-people have not soldered. The 2.0" has a camera header's worth of spare pins and
-defaults to on for the same reason in reverse.
+The 2.8" has two free GPIOs (general-purpose input/output pins), GP28 and
+GP29, and the ESC signal starts on GP29. KISS defaults to off so that the
+spare pin is not used for a wire that may not be fitted. The 2.0" has 15 free
+GPIOs and defaults to on.
 
-Turning it on moves it to the free pin by itself; you do not have to pick. The
-pin stepper also refuses to land on whichever pin the ESC signal is using, so
-the two cannot collide.
+Turning KISS on moves the KISS pin to the other free pin if it coincides with
+the ESC pin. The pin stepper skips the ESC pin. The receiver is a PIO
+(programmable I/O) state machine and works on either pin.
 
-> **This was once genuinely impossible on the 2.8", and is not any more.** While
-> the receiver was a hardware UART it needed a pin with a UART-RX function, and
-> the only free one on that board was GP29 — the pin the ESC was already on.
-> Enabling KISS found no pin at all and validation switched it straight back
-> off. The receiver is a PIO state machine now and samples any GPIO. If you have
-> read somewhere that KISS does not work on the 2.8", that is what it was about.
-
-If it does switch itself off with `KISS OFF: NEEDS A PIN OF ITS OWN`, then both
-pins really are spoken for: move the ESC signal to the other one first, then
-enable KISS.
+If KISS switches itself off with `KISS OFF: NEEDS A PIN OF ITS OWN`, the
+stored KISS pin was not free or was the ESC pin. Move the ESC signal to the
+other pin first, then turn KISS on.
 
 ---
 
@@ -179,5 +178,5 @@ enable KISS.
 
 Open an issue at
 [github.com/subtilitas/DshotDisplay/issues](https://github.com/subtilitas/DshotDisplay/issues).
-Useful to include: which board, which image (unified or single-board), what the
-`LINK` row shows, and what the ESC is.
+Include: which board, which image (unified or single-board), what the `LINK`
+row shows, and which ESC and ESC firmware.

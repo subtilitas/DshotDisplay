@@ -2,8 +2,10 @@
 
 # Telemetry
 
-Everything on the tester screen except the pack voltage comes from the ESC. This
-page is about where each number came from and how much to trust it.
+Everything on the tester screen comes from the ESC (electronic speed
+controller), except the battery voltage in the top row, which the board
+measures itself. This page explains where each value comes from and how
+precise it is.
 
 <img src="img/tester-armed.png" width="240" alt="Telemetry tiles with EDT arriving">
 
@@ -11,17 +13,20 @@ page is about where each number came from and how much to trust it.
 
 ## Two and a half sources
 
-**eRPM** rides on the DShot signal wire itself and works on every ESC that
-supports bidirectional DShot. If the link works at all, you get RPM.
+**eRPM** (electrical revolutions per minute) comes back on the DShot signal
+wire. Every ESC that supports bidirectional DShot sends it. If the link works,
+RPM works.
 
-**EDT** — Extended DShot Telemetry — carries voltage, current, temperature,
-stress and a status byte on that same wire, interleaved between eRPM frames. It
-needs support in the ESC firmware and it needs to be switched on. The firmware
-does that for you; see below.
+**EDT** (Extended DShot Telemetry) carries voltage, current, temperature,
+stress and a status byte on the same wire, interleaved with eRPM frames. It
+needs support in the ESC firmware (BLHeli_32, Bluejay, AM32), and the ESC must
+receive an enable command. The firmware sends it; see below.
 
-**KISS telemetry** is an optional third wire from the ESC's telemetry pad. It is
-finer (0.01 V and 0.01 A against EDT's 0.25 V and 1 A steps) and it carries
-consumed mAh, which EDT has no room for at all. See
+Bidirectional DShot and EDT work on hardware. No defect is known as of v2.3.
+
+**KISS telemetry** is an optional third wire from the ESC's telemetry pad. Its
+steps are 0.01 V and 0.01 A, against EDT's 0.25 V and 1 A, and it carries
+consumed mAh, which EDT does not. See
 [the third wire](#the-optional-third-wire).
 
 ---
@@ -30,72 +35,66 @@ consumed mAh, which EDT has no room for at all. See
 
 | Tile | Source | Notes |
 |---|---|---|
-| **VOLTAGE** | KISS if fresh, else EDT | The tag on the label row says which |
+| **VOLTAGE** | KISS if fresh, else EDT | The tag on the label row names the source |
 | **CURRENT** | KISS if fresh, else EDT | Same |
-| **ESC TEMP** | KISS if fresh, else EDT | Turns red at 90 °C and above |
+| **ESC TEMP** | KISS if fresh, else EDT | Red at 90 °C and above |
 | **STRESS** | EDT only | 0–255, the ESC's own load figure. Amber above 200 |
-| **ESC STATUS** | EDT only | `OK` / `WARN` / `ERROR` / `ALERT`. Exact meaning is ESC-firmware specific |
-| **LINK** | Neither — this is our own count | Good packets per second, and the checksum error rate over the last second |
+| **ESC STATUS** | EDT only | `OK` / `WARN` / `ERROR` / `ALERT`. The meaning of each is defined by the ESC firmware |
+| **LINK** | The tester's own count | Good packets per second, and the checksum error rate over the last second. Amber above 5 % |
 
-Consumed **mAh** appears in the corner of the temperature tile, and only with
-KISS.
+Consumed **mAh** appears in the corner of the temperature tile, with KISS only.
 
 <img src="img/tester-live.png" width="240" alt="Every tile populated">
 
 ### The small `KISS` / `EDT` tag
 
-The voltage and current tiles carry a tag on their label row: cyan `KISS`, dim
-`EDT`. It is not decoration. `12.25 V` from EDT means "somewhere in a 0.25 V
-bucket"; the same reading from KISS means "within 0.01 V". If a tag drops from
-`KISS` back to `EDT`, the telemetry wire has gone quiet and the readout just got
-twenty-five times coarser without the number visibly changing.
+The voltage and current tiles carry a tag on their label row: cyan `KISS` or
+dim `EDT`. `12.25 V` from EDT means a value somewhere in a 0.25 V step. The
+same reading from KISS is within 0.01 V. When a tag changes from `KISS` to
+`EDT`, the telemetry wire has stopped and the reading is 25 times coarser,
+although the digits may not change visibly.
 
 ---
 
 ## Why a tile reads `--`
 
-Every reading expires. A value that has not been refreshed within its window
-blanks to `--` rather than holding its last number, and the RPM digits go dark
-red.
-
-This matters more than it sounds. Unplug the ESC, or swap it for a different
-one, and a display that keeps the old figures is not showing stale data — it is
-showing a plausible, confident reading from hardware that is not attached. `--`
-is the honest answer.
+Every reading expires. An EDT value not refreshed for 1 s shows `--`. After
+500 ms without eRPM, the RPM digits show a dark red zero. An ESC that is
+unplugged or replaced therefore leaves no old values on screen.
 
 <img src="img/tester-stale.png" width="240" alt="Telemetry expired">
 
-So `--` means one of:
+`--` means one of:
 
-- the ESC does not support EDT at all (you will still get RPM);
-- EDT is supported but is not switched on yet — watch the chip on the settings
-  screen and give it a moment;
+- the ESC does not support EDT (RPM still works);
+- EDT is supported but not enabled yet. Watch the chip on the settings screen;
 - the ESC stopped answering.
 
-An **expired status tile never reads `OK`**. It reads `--`. A warning indicator
-is not allowed to fail in the direction of "all clear".
+An **expired status tile reads `--`, never `OK`**.
 
 ---
 
 ## Switching EDT on
 
-You do not. The firmware does, and keeps doing it.
+The firmware does it, with no button.
 
-The rule is "is it working", not "have we asked": while an ESC is answering eRPM
-and no EDT frame has arrived for a second, the enable goes out again every
-second. Lose the link and the state resets, so an ESC connected later,
-power-cycled, or swapped for a different one gets its own enable rather than
-silently running without telemetry for the rest of the session.
+While an ESC answers with eRPM and no EDT frame has arrived for 1 s, the
+firmware sends the enable again every 1 s. After 500 ms without eRPM the state
+resets, so an ESC connected later, power-cycled or replaced gets its own
+enable.
 
-An attempt is only made when the ESC could actually act on one — the link has
-been up long enough for the ESC to have finished booting, the tester is
-disarmed, the motor is stopped, and no other command is on the wire. This
-matters because a DShot command is only executed after arriving in a run of
-identical frames, and an attempt made at the wrong moment is one thrown away.
+Each enable is 10 identical frames. It is sent only when all of these hold:
+
+- the link has been up for 300 ms, so the ESC has finished booting;
+- the tester is disarmed and the motor is stopped (eRPM is zero);
+- no other command, such as BEEP, is being sent.
+
+An ESC executes a DShot command only after a run of identical frames, so an
+enable sent at another time would be lost.
 
 <img src="img/config-edt-on.png" width="240" alt="EDT ON"> <img src="img/config-edt-off.png" width="240" alt="EDT OFF">
 
-If the chip stays red with an ESC that you know supports EDT, see
+If the chip stays red with an ESC that supports EDT, see
 [Troubleshooting](Troubleshooting#edt-stays-off).
 
 ---
@@ -104,36 +103,42 @@ If the chip stays red with an ESC that you know supports EDT, see
 
 <img src="img/tester-kiss.png" width="240" alt="Tiles fed from KISS telemetry">
 
-Most ESCs have a telemetry pad that streams a 10-byte frame on request at
-115200 baud. Wiring it up buys you finer voltage and current, and consumed mAh.
+An ESC with KISS telemetry sends a 10-byte frame at 115200 baud from its
+telemetry pad when requested. The tester requests one every 20th DShot frame,
+which is 50 Hz. The wire adds finer voltage and current, and consumed mAh.
+
+**Status:** working on hardware (owner report).
 
 | | 2.0" board | 2.8" board |
 |---|---|---|
-| **Telemetry RX** | GP5 — P1 header, pin 10 | GP28 — J4 pin 11 |
+| **Telemetry RX** | GP5, P1 header pin 10 | GP28, J4 pin 11 |
 
-It is receive-only — the board never drives that line — and **any free GPIO will
-do**, on either board. Enable it under **CFG → SETUP → KISS TELEM** and set the
-pin below it. The pin stepper skips past whichever pin the ESC signal is on, so
-the two cannot collide.
+The board only receives on this line. The receiver is a UART (universal
+asynchronous receiver-transmitter) built from a PIO (programmable I/O) state
+machine, so **any free GPIO works** on either board. GPIO means
+general-purpose input/output pin. Turn it on under
+**CFG → SETUP → KISS TELEM** and set the pin in the row below. The pin
+stepper skips the ESC signal pin.
 
-**It is on by default on the 2.0" and off on the 2.8".** That is a default, not
-a limitation: the 2.8" brings out exactly two free pins, and starting with KISS
-on would spend the spare one on a wire most people have not soldered. One tap
-turns it on, and it picks the free pin itself.
+**Default: on for the 2.0", off for the 2.8".** The 2.8" has two free pins,
+GP28 and GP29, and the ESC uses one of them. Turning KISS on moves the KISS pin
+off the ESC pin if they coincide.
 
-If the wire is unplugged mid-session, the tags drop back to `EDT` and the
-readouts get coarser. They do not freeze on the last fine value, for the same
-reason the tiles blank: a steady, precise number from a sensor that stopped
-reporting is the worst of both.
+> **Voltage.** The KISS specification puts this line at 3.6 V, which equals the
+> RP2350's absolute-maximum GPIO voltage. The level a given ESC drives is not
+> measured by this project. Measure yours before connecting it.
+
+If the wire is unplugged during a session, the tags change to `EDT` 500 ms
+after the last KISS frame, and the readings get coarser. They do not hold the
+last KISS value.
 
 ---
 
 ## LINK, and what a bad one looks like
 
-`998/S` with `0% ERR` is a healthy 1 kHz link. The error percentage turns amber
+`998/S` with `0% ERR` is a clean 1 kHz link. The error percentage turns amber
 above 5 %.
 
-A poor link usually means the signal wire: too long, unshielded, or run beside
-something noisy. Shorten it first. If that is not possible, drop **DSHOT
-KBAUD** to 300 in SETUP — the LINK row on that screen updates live, so you can
-see the effect without leaving the page.
+A poor link usually comes from the signal wire: too long, unshielded, or routed
+near motor phase wires. Shorten it first. Otherwise set **DSHOT KBAUD** to 300
+in SETUP. The `LINK` row on the SETUP screen updates live.

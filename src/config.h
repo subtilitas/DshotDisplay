@@ -7,7 +7,7 @@
  * lives in @ref board_pins.h instead, and which board you are building for is
  * @ref board.h.
  *
- * @section config_defaults Some of these are only defaults now
+ * @section config_defaults Values the board stores over these defaults
  *
  * The ESC pin, the DShot bitrate, the KISS wire, the pole count, the throttle
  * ceiling and the backlight are all changeable on the board itself and stored
@@ -17,8 +17,8 @@
  *
  * The practical consequence: editing one of those values and reflashing will
  * appear to do nothing on a board that has saved settings, because the stored
- * value wins. The SETUP screen marks each row `SAVED` or `DEFAULT` so it is
- * visible which one you are looking at.
+ * value wins. The SETUP screen shows one note line, `SAVED SETTINGS IN USE` or
+ * `COMPILED DEFAULTS IN USE`, naming which of the two is in effect.
  */
 
 #pragma once
@@ -27,7 +27,7 @@
 
 /**
  * @defgroup cfg_esc ESC connection
- * @brief Which pin the ESC is on and how fast we talk to it.
+ * @brief Which pin the ESC is on and the DShot bitrate it is driven at.
  * @{
  */
 
@@ -38,13 +38,13 @@
  * One set per board, defined unconditionally rather than selected by
  * @ref BOARD — and that is the entire point of this group.
  *
- * They used to be single macros chosen with `#if BOARD == ...`, which cannot
- * express two boards at once. A unified image had no way to say "GP4 on the
- * 2.0-inch board, GP29 on the 2.8-inch one", so the descriptors ended up
- * carrying literals and the macros quietly stopped being read by anything at
- * all: `-DDSHOT_PIN=28` configured cleanly, printed a status line saying it had
- * taken, and left the image driving GP29. CI even had a job asserting the
- * option was honoured, and it passed — it was grepping CMake's own output.
+ * A single macro chosen with `#if BOARD == ...` cannot express two boards at
+ * once, and a unified image needs "GP4 on the 2.0-inch board, GP29 on the
+ * 2.8-inch one". A descriptor that carries literals instead leaves such a
+ * macro read by nothing: the option configures cleanly, CMake prints that it
+ * took, and the image drives the descriptor's pin. A check that greps CMake's
+ * output passes on that build, so CI checks the value in the host tests, which
+ * rebuild the suite with these macros overridden.
  *
  * So each descriptor reads its own set: board_desc_lcd2.cpp takes the `_LCD_2`
  * values, board_desc_lcd2_8.cpp the `_LCD_2_8` ones. **Which set a running
@@ -87,14 +87,14 @@
 /**
  * @brief ESC signal pin the 2.8" board starts on. **GP29**.
  *
- * J4 pin 12 — the last pin on the connector, which is the easy one to find and
- * the easy one to solder to. That board has an RTC, a codec and an SD slot
- * where the other one has a camera header, so GP28 (J4 pin 11) and GP29 are the
- * only two GPIOs left unclaimed; the telemetry wire takes the other one.
+ * J4 pin 12, the end pin of the connector. That board has an RTC, a codec and
+ * an SD slot where the other one has a camera header, so GP28 (J4 pin 11) and
+ * GP29 are the only two GPIOs left unclaimed; the telemetry wire takes the
+ * other one.
  * @see KISS_PIN_LCD_2_8
  *
- * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC simply
- * never hears a frame, because the firmware is driving a pin no wire is on.
+ * Getting this wrong is quiet. Nothing errors, nothing warns — the ESC never
+ * hears a frame, because the firmware is driving a pin no wire is on.
  */
 #ifndef DSHOT_PIN_LCD_2_8
   #define DSHOT_PIN_LCD_2_8   29
@@ -208,10 +208,10 @@
  * because that board brings out exactly two pins, and defaulting to on spends
  * the spare one on a wire most people have not soldered. One tap turns it on.
  *
- * This used to be worse and silent: the KISS pin was fixed at GP5 for both
- * boards, and on the 2.8" GP5 is `PIN_RTC_INT` — the PCF85063 alarm output. The
- * firmware duly configured the RTC's interrupt line as a UART receiver and fed
- * whatever it did to the KISS decoder. Nothing errored, because nothing could.
+ * The pin is per board because the 2.0" default does not carry over: on the
+ * 2.8" GP5 is `PIN_RTC_INT`, the PCF85063 alarm output. A KISS receiver there
+ * reads the RTC's interrupt line and feeds whatever it does to the KISS
+ * decoder, with no error anywhere.
  */
 #ifndef KISS_ENABLE_LCD_2_8
   #define KISS_ENABLE_LCD_2_8  0
@@ -275,18 +275,14 @@
 /**
  * @brief How long before an unanswered EDT enable is sent again, in ms.
  *
- * The enable is not a one-shot, and used to be. It went out on the very first
- * eRPM frame — the earliest possible moment, and the worst one: an ESC answers
- * eRPM within milliseconds of power-up but will not act on a DShot command
- * until it has seen a run of valid zero-throttle frames. Miss that window and
- * nothing tried again, so the ESC reported RPM and nothing else, which is
- * indistinguishable from an ESC with no EDT support. Changing any wiring
- * setting rebuilt the pump, cleared the flag and made EDT "start working",
- * which is how the bug was found rather than how it was meant to work.
+ * The enable is not a one-shot. An ESC answers eRPM within milliseconds of
+ * power-up but does not act on a DShot command until it has seen a run of
+ * valid zero-throttle frames. A single enable that misses that window leaves
+ * the ESC reporting RPM and nothing else, which is indistinguishable from an
+ * ESC with no EDT support.
  *
- * So the rule is now the obvious one: while an ESC is answering
- * (@ref ESC_LINK_STALE_MS) and no EDT frame is arriving (@ref EDT_STALE_MS),
- * ask again this often. Long enough that ten command frames are a rounding
+ * So the rule is: while an ESC is answering (@ref ESC_LINK_STALE_MS) and no
+ * EDT frame is arriving (@ref EDT_STALE_MS), ask again this often. Long enough that ten command frames are a rounding
  * error in the stream; short enough that an ESC plugged in mid-session has EDT
  * before anyone has finished looking at the screen.
  */
@@ -295,13 +291,10 @@
 /**
  * @brief How long an ESC must have been answering before the first enable, in ms.
  *
- * The third version of this rule, and the reason for it is the criticism the
- * second one wrote down about the first and then repeated. An ESC answers eRPM
- * within milliseconds of power-up and will not act on a DShot command until it
- * has seen a run of valid zero-throttle frames, so firing on the very first
- * eRPM frame spends the attempt at close to the least likely moment for it to
- * be taken — and the retry loop that was supposed to cover for that inherited
- * a `tried` flag saying an attempt had been made, so the next one was a whole
+ * An ESC answers eRPM within milliseconds of power-up and does not act on a
+ * DShot command until it has seen a run of valid zero-throttle frames. An
+ * enable on the very first eRPM frame goes out at close to the least likely
+ * moment for it to be taken, and the next attempt is a whole
  * @ref EDT_RETRY_MS away.
  *
  * Waiting instead costs a third of a second on connect and makes the first
@@ -315,9 +308,10 @@
  *
  * The spec asks for the same command in ten successive frames. The number
  * matters less than the "successive" — a burst broken part-way through is a
- * burst no ESC counts, and this used to share one queue slot with the beacon
- * command, so pressing BEEP while an enable was going out replaced the tail of
- * it and neither command reached its repeat count. @see esc_cmd
+ * burst no ESC counts. The enable therefore has a queue slot of its own: a
+ * shared slot with the beacon command would let a BEEP press replace the tail
+ * of an enable, and neither command would reach its repeat count.
+ * @see esc_cmd
  */
 #define EDT_ENABLE_REPEATS      10
 
@@ -364,8 +358,9 @@
  * @defgroup cfg_log SD card logging
  * @brief Betaflight blackbox logs on the microSD slot.
  *
- * The card is on SPI1 with its own pins, so it does not contend with the
- * display on SPI0 for a peripheral — only for core0's time.
+ * On the 2.0" board the card is on SPI1 with its own pins and the display on
+ * SPI0. On the 2.8" board the card is on 4-bit SDIO driven by pio1. Neither
+ * shares a peripheral with the display; both share core0's time.
  * See docs/design/blackbox-logging.md.
  * @{
  */
@@ -435,8 +430,8 @@
  * @brief Contiguous space reserved per log file, in bytes.
  *
  * Pre-allocating means the FAT is not updated mid-log, which is where a long
- * unpredictable stall would otherwise come from. 16 MB is about ten minutes at
- * the default rate. Unused space is released when the file is closed.
+ * unpredictable stall would otherwise come from. 16 MiB lasts about 38 min at
+ * the default 7.3 kB/s. Unused space is released when the file is closed.
  */
 #define SD_LOG_PREALLOC_BYTES  (16u * 1024u * 1024u)
 
@@ -604,9 +599,9 @@
 /**
  * @brief Set to 1 to try forcing the bootloader by holding the signal low.
  *
- * Off by default. The reference configurator does no such thing — it simply
- * repeats the init string and relies on the window the bootloader opens at
- * power-up. Holding the line low also makes us deaf for the duration, which
+ * Off by default. The reference configurator does no such thing — it repeats
+ * the init string and relies on the window the bootloader opens at power-up.
+ * Holding the line low also leaves the firmware deaf for the duration, which
  * costs more windows than it creates.
  */
 #define AM32_FORCE_LOW_JUMP    0
@@ -621,7 +616,7 @@
  * @brief Timeout for the first reply byte of a handshake, in milliseconds.
  *
  * Kept short so a failed attempt costs little: catching the power-up window
- * depends on how often we can retry, not on how patiently we wait.
+ * depends on how often the firmware retries, not on how long it waits.
  */
 #define AM32_GREET_TMO_MS      30
 

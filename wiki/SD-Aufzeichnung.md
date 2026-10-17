@@ -2,8 +2,9 @@
 
 # SD-Aufzeichnung
 
-Jedes Telemetrie-Frame, auf microSD im Betaflight-Blackbox-Format geschrieben,
-damit sich ein Prüfstandslauf auswerten und nicht nur erinnern lässt.
+Der Tester zeichnet die Telemetrie im Betaflight-Blackbox-Format auf microSD
+auf, mit 500 Frames pro Sekunde. Ein Frame hat im Mittel 14,5 Byte (gemessen),
+also 7,3 kB/s oder 26 MB pro Stunde.
 
 <img src="img/log-screen.png" width="240" alt="SD-LOG-Bildschirm während der Aufzeichnung">
 
@@ -11,29 +12,32 @@ damit sich ein Prüfstandslauf auswerten und nicht nur erinnern lässt.
 
 ## Die Karte
 
-Jede microSD-Karte, FAT32. Steck sie möglichst vor dem Einschalten ein — die
-Karte wird einmal beim Start eingebunden, und keine der beiden Platinen hat
-einen Karten-Erkennungspin. Eine später eingesteckte Karte braucht daher die
-Schaltfläche `RETRY MOUNT`.
+Verwende eine microSD-Karte mit FAT32 (File Allocation Table). Die Karte wird
+einmal beim Start eingebunden, und keine der Platinen hat einen
+Karten-Erkennungspin. Steck die Karte vor dem Einschalten ein, oder drück nach
+dem Einstecken `RETRY` auf dem SD-LOG-Bildschirm.
 
 Die Dateien landen im Wurzelverzeichnis als `LOG00001.BFL`, `LOG00002.BFL` und
-so weiter. Die Nummer zählt hoch; nichts wird je überschrieben.
+so weiter. Jede neue Datei erhält die niedrigste freie Nummer von 00001 bis
+09999. Vorhandene Dateien werden nicht überschrieben.
+
+Die 2,0"-Platine liest die Karte über SPI (Serial Peripheral Interface) mit
+12 MHz, die 2,8" über 4-Bit-SDIO (Secure Digital I/O) mit 10 MHz.
 
 ---
 
 ## Aufzeichnen
 
 **Automatisch:** Scharfschalten startet eine Aufzeichnung, Entschärfen beendet
-sie. Das ist der Normalfall und braucht keinerlei Bedienung.
-
-**Manuell:** `START` auf dem SD-LOG-Bildschirm beginnt jederzeit eine
-Aufzeichnung, und eine von Hand gestartete Aufzeichnung überlebt das
-Scharfschalten und Entschärfen, das sie sonst gesteuert hätte. `STOP` beendet
 sie.
 
-Der Tester-Bildschirm zeigt den Zustand in der obersten Zeile: `REC` in Rot
-während der Aufzeichnung, `SD` im Leerlauf, `SDERR` bei defekter Karte, `NOSD`
-wenn keine da ist.
+**Manuell:** `START` auf dem SD-LOG-Bildschirm startet jederzeit eine
+Aufzeichnung. Eine von Hand gestartete Aufzeichnung wird durch Entschärfen
+nicht beendet. `STOP` beendet sie.
+
+Der Tester-Bildschirm zeigt den Zustand in der oberen Zeile: `REC` (rot)
+während der Aufzeichnung, `SD` im Leerlauf, `SDERR` nach einem Kartenfehler,
+`NOSD` ohne Karte.
 
 ---
 
@@ -44,39 +48,37 @@ wenn keine da ist.
 | Zeile | Bedeutung |
 |---|---|
 | **STATUS** | `NO CARD`, `READY`, `RECORDING` oder `CARD ERROR` |
-| **FILE** | Die gerade geöffnete Datei |
-| **FRAMES** | Bisher geschriebene Telemetrie-Frames |
-| **WRITTEN** | Kilobyte auf der Karte |
-| **DROPPED FRAMES** | Frames, die der Puffer nicht halten konnte. **Sollte null sein** |
-| **BUF PEAK** | Höchststand des Schreibpuffers, gegen seine Größe |
-| **WORST FLUSH** | Der längste einzelne Schreibvorgang auf die Karte, in Millisekunden |
-| **CARD** | Was die Karte über sich selbst meldet: Typ und Größe |
-| **MOUNT** | Das Ergebnis des Dateisystems. `0 OK` ist, was du willst |
+| **FILE** | Die geöffnete Datei |
+| **FRAMES** | Bisher geschriebene Frames |
+| **WRITTEN** | Geschriebene Kilobyte |
+| **DROPPED FRAMES** | Frames, die der Puffer nicht halten konnte. **Sollte null sein.** Sonst rot |
+| **BUF PEAK** | Höchster Füllstand des 8192-Byte-Schreibpuffers. Bernstein über 1/2, rot über 3/4 |
+| **WORST FLUSH** | Der längste einzelne Schreibvorgang auf die Karte, in ms. Bernstein über 50 ms |
+| **CARD** | Kartentyp und Größe, wie die Karte sie meldet |
+| **MOUNT** | Der Ergebniscode des Dateisystems. `0 OK` heißt eingebunden |
 
-Die unteren vier sind Diagnose, und interessant ist das Paar. Nähert sich
-`BUF PEAK` der Puffergröße, oder dauert ein `WORST FLUSH` länger, als der Puffer
-überbrücken kann, ist das die Warnung, dass die Karte für ihren Puffer zu
-langsam ist. `DROPPED FRAMES` über null sagt, dass sie es bereits war — die
-Aufzeichnung hat Lücken.
+Nähert sich `BUF PEAK` der Puffergröße, oder dauert ein `WORST FLUSH` länger,
+als der Puffer überbrückt (8192 Byte sind etwa 1,1 s bei 7,3 kB/s), ist die
+Karte für den Puffer zu langsam. `DROPPED FRAMES` über null heißt, die
+Aufzeichnung hat bereits Lücken.
 
-Meist ist eine langsame Karte die Ursache. Probiere zuerst eine andere.
+Meist ist eine langsame Karte die Ursache. Probiere zuerst eine andere Karte.
 
 ### Keine Karte
 
 <img src="img/log-nocard.png" width="240" alt="Keine Karte">
 
-`NO CARD` mit `MOUNT 3 NOT READY` heißt, dass auf dem Bus überhaupt nichts
-geantwortet hat — keine Karte, oder nicht richtig eingesteckt. `MOUNT 13 NO
-FILESYSTEM` mit einer Größe unter `CARD` ist das Gegenteil und viel nützlicher:
-die Karte ist da und spricht, und das Problem ist das Dateisystem. Formatiere
-sie als FAT32.
+`NO CARD` mit `MOUNT 3 NOT READY` heißt, auf dem Bus hat nichts geantwortet:
+keine Karte, oder sie sitzt nicht richtig. `MOUNT 13 NO FILESYSTEM` mit einer
+Größe unter `CARD` heißt, die Karte antwortet und das Dateisystem ist das
+Problem. Formatiere sie als FAT32.
 
 ### Eine nach dem Start eingesteckte Karte
 
-<img src="img/log-mounted.png" width="240" alt="Karte über RETRY MOUNT gefunden">
+<img src="img/log-mounted.png" width="240" alt="Karte über RETRY gefunden">
 
-`RETRY MOUNT`. Ohne diese Schaltfläche ist eine nach dem Einschalten eingelegte
-Karte nicht von einer zu unterscheiden, die die Firmware nicht lesen kann.
+Drück `RETRY`. Ohne das wird eine nach dem Einschalten eingesteckte Karte
+nicht eingebunden.
 
 ---
 
@@ -84,45 +86,41 @@ Karte nicht von einer zu unterscheiden, die die Firmware nicht lesen kann.
 
 <img src="img/log-usb-serving.png" width="240" alt="Die Karte als USB-Laufwerk">
 
-`USB DRIVE` auf dem SD-LOG-Bildschirm übergibt die Karte an das, woran das
-USB-Kabel steckt. Sie erscheint als ganz normales Wechsellaufwerk: `.BFL`-Dateien
-herüberkopieren, am Computer auswerfen, und der Tester nimmt die Karte zurück.
+`USB DRIVE` auf dem SD-LOG-Bildschirm stellt die Karte dem Computer am
+USB-Kabel (Universal Serial Bus) als Wechsellaufwerk bereit. `.BFL`-Dateien
+herüberkopieren, das Laufwerk am Computer auswerfen, und der Tester nimmt die
+Karte zurück. Der Bildschirm zeigt die bisher gelesene Datenmenge.
 
-Die Platine ist ohnehin immer ein USB-Gerät — daher kommt der Strom, und daher
-kommt der serielle Anschluss — es kommt also ein Kartenleser auf dasselbe Kabel,
-statt dass etwas Neues nötig wäre.
+Die Platine ist ohnehin ein USB-Gerät, für Strom und den seriellen Anschluss.
+Das Laufwerk ist eine zweite USB-Schnittstelle am selben Kabel.
 
-**Es wird nur gelesen.** Der Computer kann Dateien herunterkopieren und sonst
-nichts. Das ist Absicht: so kann kein Dateisystemtreiber eine Karte voller
-Messungen beschädigen, und die Nummerierung der Aufzeichnungen kann sich nicht
-unter der Firmware verändern. Meldet dein Computer, der Datenträger sei
-schreibgeschützt, dann funktioniert genau das.
+**Das Laufwerk ist schreibgeschützt.** Der Computer kann Dateien kopieren und
+nicht schreiben. Ein Dateisystemtreiber des Computers kann daher weder die
+Karte noch die Nummerierung verändern. Eine Meldung „schreibgeschützt" vom
+Computer ist zu erwarten.
 
-**Die Karte wird übergeben, nicht geteilt.** Ein FAT-Dateisystem kann zwischen
-zwei Schreibern nicht vermitteln, und Firmware und Computer sehen die Puffer des
-jeweils anderen nicht. Deshalb leert, schließt und hängt der Logger aus, bevor
-das Laufwerk erscheint, und rührt die Karte bis zum Auswerfen nicht an. Solange
-das gilt, zeigt der SD-LOG-Bildschirm die Übergabe statt seiner Zähler — die
-stünden still, und ein stillstehender Zähler, der lebendig aussieht, ist genau
-das, was diese Firmware nie zeigen will.
+**Die Karte wird übergeben, nicht geteilt.** FAT kann zwischen zwei Schreibern
+nicht vermitteln. Bevor das Laufwerk erscheint, leert, schließt und hängt der
+Logger die Karte aus, und er rührt sie bis zum Auswerfen nicht an. Währenddessen
+zeigt der SD-LOG-Bildschirm die Übergabe statt seiner Zähler.
 
-**Die Schaltfläche lehnt ab und nennt den Grund:**
+Ohne Karte ist `USB DRIVE` als nicht verfügbar gezeichnet und tut nichts.
+
+**Mit Karte lehnt die Schaltfläche in zwei Fällen ab und nennt den Grund:**
 
 <img src="img/log-usb-refused.png" width="240" alt="USB DRIVE während der Aufzeichnung abgelehnt">
 
 | Meldung | Was zu tun ist |
 |---|---|
-| `DISARM FIRST` | Ein Motor dreht. Die Übergabe hält den Logger sekundenlang an |
-| `STOP RECORDING FIRST` | Deinen Lauf zu beenden ist deine Entscheidung, nicht die der Firmware |
-| `NO CARD TO SHARE` | Es ist nichts eingebunden |
+| `DISARM FIRST` | Entschärfen. Die Übergabe hält den Logger an |
+| `STOP RECORDING FIRST` | Die Aufzeichnung beenden |
 
-**Scharfschalten ist gesperrt, solange ein Computer die Karte hat.** Du kannst
-den Bildschirm verlassen — `BACK` bricht einen laufenden Kopiervorgang nicht ab
-— der Tester-Bildschirm ist also ohne Karte erreichbar, und er schaltet erst
-wieder scharf, wenn du ausgeworfen hast.
+**Scharfschalten ist gesperrt, solange der Computer die Karte hat.** `BACK`
+verlässt den Bildschirm, ohne die Übergabe abzubrechen. Der Tester-Bildschirm
+ist also erreichbar, schaltet aber erst nach dem Auswerfen scharf.
 
-Am Computer auswerfen oder `EJECT` auf dem Bildschirm drücken. Beides tut
-dasselbe.
+Am Computer auswerfen oder `EJECT` auf dem Bildschirm drücken. Beides beendet
+die Übergabe.
 
 ---
 
@@ -132,36 +130,45 @@ dasselbe.
 
 ### [logwiju](https://subtilitas.github.io/logwiju/) — der vorgesehene Viewer
 
-Läuft im Browser, nichts zu installieren, und lädt nichts hoch: die Datei wird
-lokal gelesen. Zieh eine `.BFL`-Datei hinein, und du bekommst die Verläufe über
-der Zeit aufgetragen — Drehzahl, Spannung, Strom, Temperatur, Stress, Gas.
-
-Dafür wurden diese Aufzeichnungen gemacht, und danach greift man zuerst.
+logwiju läuft im Browser ohne Installation. Die Datei wird lokal gelesen und
+nicht hochgeladen. Zieh eine `.BFL`-Datei auf die Seite, um die Felder über der
+Zeit darzustellen.
 
 ### Betaflight Blackbox Explorer
 
-Die Dateien sind gewöhnliche Betaflight-Blackbox-Logs, also öffnet
-[Blackbox Explorer](https://blackbox.betaflight.com/) sie ebenfalls, genau wie
-das Kommandozeilenwerkzeug `blackbox_decode`. Einige Felder tragen Namen aus der
-Welt der Flugsteuerung statt der eines Prüfstands — das ist der Preis dafür, ein
-Format zu benutzen, für das es bereits Werkzeuge gibt.
+Die Dateien sind Betaflight-Blackbox-Logs, daher öffnen
+[Blackbox Explorer](https://blackbox.betaflight.com/) und das
+Kommandozeilenwerkzeug `blackbox_decode` sie ebenfalls. Einige Feldnamen
+stammen aus Flugsteuerungen, etwa `motor[0]` für das Gas.
 
 ---
 
 ## Was in einer Aufzeichnung steht
 
-Pro Frame: Zeit, Drehzahl und eRPM, Gas, Spannung, Strom, ESC-Temperatur,
-Stress, das ESC-Statusbyte, der Scharf-Zustand sowie die Paket- und Fehlerzähler.
+Felder pro Frame:
 
-Ist ein KISS-Telemetriekabel angeschlossen, werden beide Quellen zusätzlich zum
-zusammengeführten Wert getrennt aufgezeichnet — eine Aufzeichnung lässt sich so
-zur Gegenprobe verwenden, statt der Zusammenführung vertrauen zu müssen.
+| Feld | Inhalt |
+|---|---|
+| `loopIteration`, `time` | Frame-Zähler und Zeit |
+| `motor[0]` | Befohlenes Gas |
+| `eRPM[0]` | eRPM (elektrische Drehzahl) aus bidirektionalem DShot |
+| `eRPMkiss[0]` | eRPM aus KISS |
+| `vbatLatest`, `amperageLatest` | Spannung und Strom aus KISS; 0, solange KISS nicht aktiv ist |
+| `vbatEdt`, `amperageEdt` | Spannung und Strom aus EDT (Extended DShot Telemetry) |
+| `escTemperature[0]` | Temperatur des ESC (Electronic Speed Controller, Motorregler) |
+| `escConsumption` | Verbrauchte mAh (nur KISS) |
+| `escStress` | EDT-Stresswert |
+
+Das ESC-Statusbyte, der Scharf-Zustand und die Verbindungszähler werden nicht
+aufgezeichnet.
+
+Mit KISS-Kabel werden beide Quellen getrennt aufgezeichnet, sodass sich eine
+Quelle an der anderen prüfen lässt.
 
 ---
 
 ## Wenn die Karte nicht das Problem ist
 
-Die Aufzeichnung ist eine Funktion, die beim Kompilieren ein- oder ausgeschaltet
-wird, und ist standardmäßig an. Hast du die Firmware selbst mit
-`SD_LOG_ENABLE=0` gebaut, gibt es den Bildschirm weiterhin, und er meldet immer
+Die Aufzeichnung ist standardmäßig einkompiliert. Eine mit `SD_LOG_ENABLE=0`
+gebaute Firmware zeigt den SD-LOG-Bildschirm weiterhin, und er meldet immer
 `NO CARD`.

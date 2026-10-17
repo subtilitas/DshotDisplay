@@ -2,8 +2,9 @@
 
 # SD Logging
 
-Every frame of telemetry, written to microSD in Betaflight blackbox format, so a
-bench run can be plotted rather than remembered.
+The tester records telemetry to microSD in Betaflight blackbox format, at
+500 frames per second. A frame averages 14.5 bytes (measured), which is
+7.3 kB/s or 26 MB per hour.
 
 <img src="img/log-screen.png" width="240" alt="The SD LOG screen while recording">
 
@@ -11,26 +12,28 @@ bench run can be plotted rather than remembered.
 
 ## The card
 
-Any microSD card, FAT32. Insert it before powering the board on if you can — the
-card is mounted once at boot, and there is no card-detect pin on either board,
-so a card inserted afterwards needs the `RETRY MOUNT` button.
+Use a microSD card formatted FAT32 (File Allocation Table). The card is
+mounted once at boot, and neither board has a card-detect pin. Insert the card
+before power-up, or press `RETRY` on the SD LOG screen after inserting it.
 
-Files land in the card's root as `LOG00001.BFL`, `LOG00002.BFL`, and so on. The
-number goes up; nothing is ever overwritten.
+Files are written to the card root as `LOG00001.BFL`, `LOG00002.BFL`, and so
+on. Each new file takes the lowest unused number from 00001 to 09999. Existing
+files are not overwritten.
+
+The 2.0" board reads the card over SPI (Serial Peripheral Interface) at
+12 MHz, the 2.8" over 4-bit SDIO (Secure Digital I/O) at 10 MHz.
 
 ---
 
 ## Recording
 
-**Automatically:** arming starts a log, disarming stops it. That is the normal
-case and needs no interaction at all.
+**Automatic:** arming starts a log, disarming stops it.
 
-**Manually:** `START` on the SD LOG screen begins one whenever you like, and a
-log you started by hand survives the arm and disarm that would otherwise have
-controlled it. `STOP` ends it.
+**Manual:** `START` on the SD LOG screen starts a log at any time. A log
+started by hand is not stopped by a disarm. `STOP` ends it.
 
-The tester screen shows the state in its top row: `REC` in red while recording,
-`SD` while idle, `SDERR` if the card is faulty, `NOSD` if there is none.
+The tester screen shows the state in its top row: `REC` (red) while recording,
+`SD` while idle, `SDERR` after a card error, `NOSD` with no card.
 
 ---
 
@@ -40,38 +43,35 @@ The tester screen shows the state in its top row: `REC` in red while recording,
 
 | Row | Meaning |
 |---|---|
-| **STATUS** | `NO CARD`, `READY`, `RECORDING`, or `CARD ERROR` |
-| **FILE** | The file currently open |
-| **FRAMES** | Telemetry frames written so far |
-| **WRITTEN** | Kilobytes on the card |
-| **DROPPED FRAMES** | Frames the buffer could not hold. **Should be zero** |
-| **BUF PEAK** | High-water mark of the write buffer, against its size |
-| **WORST FLUSH** | The longest single write to the card, in milliseconds |
-| **CARD** | What the card reports about itself: type and size |
-| **MOUNT** | The filesystem result. `0 OK` is what you want |
+| **STATUS** | `NO CARD`, `READY`, `RECORDING` or `CARD ERROR` |
+| **FILE** | The open file |
+| **FRAMES** | Frames written so far |
+| **WRITTEN** | Kilobytes written |
+| **DROPPED FRAMES** | Frames the buffer could not hold. **Should be zero.** Red otherwise |
+| **BUF PEAK** | Highest fill of the 8192-byte write buffer. Amber above 1/2, red above 3/4 |
+| **WORST FLUSH** | The longest single write to the card, in ms. Amber above 50 ms |
+| **CARD** | Card type and size, as the card reports them |
+| **MOUNT** | The filesystem result code. `0 OK` means mounted |
 
-The bottom four are diagnostics, and the interesting one is the pair. `BUF PEAK`
-approaching the buffer size, or a `WORST FLUSH` longer than the buffer can cover,
-is the warning that the card is too slow for the buffer it has. `DROPPED FRAMES`
-above zero says it already was — the log has holes.
+`BUF PEAK` near the buffer size, or a `WORST FLUSH` longer than the buffer
+covers (8192 bytes is about 1.1 s at 7.3 kB/s), means the card is too slow for
+the buffer. `DROPPED FRAMES` above zero means the log already has gaps.
 
-A slow card is the usual cause. Try another one before anything else.
+The usual cause is a slow card. Try another card first.
 
 ### No card
 
 <img src="img/log-nocard.png" width="240" alt="No card">
 
-`NO CARD` with `MOUNT 3 NOT READY` means nothing answered on the bus at all —
-no card, or not seated. `MOUNT 13 NO FILESYSTEM` with a size shown under `CARD`
-is the opposite and much more useful: the card is present and talking, and the
-problem is the filesystem. Reformat it as FAT32.
+`NO CARD` with `MOUNT 3 NOT READY` means nothing answered on the bus: no card,
+or the card is not seated. `MOUNT 13 NO FILESYSTEM` with a size under `CARD`
+means the card answers and the filesystem is the problem. Format it as FAT32.
 
 ### A card inserted after boot
 
-<img src="img/log-mounted.png" width="240" alt="A card found by RETRY MOUNT">
+<img src="img/log-mounted.png" width="240" alt="A card found by RETRY">
 
-`RETRY MOUNT`. Without it, a card put in after power-up is indistinguishable
-from a card the firmware cannot read.
+Press `RETRY`. Without it, a card inserted after power-up is not mounted.
 
 ---
 
@@ -79,41 +79,39 @@ from a card the firmware cannot read.
 
 <img src="img/log-usb-serving.png" width="240" alt="The card served as a USB drive">
 
-`USB DRIVE` on the SD LOG screen hands the card to whatever the USB cable is
-plugged into. It appears as an ordinary removable drive; copy the `.BFL` files
-off, eject it on the computer, and the tester takes the card back.
+`USB DRIVE` on the SD LOG screen presents the card to the computer on the USB
+(Universal Serial Bus) cable as a removable drive. Copy the `.BFL` files off,
+eject the drive on the computer, and the tester takes the card back. The
+screen shows the amount read so far.
 
-The board is always a USB device — that is how it gets power and how the serial
-port works — so this adds a card reader to the same cable rather than needing
-anything new.
+The board is a USB device already, for power and the serial port. The drive is
+a second USB interface on the same cable.
 
-**It is read-only.** The computer can copy files off and nothing else. That is
-deliberate: it means a host filesystem driver cannot corrupt a card full of
-measurements, and the log numbering cannot change under the firmware's feet. If
-your computer says the disk is write protected, that is this, working.
+**The drive is read-only.** The computer can copy files and cannot write. A
+host filesystem driver therefore cannot change the card or the log numbering.
+A "write protected" message from the computer is expected.
 
-**The card is handed over, not shared.** A FAT filesystem has no way to arbitrate
-between two writers, and the firmware and your computer cannot see each other's
-caches. So the logger flushes, closes and unmounts before the drive appears, and
-touches nothing until you eject. While that is true, the SD LOG screen shows the
-handover instead of its counters — they would be frozen, and a frozen counter
-that looks live is the one thing this firmware tries never to show you.
+**The card is handed over, not shared.** FAT has no arbitration between two
+writers. Before the drive appears the logger flushes, closes and unmounts, and
+it does not touch the card until eject. Meanwhile the SD LOG screen shows the
+handover in place of its counters.
 
-**The button refuses, and says why:**
+Without a card, `USB DRIVE` is drawn unavailable and does nothing.
+
+**With a card, the button refuses in two cases, and names the reason:**
 
 <img src="img/log-usb-refused.png" width="240" alt="USB DRIVE refused while recording">
 
 | Caption | What to do |
 |---|---|
-| `DISARM FIRST` | A motor is spinning. The handover pauses the logger for seconds |
-| `STOP RECORDING FIRST` | Ending your run is your decision, not the firmware's |
-| `NO CARD TO SHARE` | Nothing is mounted |
+| `DISARM FIRST` | Disarm. The handover pauses the logger |
+| `STOP RECORDING FIRST` | Stop the recording |
 
-**Arming is blocked while a computer holds the card.** You can leave the screen —
-`BACK` does not cancel a copy in progress — so the tester screen is reachable
-with the card gone, and it will not arm until you eject.
+**Arming is blocked while the computer holds the card.** `BACK` leaves the
+screen without cancelling the handover, so the tester screen is reachable, but
+it does not arm until the card is ejected.
 
-Eject from the computer, or press `EJECT` on the screen. Both do the same thing.
+Eject on the computer, or press `EJECT` on the screen. Both end the handover.
 
 ---
 
@@ -123,36 +121,42 @@ Eject from the computer, or press `EJECT` on the screen. Both do the same thing.
 
 ### [logwiju](https://subtilitas.github.io/logwiju/) — the intended viewer
 
-Browser-based, nothing to install, and it does not upload anything: the file is
-read locally. Drop a `.BFL` file on it and you get the traces plotted against
-time — RPM, voltage, current, temperature, stress, throttle.
-
-That is the tool these logs were shaped for, and it is the one to reach for
-first.
+logwiju runs in the browser with no install. The file is read locally and not
+uploaded. Drop a `.BFL` file on the page to plot the fields against time.
 
 ### Betaflight Blackbox Explorer
 
-The files are ordinary Betaflight blackbox logs, so
-[Blackbox Explorer](https://blackbox.betaflight.com/) opens them too, as does
-the `blackbox_decode` command-line tool. Some fields are named for a flight
-controller rather than a bench tester, which is the price of using a format that
-already has tooling.
+The files are Betaflight blackbox logs, so
+[Blackbox Explorer](https://blackbox.betaflight.com/) and the
+`blackbox_decode` command-line tool open them too. Some field names come from
+flight controllers, for example `motor[0]` for the throttle.
 
 ---
 
 ## What is in a log
 
-Per frame: time, RPM and eRPM, throttle, voltage, current, ESC temperature,
-stress, the ESC status byte, arm state, and the packet/error counters.
+Fields per frame:
 
-Where a KISS telemetry wire is fitted, both sources are recorded separately as
-well as merged, so a log can be used to check one against the other rather than
-having to trust the merge.
+| Field | Content |
+|---|---|
+| `loopIteration`, `time` | Frame counter and time |
+| `motor[0]` | Commanded throttle |
+| `eRPM[0]` | eRPM (electrical RPM) from bidirectional DShot |
+| `eRPMkiss[0]` | eRPM from KISS |
+| `vbatLatest`, `amperageLatest` | Voltage and current from KISS; 0 while KISS is not live |
+| `vbatEdt`, `amperageEdt` | Voltage and current from EDT (Extended DShot Telemetry) |
+| `escTemperature[0]` | ESC (electronic speed controller) temperature |
+| `escConsumption` | Consumed mAh (KISS only) |
+| `escStress` | EDT stress value |
+
+The ESC status byte, the arm state and the link counters are not logged.
+
+With a KISS wire fitted, both sources are recorded separately, so a log can
+check one source against the other.
 
 ---
 
 ## If the card is not the problem
 
-Logging is a compile-time feature and is on by default. If you built the
-firmware yourself with `SD_LOG_ENABLE=0`, the screen still exists and will
-always report `NO CARD`.
+Logging is compiled in by default. A firmware built with `SD_LOG_ENABLE=0`
+still shows the SD LOG screen, and it always reports `NO CARD`.

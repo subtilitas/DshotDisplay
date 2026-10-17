@@ -17,21 +17,37 @@ Enforces what actually goes wrong, and nothing else:
   7. a @ref is not immediately followed by a colon -- Doxygen's reference
      grammar includes ':' so that Class::member resolves, so "@ref foo.h: and
      then some prose" is read as a reference to "foo.h:" and does not
+  8. every relative link in the running record (STATUS.md, CHANGELOG.md) and
+     the design notes (docs/design/*.md) names a file that exists, and an
+     anchor into a Markdown file names a heading that exists
 
 Deliberately narrower than Doxygen's WARN_IF_UNDOCUMENTED, which also fires on
 file-static internals. A comment on `s_scroll` saying "scroll position" is
 noise; a public function with no documentation, or an @param that silently
 stopped matching after a rename, is not.
 
-Exit status is the number of problems, so CI fails without extra plumbing.
+Exit status is the number of problems, capped at 255: a process exit status
+holds 8 bits, so an uncapped count of 256 would read as success. CI fails on
+any non-zero status without extra plumbing.
+
+Paths are resolved from the repository root, found from this file's own
+location, so the result does not depend on the directory the script is run
+from.
 """
 
 import glob
+import functools
+import os
 import re
 import sys
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(ROOT)
+
 HEADERS = sorted(glob.glob("src/*.h"))
 SOURCES = sorted(glob.glob("src/*.cpp") + glob.glob("*.ino") + HEADERS)
+LINKED_DOCS = sorted(glob.glob("STATUS.md") + glob.glob("CHANGELOG.md") +
+                     glob.glob("docs/design/*.md"))
 
 
 def collect_symbols():
@@ -53,10 +69,101 @@ def collect_symbols():
     return symbols
 
 
+# An opening code fence: up to three spaces, then three or more backticks or
+# tildes. A backtick fence may not have a backtick in its info string.
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def strip_fences(text):
+    """Drop fenced code blocks, ``` and ~~~ alike, indented at most 3 spaces.
+
+    A block closes on a fence of the same character, at least as long as the
+    opening one, with nothing after it. An unclosed block runs to the end.
+    A fence nested in a list item (indented 4 spaces or more) and an
+    indented code block are not recognised: links inside them are checked.
+    No checked document uses either form.
+    """
+    out, fence = [], None
+    for line in text.splitlines(keepends=True):
+        m = FENCE.match(line.rstrip("\n"))
+        if fence is None:
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence = m.group(1)
+            else:
+                out.append(line)
+        elif (m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence)
+              and not m.group(2).strip()):
+            fence = None
+    return "".join(out)
+
+
+def strip_code(text):
+    """Drop fenced blocks and inline code spans; brackets there are not links."""
+    return re.sub(r"`[^`\n]*`", "", strip_fences(text))
+
+
+def heading_text(title):
+    """A heading's rendered text: links become their label, markup is dropped.
+
+    Emphasis delimiters (* and _ at the edge of a word) are markup, so
+    '## _ital_' renders as 'ital'. An underscore inside a word, as in
+    'snake_case', and anything inside a code span are literal text.
+    """
+    title = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", title)   # [label](url)
+    title = re.sub(r"<[^>]+>", "", title)                         # inline HTML
+    parts = re.split(r"(`[^`]*`)", title)
+    for i in range(0, len(parts), 2):                             # outside code
+        parts[i] = re.sub(r"(?<![\w\\])[*_]+|(?<!\\)[*_]+(?!\w)", "", parts[i])
+    return "".join(parts).replace("`", "")
+
+
+@functools.lru_cache(maxsize=None)
+def heading_anchors(path):
+    """The anchors GitHub generates for the headings of a Markdown file."""
+    anchors, seen = set(), {}
+    text = strip_fences(open(path, encoding="utf-8").read())
+    for title in re.findall(r"^#{1,6}\s+(.*?)\s*#*\s*$", text, re.M):
+        slug = re.sub(r"[^\w\- ]", "", heading_text(title).lower()).replace(" ", "-")
+        n = seen.get(slug, 0)
+        seen[slug] = n + 1
+        anchors.add(slug if n == 0 else f"{slug}-{n}")
+    return frozenset(anchors)
+
+
+def check_links(path):
+    """Rule 8: relative links in one Markdown file resolve."""
+    problems = []
+    # Code is not prose: a fenced block or an inline span may hold brackets.
+    text = strip_code(open(path, encoding="utf-8").read())
+    # Inline links: <angle-bracketed> targets may hold spaces and parentheses;
+    # bare targets may hold one level of balanced parentheses. A title in
+    # double quotes, single quotes or parentheses may follow.
+    title = r"""(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?"""
+    targets = re.findall(r"\]\(\s*<([^>]+)>" + title + r"\s*\)", text)
+    targets += re.findall(r"\]\(\s*((?:[^()\s<]|\([^()\s]*\))+)" + title + r"\s*\)", text)
+    # Reference definitions; [^1]: is a footnote, not a link.
+    targets += re.findall(r"^\s*\[(?!\^)[^\]]+\]:\s*<?([^\s>]+)>?", text, re.M)
+    for target in targets:
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", target):
+            continue                      # https:, mailto: -- not ours to check
+        file_part, _, anchor = target.partition("#")
+        dest = os.path.normpath(os.path.join(os.path.dirname(path), file_part)) \
+            if file_part else path
+        if not os.path.exists(dest):
+            problems.append(f"{path}: link '{target}' names a missing file")
+        elif anchor and dest.endswith(".md") and anchor not in heading_anchors(dest):
+            problems.append(f"{path}: link '{target}' names a missing heading")
+    return problems
+
+
 def main():
     problems = []
     documented = 0
     symbols = collect_symbols()
+
+    if not SOURCES:
+        print(f"no sources found under {ROOT}/src")
+        return 1
 
     for path in SOURCES:
         text = open(path, encoding="utf-8").read()
@@ -147,12 +254,17 @@ def main():
             if not before.endswith("*/"):
                 problems.append(f"{path}: {m.group(2)}() has no doc comment")
 
-    print(f"checked {len(SOURCES)} files, {documented} documented signatures")
+    # --- 8. relative links in the running record and design notes ---
+    for path in LINKED_DOCS:
+        problems.extend(check_links(path))
+
+    print(f"checked {len(SOURCES)} files, {documented} documented signatures, "
+          f"links in {len(LINKED_DOCS)} documents")
     if problems:
         print(f"\n{len(problems)} problem(s):")
         for p in problems:
             print(f"  {p}")
-        return len(problems)
+        return min(len(problems), 255)
     print("documentation checks passed")
     return 0
 
