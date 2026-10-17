@@ -10,7 +10,9 @@
  * finds the firmware's tusb_config.h, which turns on the MSC (mass storage
  * class) driver. That driver needs these callbacks at link time. sdtest's
  * USB descriptors come from pico_stdio_usb and offer no MSC interface, so a
- * host never reaches them; each answers "not ready" in case one does.
+ * host never reaches them. In case one does, test_unit_ready answers not
+ * ready, and read10, write10 and every other SCSI command answer with an
+ * error.
  */
 
 #include <string.h>

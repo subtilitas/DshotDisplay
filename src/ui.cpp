@@ -567,8 +567,8 @@ static void drawStatusBar() {
 		gfxRect(4, 21, 92 * progress / 100, 2, C_LIME);
 	}
 
-	// DSERR when the driver refused the pin: no PIO block could take it, so
-	// nothing is on the wire at any rate. @see EscTelemetry::initError
+	// DSERR when the driver's state-machine setup on pio0 failed: nothing is
+	// on the wire. @see EscTelemetry::initError
 	char buf[24];
 	if (pumpErr) {
 		gfxText(104, 3, "DSERR", C_AMBER, 1);

@@ -360,7 +360,7 @@ void escTaskConfigure(uint8_t dshotPin, uint16_t dshotKbaud,
 uint8_t escTaskDshotPin();
 
 /**
- * @brief DShot bitrate the pump is currently using.
+ * @brief DShot bitrate last configured for the pump.
  * @return 150, 300, 600 or 1200, in kbit/s: the value escTaskConfigure() last
  *         set, which the pump binds at on its next escTaskPoll().
  */

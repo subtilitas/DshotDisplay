@@ -453,8 +453,8 @@ tile with KISS only. EDT does not carry it.
 
 The tester's top row shows `DS` plus the bitrate the DShot driver runs at,
 as set under SETUP, cyan once an EDT enable has been sent. `DSERR` in amber
-replaces it when the driver could not claim its two PIO state machines;
-nothing is sent to the ESC then.
+replaces it when the DShot driver could not set up its PIO state machine on
+pio0; nothing is sent to the ESC then.
 
 ---
 

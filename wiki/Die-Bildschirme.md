@@ -27,7 +27,8 @@ Tester. Der Tester ist die Wurzel und hat keinen Kopfbereich.
 - `DS` und die DShot-Bitrate in kbit/s, wie im SETUP eingestellt, cyan,
   sobald eine EDT-Freigabe (Extended DShot Telemetry) gesendet wurde. `DSERR`
   in Bernstein ersetzt sie, wenn die Anzeige ihren DShot-Ausgang nicht
-  einrichten konnte; dann wird nichts an den ESC gesendet;
+  einrichten konnte; dann wird nichts an den ESC (Electronic Speed Controller, Motorregler)
+  gesendet;
 - der Aufzeichnungszustand: `REC`, `SD`, `SDERR` oder `NOSD`
   (siehe [SD-Aufzeichnung](SD-Aufzeichnung));
 - die Spannung des platineneigenen Akkus, gemessen über den
@@ -36,7 +37,7 @@ Tester. Der Tester ist die Wurzel und hat keinen Kopfbereich.
   die Leerlaufsperre ersetzt `IDLE ns` in Bernstein die Spannung.
 
 **Drehzahl.** Mechanische Drehzahl (RPM, Umdrehungen pro Minute), berechnet
-aus der vom ESC (Electronic Speed Controller, Motorregler) gemeldeten eRPM
+aus der vom ESC gemeldeten eRPM
 (elektrische Drehzahl) und der Polzahl. Der `ERPM`-Wert und die Polzahl stehen
 darunter. Grüne Ziffern: eRPM ist in den letzten 500 ms eingetroffen.
 Dunkelrote Null: nicht, und die Zeile zeigt `NO TELEMETRY`.
