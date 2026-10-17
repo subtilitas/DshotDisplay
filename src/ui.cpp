@@ -725,7 +725,8 @@ static void drawTelemetry() {
 	             (r.stressFrom != EscSource::None && r.stress > 200) ? C_AMBER : C_TEXT);
 
 	static const char *STATUS_TXT[4] = {"OK", "WARN", "ERROR", "ALERT"};
-	static const uint16_t STATUS_COL[4] = {C_LIME, C_AMBER, C_RED, C_MAGENTA};
+	// Not static: the colours come from the theme in force at this draw.
+	const uint16_t STATUS_COL[4] = {C_LIME, C_AMBER, C_RED, C_MAGENTA};
 	drawLabelled(cx[0], cy[2], cw, ch, "ESC STATUS",
 	             status < 0 ? "--" : STATUS_TXT[status],
 	             status < 0 ? C_DIM : STATUS_COL[status]);

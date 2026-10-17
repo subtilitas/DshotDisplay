@@ -882,6 +882,7 @@ static void testSetupDisplay() {
 
 	checkTrue("starts in the dark theme", themeGet() == Theme::Dark);
 	uint16_t darkBg = C_BG;
+	const uint16_t darkLime = C_LIME;
 
 	tap(SET_TOGGLE_X, SET_R_CONTRAST);
 	checkTrue("toggle switches the theme", themeGet() == Theme::HighContrast);
@@ -908,6 +909,25 @@ static void testSetupDisplay() {
 	feedLiveTelemetry();
 	frames(3);
 	fakeDumpFrame("shot_tester_contrast.ppm");
+	{
+		// The tester's lime follows the theme: no pixel keeps the dark
+		// theme's lime, and the ESC STATUS tile (x 1, y 199, 118 x 33 px)
+		// reads OK in the high-contrast lime. A function-level static colour
+		// table, filled on the first draw, would keep that tile in dark lime.
+		const uint16_t *hc = g_theme;
+		bool inHc = false;
+		for (int i = 0; i < TC_COUNT; i++) inHc = inHc || hc[i] == darkLime;
+		int stale = 0;
+		const uint16_t *fb = gfxBuffer();
+		for (int i = 0; i < GFX_W * GFX_H; i++) stale += fb[i] == darkLime;
+		checkTrue("dark lime is not a high-contrast colour", !inHc);
+		checkInt("no pixel keeps the dark theme's lime", stale, 0);
+		int tileLime = 0;
+		for (int y = 199; y < 199 + 33; y++)
+			for (int x = 1; x < 1 + 118; x++)
+				tileLime += fb[y * GFX_W + x] == C_LIME;
+		checkTrue("ESC STATUS reads in the high-contrast lime", tileLime > 0);
+	}
 	tap(BTN_CFG_X, BTN_ARM_Y);
 	tap(BTN_SETUP_X, BTN_AM32_Y);
 	frames(2);
