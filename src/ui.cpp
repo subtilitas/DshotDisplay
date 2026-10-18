@@ -294,6 +294,7 @@ static uint16_t s_throttle = 0;
 #define s_poles       (settings()->poles)
 
 static bool     s_armPressing = false;
+static bool     s_armLive = false;
 static uint32_t s_armPressStart = 0;
 static uint32_t s_zeroSince = 0;
 static uint32_t s_lastTouchMs = 0;
@@ -1329,8 +1330,15 @@ static void handleMainTouch() {
 	// with the card gone, and arming there would spin a motor whose telemetry
 	// cannot be recorded and whose interlocks assume a logger that is not
 	// listening. @see usb_msc.h
-	if (mscHoldsCard(mscGetState())) {
+	// Only a press that lands on ARM while arming is allowed is timed.
+	bool cardHeld = mscHoldsCard(mscGetState());
+	if (!s_touch.down)
+		s_armLive = false;
+	else if (s_touch.pressed)
+		s_armLive = !s_armed && pressing(BTN_ARM, s_touch);
+	if (cardHeld) {
 		s_armPressing = false;
+		s_armLive = false;
 	} else if (pressing(BTN_ARM, s_touch)) {
 		if (s_armed) {
 			// Disarm is instant, on press. The one control that deliberately
@@ -1345,6 +1353,8 @@ static void handleMainTouch() {
 				backlightDip();
 				invalidateAll();
 			}
+		} else if (!s_armLive) {
+			s_armPressing = false;
 		} else {
 			if (!s_armPressing) {
 				s_armPressing = true;
@@ -1365,6 +1375,7 @@ static void handleMainTouch() {
 				s_throttle = 0;
 				escSetArmed(true);
 				s_armPressing = false;
+				s_armLive = false;
 				backlightDip();
 				invalidateAll();
 			}
@@ -1420,6 +1431,7 @@ void uiInit() {
 	s_hold = false;
 	s_throttle = 0;
 	s_armPressing = false;
+	s_armLive = false;
 	s_dragging = false;
 	s_padDragging = false;
 	s_padEngaged = false;
