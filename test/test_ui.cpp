@@ -1261,6 +1261,48 @@ static void testDisarmButton() {
 }
 
 /**
+ * @brief HOLD TO ARM times only a press that landed on it while arming was
+ *        allowed.
+ *
+ * Two presses that began while arming was refused: the press that disarms,
+ * kept on the button, and a press made while a USB host holds the card,
+ * kept on the button after the host lets go. Neither arms, however long it
+ * stays.
+ */
+static void testArmNeedsLivePress() {
+	section("Safety: HOLD TO ARM times only a press that landed while it was live");
+
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(4);
+	holdToArm();
+	checkTrue("armed to begin with", uiArmed());
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	checkTrue("the press disarms", !uiArmed());
+	for (int i = 0; i < 80; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	checkTrue("the press that disarmed, held 2000 ms, does not arm again", !uiArmed() && !fakeArmed());
+	fakeRelease(); frames(2);
+	holdToArm();
+	checkTrue("a new press arms", uiArmed());
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	fakeRelease(); frames(2);
+
+	fakeMscSet(MscState::Serving, 0);
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	for (int i = 0; i < 10; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	fakeMscSet(MscState::Idle, 0);
+	for (int i = 0; i < 80; i++) { fakeHold(BTN_ARM_X, BTN_ARM_Y); frames(1); }
+	checkTrue("a press made while a host held the card, held 2000 ms after, does not arm",
+	          !uiArmed() && !fakeArmed());
+	fakeRelease(); frames(2);
+	holdToArm();
+	checkTrue("a new press once the card is back arms", uiArmed());
+	fakePress(BTN_ARM_X, BTN_ARM_Y); frames(1);
+	fakeRelease(); frames(2);
+}
+
+/**
  * @brief Both rails are reachable without a finger on the panel's rim.
  *
  * Reported from a 2" board: a ceiling set to 20 % that would only ever reach
@@ -2190,6 +2232,7 @@ void runUiTests() {
 	testRailReAnchor();
 	testDisarmButton();
 	testThrottleRailsAreReachable();
+	testArmNeedsLivePress();
 	testThrottleBarStopsAtTheButtons();
 	testCeilingBindsInRelativeMode();
 	testDisarmedThrottleBackstop();

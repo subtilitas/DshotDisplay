@@ -105,6 +105,10 @@ its own wire. AM32 is an open-source ESC firmware.
   preallocation of 16 MiB lasts about 38 min, SETUP shows one note line for
   saved settings or compiled defaults, and the card interface differs per
   board.
+- HOLD TO ARM times only a press that lands on it while arming is allowed.
+  The press that disarms, kept on the button, armed again 1000 ms later, and
+  a press made while a USB host held the card armed 1000 ms after the host
+  let go.
 
 ## [2.3] - 2026-08-26
 

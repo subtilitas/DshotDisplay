@@ -292,6 +292,9 @@ Two constraints on these dependencies:
 
 - **HOLD TO ARM**: press and hold for 1 s (`ARM_HOLD_MS`). Arming is refused
   unless the throttle has been at zero for 250 ms (`ARM_ZERO_THROTTLE_MS`).
+  The hold counts only for a press that starts on the button while disarmed
+  and while no USB host holds the card. The press that disarms, kept down,
+  does not arm again.
   Once armed the button reads **DISARM** and acts on touch-down.
 - **Throttle bar**: the gesture depends on HOLD.
 
@@ -882,7 +885,7 @@ target so a test run does not leave the working tree dirty.
 `python3 tools/coverage.py` writes the figure below from its gcov counters.
 
 <!-- coverage:start -->
-Host-suite line coverage of `src/` is **96.3%**: 1,890 of 1,962 lines in 20 files. CI fails below 93% in total or below 85% in any file.
+Host-suite line coverage of `src/` is **96.3%**: 1,900 of 1,972 lines in 20 files. CI fails below 93% in total or below 85% in any file.
 <!-- coverage:end -->
 
 `sd_log.cpp` cannot be linked on the host (FatFs and the SPI driver come with it), so the

@@ -117,7 +117,9 @@ Ohne Karte ist `USB DRIVE` als nicht verfügbar gezeichnet und tut nichts.
 
 **Scharfschalten ist gesperrt, solange der Computer die Karte hat.** `BACK`
 verlässt den Bildschirm, ohne die Übergabe abzubrechen. Der Tester-Bildschirm
-ist also erreichbar, schaltet aber erst nach dem Auswerfen scharf.
+ist also erreichbar, schaltet aber erst nach dem Auswerfen scharf. Ein Druck,
+der beginnt, solange der Computer die Karte hat, schaltet auch nach dem
+Auswerfen nicht scharf. Neu drücken.
 
 Am Computer auswerfen oder `EJECT` auf dem Bildschirm drücken. Beides beendet
 die Übergabe.
