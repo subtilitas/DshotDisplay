@@ -452,10 +452,10 @@ bool uiSetupTick(const TouchState *t) {
 	d = stepDir(t, R_BACKLIGHT);
 	if (repeatFires(&s_backlightRep, d, millis())) {
 		if (d < 0) {
-			// Stops at 16, the validator's floor: 40 - 32 would be 8,
-			// which the validator lifts back with an ADJUSTED note.
-			s->backlight = (uint8_t)(s->backlight < 16 + BACKLIGHT_STEP
-			                             ? 16 : s->backlight - BACKLIGHT_STEP);
+			// Stops at BACKLIGHT_MIN, the validator's floor: 40 - 32 would
+			// be 8, which the validator lifts back with an ADJUSTED note.
+			s->backlight = (uint8_t)(s->backlight < BACKLIGHT_MIN + BACKLIGHT_STEP
+			                             ? BACKLIGHT_MIN : s->backlight - BACKLIGHT_STEP);
 		} else {
 			int v = s->backlight + BACKLIGHT_STEP;
 			s->backlight = (uint8_t)(v > 255 ? 255 : v);

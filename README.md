@@ -403,7 +403,7 @@ settings screen.*
 | **KISS TELEM** | Whether to listen for the telemetry wire. Turning it on moves the KISS pin off the ESC pin if they coincide |
 | **KISS PIN** | Steps through the same free GPIOs, skipping the ESC pin. The receiver is a PIO state machine, so any free GPIO works |
 | **CONTRAST** | `NORMAL` or `HIGH`. See below |
-| **BACKLIGHT** | 16–255 in steps of 32. High contrast forces 255 while on |
+| **BACKLIGHT** | 16–255 in steps of 32, held at 16 and 255. High contrast forces 255 while on |
 | **LINK** | Live packets per second and checksum error rate. Green when packets arrive, amber above 5 % errors |
 
 A wrong ESC pin produces no error: the ESC receives no frames. **LINK** on this

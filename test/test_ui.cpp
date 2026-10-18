@@ -897,11 +897,13 @@ static void testSetupBacklightFloor() {
 	enterSetup();
 	settings()->backlight = 40;
 	tap(SET_MINUS_X, SET_R_BACKLIGHT);
-	checkInt("40, then - : 16, the floor", settings()->backlight, 16);
+	// The value alone does not tell the old step from the new: validation
+	// lifted the old 8 back to 16 as well. The note does.
+	checkInt("40, then - : 16, the floor", settings()->backlight, BACKLIGHT_MIN);
 	checkTrue("no ADJUSTED note: the note reads UNSAVED",
 	          setupNoteIs("UNSAVED - HOLD SAVE TO KEEP", C_AMBER));
 	tap(SET_MINUS_X, SET_R_BACKLIGHT);
-	checkInt("- at 16 stays at 16", settings()->backlight, 16);
+	checkInt("- at 16 stays at 16", settings()->backlight, BACKLIGHT_MIN);
 	tap(SET_RESET_X, SET_SAVE_Y);
 	tap(BACK_X, BACK_Y);
 	frames(2);

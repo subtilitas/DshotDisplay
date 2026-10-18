@@ -102,7 +102,7 @@ Flash schreibt.
 | **KISS TELEM** | Ob auf dem optionalen dritten Telemetriekabel empfangen wird |
 | **KISS PIN** | GPIO für dieses Kabel. Überspringt den ESC-Pin, sodass beide nie zusammenfallen |
 | **CONTRAST** | `NORMAL` oder `HIGH`. Hoher Kontrast ist für Tageslicht |
-| **BACKLIGHT** | 16–255, in Schritten von 32 |
+| **BACKLIGHT** | 16–255, in Schritten von 32, mit Halt bei 16 und 255 |
 
 **LINK** unter den Zeilen ist live: Pakete pro Sekunde und Fehlerrate. Grün
 heißt, es kommen Pakete an, der ESC-Pin stimmt also. Bernstein heißt, mehr als
