@@ -428,8 +428,11 @@ void escTaskPoll() {
 	applyTelemetry(type, value);
 
 	// 2. Decide what to send.
+	// The stamp first, so millis() is never older than it; escUiAlive() also
+	// tolerates a newer stamp as a backstop.
+	uint32_t hb = s_heartbeatMs;
 	uint32_t ms = millis();
-	bool uiAlive = (uint32_t)(ms - s_heartbeatMs) < UI_HEARTBEAT_TIMEOUT_MS;
+	bool uiAlive = escUiAlive(ms, hb, UI_HEARTBEAT_TIMEOUT_MS);
 
 	// Keep asking for EDT while an ESC is answering and EDT is not arriving.
 	// Every timestamp read here is written by applyTelemetry() on this core, so
