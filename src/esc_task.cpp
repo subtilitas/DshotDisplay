@@ -428,8 +428,8 @@ void escTaskPoll() {
 	applyTelemetry(type, value);
 
 	// 2. Decide what to send.
-	// The heartbeat first, then the clock: a stamp read after the clock can be
-	// newer than it, and escUiAlive() accepts a stamp less than 250 ms newer.
+	// The stamp first, so millis() is never older than it; escUiAlive() also
+	// tolerates a newer stamp as a backstop.
 	uint32_t hb = s_heartbeatMs;
 	uint32_t ms = millis();
 	bool uiAlive = escUiAlive(ms, hb, UI_HEARTBEAT_TIMEOUT_MS);

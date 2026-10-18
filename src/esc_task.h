@@ -265,10 +265,15 @@ struct EscFrame {
  * @brief Whether core0's heartbeat is fresh. Pure; host-testable.
  *
  * Alive while the stamp is less than @p timeoutMs old, or less than
- * @p timeoutMs newer than @p nowMs. Core0 writes the stamp while core1 reads
- * the clock and the stamp one after the other, so the stamp can be up to one
- * millisecond ahead of the clock core1 read. Taken as an age, that stamp
- * would be about 49 days old and the UI dead for one frame.
+ * @p timeoutMs newer than @p nowMs. escTaskPoll() reads the stamp before
+ * millis(), so the clock is never older than the stamp. The newer-stamp
+ * clause is a backstop: a caller that read the clock first, with core0
+ * stamping between the two reads, would otherwise judge the stamp
+ * 2^32 - 1 ms old and the UI dead for one frame.
+ *
+ * Like any unsigned age, the rule has a wrap alias: a stamp that has not
+ * changed for about 49.7 days reads alive for 2 * @p timeoutMs - 1 ms around
+ * each wrap of millis(), 499 ms at 250 ms.
  *
  * @param nowMs       millis() on core1.
  * @param heartbeatMs millis() of the last escHeartbeat().
