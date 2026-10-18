@@ -64,6 +64,11 @@ its own wire. AM32 is an open-source ESC firmware.
 
 ### Fixed
 
+- A UI heartbeat written between core1's read of the clock and its read of
+  the heartbeat counts as fresh. It read as about 49 days old and forced one
+  zero-throttle frame while armed. Core1 reads the heartbeat first, and
+  `escUiAlive()` counts a heartbeat less than 250 ms newer than the clock as
+  alive.
 - The ESC STATUS tile on the tester follows the theme. Its colour table was a
   function-level static filled on the first draw, so after a switch to high
   contrast under SETUP the tile kept the dark theme's colours. A host test

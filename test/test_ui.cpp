@@ -1428,6 +1428,18 @@ static void testFrameAction() {
 	checkInt("a dead UI forces the throttle to zero", f.throttle, 0);
 	checkTrue("still a throttle frame, not silence", !f.sendCommand);
 
+	// The heartbeat rule that decides uiAlive, across a millis() wrap.
+	const uint32_t T = UI_HEARTBEAT_TIMEOUT_MS;
+	checkTrue("heartbeat 249 ms old: alive", escUiAlive(1249, 1000, T));
+	checkTrue("250 ms old: dead", !escUiAlive(1250, 1000, T));
+	checkTrue("1 ms newer than the clock: alive", escUiAlive(1000, 1001, T));
+	checkTrue("249 ms newer: alive", escUiAlive(1000, 1249, T));
+	checkTrue("250 ms newer: dead", !escUiAlive(1000, 1250, T));
+	checkTrue("1 ms newer across the wrap: alive", escUiAlive(0xFFFFFFFFu, 0, T));
+	checkTrue("249 ms old across the wrap: alive", escUiAlive(149, 0xFFFFFF9Cu, T));
+	checkTrue("250 ms old across the wrap: dead", !escUiAlive(150, 0xFFFFFF9Cu, T));
+	checkTrue("2^31 ms old: dead", !escUiAlive(0x90000000u, 0x10000000u, T));
+
 	// Disarmed means zero whatever was last commanded.
 	f = escFrameAction(false, true, 1500, 0, 0, false);
 	checkInt("disarmed forces zero", f.throttle, 0);

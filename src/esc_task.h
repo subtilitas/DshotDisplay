@@ -262,6 +262,26 @@ struct EscFrame {
 };
 
 /**
+ * @brief Whether core0's heartbeat is fresh. Pure; host-testable.
+ *
+ * Alive while the stamp is less than @p timeoutMs old, or less than
+ * @p timeoutMs newer than @p nowMs. Core0 writes the stamp while core1 reads
+ * the clock and the stamp one after the other, so the stamp can be up to one
+ * millisecond ahead of the clock core1 read. Taken as an age, that stamp
+ * would be about 49 days old and the UI dead for one frame.
+ *
+ * @param nowMs       millis() on core1.
+ * @param heartbeatMs millis() of the last escHeartbeat().
+ * @param timeoutMs   @ref UI_HEARTBEAT_TIMEOUT_MS.
+ * @return            True while the UI counts as alive.
+ */
+static inline bool escUiAlive(uint32_t nowMs, uint32_t heartbeatMs,
+                              uint32_t timeoutMs) {
+	return (uint32_t)(nowMs - heartbeatMs) < timeoutMs ||
+	       (uint32_t)(heartbeatMs - nowMs) < timeoutMs;
+}
+
+/**
  * @brief Decide what one DShot frame carries. Pure; host-testable.
  *
  * Extracted for the same reason edtAutoAction() was: esc_task.cpp pulls in the
