@@ -92,7 +92,8 @@ If the ESC is powered and wired and this does not change, see
 
 <img src="img/tester-armed.png" width="240" alt="Armed, with telemetry arriving">
 
-To stop, press `DISARM`. It acts on touch.
+To stop, press `DISARM`. It acts on touch. The press that disarms, kept down,
+does not arm again: arming needs a new press that starts on the button.
 
 ---
 
