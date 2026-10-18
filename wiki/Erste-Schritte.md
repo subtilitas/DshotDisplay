@@ -99,8 +99,9 @@ Antwortet kein ESC, zeigt der Bildschirm `NO TELEMETRY` unter der Drehzahl,
 <img src="img/tester-armed.png" width="240" alt="Scharf, mit eintreffender Telemetrie">
 
 Zum Stoppen `DISARM` drücken. Es wirkt beim Berühren. Der Druck, der
-entschärft, schärft nicht erneut, auch wenn der Finger liegen bleibt:
-Scharfschalten braucht einen neuen Druck, der auf der Schaltfläche beginnt.
+entschärft, schaltet nicht wieder scharf, auch wenn der Finger liegen bleibt.
+Zum Scharfschalten braucht es einen neuen Druck, der auf der Schaltfläche
+beginnt.
 
 ---
 

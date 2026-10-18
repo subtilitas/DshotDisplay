@@ -293,7 +293,7 @@ Two constraints on these dependencies:
 - **HOLD TO ARM**: press and hold for 1 s (`ARM_HOLD_MS`). Arming is refused
   unless the throttle has been at zero for 250 ms (`ARM_ZERO_THROTTLE_MS`).
   The hold counts only for a press that starts on the button while disarmed
-  and while no USB host holds the card: the press that disarms, kept down,
+  and while no USB host holds the card. The press that disarms, kept down,
   does not arm again.
   Once armed the button reads **DISARM** and acts on touch-down.
 - **Throttle bar**: the gesture depends on HOLD.
