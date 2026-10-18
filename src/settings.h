@@ -47,6 +47,9 @@
  */
 #define SETTINGS_VERSION 2
 
+/** @brief Lowest backlight level: below it the panel looks dead. */
+#define BACKLIGHT_MIN 16
+
 /** @brief The persisted settings. */
 struct Settings {
 	/**
@@ -69,7 +72,7 @@ struct Settings {
 	uint8_t  kissPin;      /**< GPIO the ESC's telemetry pad connects to. Any free one. */
 	uint8_t  poles;        /**< Motor pole count, for eRPM to RPM. */
 	uint16_t maxThrottle;  /**< Throttle ceiling, out of 0..2000. */
-	uint8_t  backlight;    /**< Preferred backlight level, 0..255. */
+	uint8_t  backlight;    /**< Preferred backlight level, @ref BACKLIGHT_MIN to 255. */
 	uint8_t  highContrast; /**< Non-zero selects @ref Theme::HighContrast. */
 };
 

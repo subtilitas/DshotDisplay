@@ -189,7 +189,7 @@ bool settingsValidate(Settings *s) {
 	if (s->highContrast != 0 && s->highContrast != 1) { s->highContrast = 1; ok = false; }
 
 	// --- backlight: never so dim the panel looks dead ---
-	if (s->backlight < 16) { s->backlight = 16; ok = false; }
+	if (s->backlight < BACKLIGHT_MIN) { s->backlight = BACKLIGHT_MIN; ok = false; }
 
 	return ok;
 }

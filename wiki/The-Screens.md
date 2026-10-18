@@ -98,7 +98,7 @@ flash.
 | **KISS TELEM** | Whether to listen on the optional third telemetry wire |
 | **KISS PIN** | GPIO for that wire. Skips the ESC pin, so the two never coincide |
 | **CONTRAST** | `NORMAL` or `HIGH`. High contrast is for daylight |
-| **BACKLIGHT** | 16–255, in steps of 32 |
+| **BACKLIGHT** | 16–255, in steps of 32, held at 16 and 255 |
 
 **LINK** below the rows is live: packets per second and error rate. Green
 means packets are arriving, so the ESC pin is correct. Amber means more than
