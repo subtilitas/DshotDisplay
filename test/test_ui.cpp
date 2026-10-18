@@ -635,6 +635,7 @@ static void testSettingsCommandRow() {
 #define SET_SAVE_X     83  // SAVE_X 8, SAVE_W 150
 #define SET_SAVE_Y    274  // FOOT_Y 254, FOOT_H 40
 #define SET_RESET_X   198
+#define SETUP_NOTE_Y  236  // NOTE_Y in ui_setup.cpp, the note line
 #define SAVE_BAR_X     8   // progress bar spans SAVE_X..+SAVE_W
 #define SAVE_BAR_Y   250   // FOOT_Y - 4
 
@@ -868,6 +869,42 @@ static void testSetupKiss() {
 		          settings()->kissPin != settings()->dshotPin);
 	}
 	tap(SET_TOGGLE_X, SET_R_KISS);
+}
+
+/**
+ * @brief Whether SETUP's note line, y 236, reads @p text in @p col: the line
+ *        is redrawn with it into a copy and compared, and the frame restored.
+ */
+static bool setupNoteIs(const char *text, uint16_t col) {
+	uint16_t *fb = gfxBuffer();
+	uint16_t keep[8][GFX_W];
+	memcpy(keep, fb + SETUP_NOTE_Y * GFX_W, sizeof(keep));
+	uint32_t shown = fakeRegionHash(0, SETUP_NOTE_Y, GFX_W, 8);
+	gfxRect(0, SETUP_NOTE_Y, GFX_W, 8, C_BG);
+	gfxText(8, SETUP_NOTE_Y, text, col, 1);
+	bool same = fakeRegionHash(0, SETUP_NOTE_Y, GFX_W, 8) == shown;
+	memcpy(fb + SETUP_NOTE_Y * GFX_W, keep, sizeof(keep));
+	return same;
+}
+
+/** @brief BACKLIGHT - stops at 16, the validator's floor, with no ADJUSTED note. */
+static void testSetupBacklightFloor() {
+	section("SETUP: BACKLIGHT stops at 16");
+	fakeFlashClear();
+	settingsLoad();
+	uiInit();
+	frames(2);
+	enterSetup();
+	settings()->backlight = 40;
+	tap(SET_MINUS_X, SET_R_BACKLIGHT);
+	checkInt("40, then - : 16, the floor", settings()->backlight, 16);
+	checkTrue("no ADJUSTED note: the note reads UNSAVED",
+	          setupNoteIs("UNSAVED - HOLD SAVE TO KEEP", C_AMBER));
+	tap(SET_MINUS_X, SET_R_BACKLIGHT);
+	checkInt("- at 16 stays at 16", settings()->backlight, 16);
+	tap(SET_RESET_X, SET_SAVE_Y);
+	tap(BACK_X, BACK_Y);
+	frames(2);
 }
 
 /** @brief Contrast and backlight take effect immediately and persist. */
@@ -2248,6 +2285,7 @@ void runUiTests() {
 	testStatusBarBitrate();
 	testSetupKiss();
 	testSetupDisplay();
+	testSetupBacklightFloor();
 	testSetupSave();
 	testArmedSaveRefused();
 	testPressedLookClears();
